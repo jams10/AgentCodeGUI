@@ -49,10 +49,13 @@ cargo test -p agentcodegui --bin agentcodegui --locked --features custom-protoco
 node scripts/poc-work-records.mjs
 node scripts/poc-fork-services.mjs
 node scripts/poc-fork-native-ui.mjs
+node scripts/poc-fork-tripo-package.mjs "<설치 폴더>"
 ```
 
 엔진 단위 테스트 117개와 네이티브 앱 단위 테스트 213개가 통과했습니다(별도 자식 프로세스용 테스트 2개는 설계상 제외). 커스텀 서비스 검증은 14개입니다.
 
 화면 검증은 별도 `CCG_HOME`에서 실제 화면·IPC·Windows 암호화·대화 이전·재실행을 확인하며 원래 실행 중인 앱을 종료하지 않습니다. 설치본을 검사할 때는 마지막 두 스크립트에 설치된 exe의 절대 경로를 전달합니다. 서비스 HTTP 검증은 고정 응답과 가짜 키를 사용합니다. 실제 유료 이미지·3D 생성은 이 업데이트 검증에서 실행하지 않았습니다.
+
+Tripo 공식 CLI의 모든 실행 의존성도 설치 파일에 포함합니다. 설치 디렉터리에서 5개 도구와 리소스 목록 호환성을 검사해 개발 폴더의 `node_modules`에 우연히 의존하지 않는지 확인합니다.
 
 설치 리소스 경로의 Windows `\\?\` 접두사는 Node 진입점에서 오류를 일으켜 정상 경로로 변환했습니다. JSON IPC가 선택 인자의 `undefined`를 `null`로 바꾸는 차이도 서비스 경계에서 처리합니다. 이런 배포 차이는 TypeScript 타입 검사만으로 잡히지 않으므로 설치본 화면 검증을 유지합니다.
