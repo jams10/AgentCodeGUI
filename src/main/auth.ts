@@ -13,6 +13,7 @@ import path from 'node:path'
 import { app, safeStorage, type WebContents } from 'electron'
 import { IPC } from '@shared/protocol'
 import { t } from './lang'
+import { harvestMcpOAuth, materializeMcpOAuth } from './mcpOAuth'
 import type { AuthStatus, AccountInfo, AccountUsage } from '@shared/protocol'
 
 // 번들된 네이티브 claude 실행 파일을 찾는다(dev: 앱 node_modules, prod: asar.unpacked).
@@ -312,7 +313,12 @@ export function accountRunDir(email: string): string {
   const dir = path.join(ACCOUNTS_DIR, accountSlug(email))
   fs.mkdirSync(dir, { recursive: true })
   const credPath = path.join(dir, '.credentials.json')
+  // MCP OAuth 토큰(mcpOAuth)은 앱 보관소가 단일 원본 — 폴더를 덮어쓰기 전에 CLI가 리프레시해
+  // 둔 것을 거두고(harvest), 스냅샷을 쓴 뒤 보관소의 토큰을 다시 얹는다(materialize).
+  // 계정이 몇 개든 같은 MCP 연결을 공유한다(mcpOAuth.ts).
+  harvestMcpOAuth(credPath)
   if (credsExpiresAt(snap.creds) >= credsExpiresAt(readFileOrNull(credPath))) fs.writeFileSync(credPath, snap.creds)
+  materializeMcpOAuth(credPath)
   // 신원: 폴더의 .claude.json에 oauthAccount·userID를 병합(CLI가 적어둔 다른 상태는 보존)
   const cjPath = path.join(dir, '.claude.json')
   const cj = readJson(cjPath) ?? {}
@@ -329,7 +335,9 @@ export function syncAccountTokens(email: string): void {
   const f = readStoreFile()
   const target = f.accounts.find((a) => a.email === email)
   if (!target) return
-  const dirCreds = readFileOrNull(path.join(ACCOUNTS_DIR, accountSlug(email), '.credentials.json'))
+  const credPath = path.join(ACCOUNTS_DIR, accountSlug(email), '.credentials.json')
+  harvestMcpOAuth(credPath) // 실행 중 CLI가 리프레시한 MCP 토큰 → 앱 보관소(계정 공통)
+  const dirCreds = readFileOrNull(credPath)
   if (!dirCreds) return
   const raw = decCreds(target.credEnc)
   if (!raw) return

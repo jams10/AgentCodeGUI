@@ -5,6 +5,11 @@ import type {
   SkillInfo,
   SkillScope,
   McpServerInfo,
+  McpServerSpec,
+  McpOrigin,
+  McpImportCandidate,
+  McpPrefs,
+  SecretInfo,
   LspServerInfo,
   ApiConfigStatus,
   AccountInfo,
@@ -40,6 +45,8 @@ import {
   IconTrash,
   IconCode,
   IconKey,
+  IconLock,
+  IconDownload,
   IconUser,
   IconCard,
   IconPlus,
@@ -55,6 +62,9 @@ import {
 import { getLang, isEn, setLang, t, type UiLang } from '../lib/i18n'
 import { GestureGlyph, GESTURE_DEFAULTS, MouseGestureLayer, scrollGestures } from './mouseGesture'
 import { remainTone } from './Chat'
+import { TripoSettings } from './TripoSettings'
+import { ComfySettings } from './ComfySettings'
+import { ServiceCredits } from './ServiceCredits'
 import {
   DEFAULT_HIDE_DIRS,
   DEFAULT_HIDE_FILES,
@@ -66,7 +76,7 @@ import {
   setHideFiles
 } from '../lib/hideDirs'
 
-export type SettingsView = 'profile' | 'account' | 'version' | 'api' | 'mcp' | 'skill' | 'lsp' | 'explorer' | 'gesture' | 'display' | 'language'
+export type SettingsView = 'profile' | 'account' | 'version' | 'api' | 'mcp' | 'keys' | 'tripo' | 'comfy' | 'skill' | 'lsp' | 'explorer' | 'gesture' | 'display' | 'language'
 type View = SettingsView
 
 // 레일 — PoC 재해석: 그룹 라벨(사용자/엔진/확장/환경) 아래 항목. keys는 검색어(한국어·영어 동의어).
@@ -90,7 +100,10 @@ function navGroups(): { label: string; items: { id: View; label: string; Icon: (
     {
       label: t('확장', 'Extensions'),
       items: [
-        { id: 'mcp', label: 'MCP', Icon: IconServer, keys: 'mcp 서버 도구 server tool' },
+        { id: 'mcp', label: 'MCP', Icon: IconServer, keys: 'mcp 서버 도구 연결 인증 oauth 로그인 blender comfy server tool connect auth' },
+        { id: 'keys', label: 'Keys', Icon: IconLock, keys: '키 보관함 시크릿 토큰 환경변수 api key secret token env vault' },
+        { id: 'tripo', label: 'Tripo', Icon: IconServer, keys: 'tripo 트리포 3d 모델 모델링 생성 blender 블렌더 api 키 mcp' },
+        { id: 'comfy', label: 'ComfyCloud', Icon: IconServer, keys: 'comfy cloud 컴피 이미지 생성 나노바나나 gpt image api 키 로그인 연결 잔액 크레딧' },
         { id: 'skill', label: 'Skill', Icon: IconBook, keys: '스킬 명령 슬래시 skill command slash' }
       ]
     },
@@ -406,8 +419,8 @@ function AccountView(): React.ReactElement {
     setNote(null)
     try {
       setCxAccounts(await window.api.codexAuth.login())
-    } catch {
-      /* ignore */
+    } catch (e) {
+      setNote(ipcErr(e)) // 실패 사유(CLI 마지막 출력)를 Anthropic 쪽과 같은 자리에 — 조용한 실패 금지
     }
     setBusy(null)
     setLoginUrl(null)
@@ -632,6 +645,7 @@ function AccountView(): React.ReactElement {
         </>
       )}
 
+      <ServiceCredits />
       {note && <div className="set-note2">{note}</div>}
       {(busy === 'login' || busy === 'codex-login') && loginUrl && (
         <div className="set-note2">
@@ -1764,18 +1778,236 @@ function SkillView({ cwd }: { cwd: string }) {
   )
 }
 
+// ── MCP — 앱 등록 서버(모든 대화·계정 공통) + 플러그인 + 프로젝트 + 터미널(가져오기) ──
+// 앱은 계정별 격리 config로 돌아 터미널 ~/.claude.json의 서버도, /mcp 로 받은 로그인 토큰도
+// 보이지 않았다. 여기서 해결: 앱 레지스트리(SDK mcpServers 주입) + 앱 안 OAuth(브라우저) +
+// 터미널 설정·토큰 가져오기. 키가 필요한 서버는 설정 → Keys의 ${KEY}로 잇는다.
+
+// IPC로 넘어온 예외 메시지에서 Electron 접두("Error invoking remote method …: Error: ")를 벗긴다
+function ipcErr(e: unknown): string {
+  const m = String((e as Error)?.message ?? e)
+  return m.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '')
+}
+
+function originLabel(o: McpOrigin): string {
+  switch (o) {
+    case 'app':
+      return t('앱', 'App')
+    case 'plugin':
+      return t('플러그인', 'Plugin')
+    case 'project':
+      return t('프로젝트', 'Project')
+    case 'user':
+      return t('터미널 전역', 'Terminal global')
+    case 'local':
+      return t('터미널 프로젝트', 'Terminal project')
+  }
+}
+
+// 액세스 토큰 만료 표기 — 만료돼도 리프레시 토큰이 있으면 CLI가 스스로 갱신하니 '자동 갱신'
+function fmtOAuthExpiry(expiresAt: number | null, hasRefresh: boolean): string {
+  if (expiresAt == null) return hasRefresh ? t('자동 갱신', 'auto-refresh') : ''
+  const left = expiresAt - Date.now()
+  if (left <= 0) return hasRefresh ? t('만료 · 자동 갱신', 'expired · auto-refresh') : t('만료됨', 'expired')
+  const h = Math.floor(left / 3600000)
+  const m = Math.floor((left % 3600000) / 60000)
+  return t(h > 0 ? `${h}시간 ${m}분 남음` : `${m}분 남음`, h > 0 ? `${h}h ${m}m left` : `${m}m left`)
+}
+
+// 폼 ↔ 스펙 변환 — 인자는 셸처럼 공백 분리(따옴표 묶음 지원), env/헤더는 줄 단위 KEY=VALUE / Name: Value
+function splitArgs(s: string): string[] {
+  const out: string[] = []
+  let cur = ''
+  let q: string | null = null
+  let quoted = false
+  for (const ch of s) {
+    if (q) {
+      if (ch === q) q = null
+      else cur += ch
+      continue
+    }
+    if (ch === '"' || ch === "'") {
+      q = ch
+      quoted = true
+      continue
+    }
+    if (/\s/.test(ch)) {
+      if (cur || quoted) out.push(cur)
+      cur = ''
+      quoted = false
+      continue
+    }
+    cur += ch
+  }
+  if (cur || quoted) out.push(cur)
+  return out
+}
+function joinArgs(a: string[] | undefined): string {
+  return (a ?? []).map((x) => (/\s/.test(x) || x === '' ? `"${x}"` : x)).join(' ')
+}
+function parseKv(text: string, sep: '=' | ':'): Record<string, string> | undefined {
+  const out: Record<string, string> = {}
+  for (const line of text.split(/\r?\n/)) {
+    const l = line.trim()
+    if (!l || l.startsWith('#')) continue
+    const i = l.indexOf(sep)
+    if (i <= 0) continue
+    out[l.slice(0, i).trim()] = l.slice(i + 1).trim()
+  }
+  return Object.keys(out).length ? out : undefined
+}
+function kvLines(m: Record<string, string> | undefined, sep: string): string {
+  return Object.entries(m ?? {})
+    .map(([k, v]) => `${k}${sep}${v}`)
+    .join('\n')
+}
+
+// 카드 타일 이니셜 — PoC 문법(context7 → C7): plugin: 접두는 벗기고 영숫자 앞 두 글자
+function mcpTile(name: string): string {
+  const base = name.replace(/^plugin:[^:]+:/, '')
+  return base.replace(/[^a-z0-9]/gi, '').slice(0, 2).toUpperCase() || '?'
+}
+
+// 앱 등록 서버 추가/편집 폼 — 종류 칩(stdio/http/sse)에 따라 명령·인자·env 또는 URL·헤더
+function McpServerForm({
+  init,
+  onSave,
+  onCancel
+}: {
+  init: { prevName?: string; name: string; spec: McpServerSpec }
+  onSave: (name: string, spec: McpServerSpec, prevName?: string) => Promise<void>
+  onCancel: () => void
+}): React.ReactElement {
+  const stdio = init.spec.type === 'stdio' ? init.spec : null
+  const web = init.spec.type !== 'stdio' ? init.spec : null
+  const [name, setName] = useState(init.name)
+  const [type, setType] = useState<McpServerSpec['type']>(init.spec.type)
+  const [command, setCommand] = useState(stdio?.command ?? '')
+  const [args, setArgs] = useState(joinArgs(stdio?.args))
+  const [env, setEnv] = useState(kvLines(stdio?.env, '='))
+  const [url, setUrl] = useState(web?.url ?? '')
+  const [headers, setHeaders] = useState(kvLines(web?.headers, ': '))
+  const [err, setErr] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const build = (): McpServerSpec =>
+    type === 'stdio'
+      ? { type: 'stdio', command: command.trim(), ...(splitArgs(args).length ? { args: splitArgs(args) } : {}), ...(parseKv(env, '=') ? { env: parseKv(env, '=') } : {}) }
+      : { type, url: url.trim(), ...(parseKv(headers, ':') ? { headers: parseKv(headers, ':') } : {}) }
+  const save = async (): Promise<void> => {
+    setBusy(true)
+    setErr(null)
+    try {
+      await onSave(name.trim(), build(), init.prevName)
+    } catch (e) {
+      setErr(ipcErr(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  const canSave = !!name.trim() && (type === 'stdio' ? !!command.trim() : !!url.trim())
+
+  return (
+    <div className="sc2 form">
+      <div className="aphead">
+        <span className="apn">{init.prevName ? t('서버 편집', 'Edit server') : t('서버 추가', 'Add server')}</span>
+        <span className="sp" />
+        <div className="set-chips">
+          {(['stdio', 'http', 'sse'] as const).map((k) => (
+            <button key={k} className={'set-chipbtn' + (type === k ? ' on' : '')} onClick={() => setType(k)}>
+              {k}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="set-field">
+        <label>{t('이름 (도구 이름 mcp__<이름>__… 에 쓰임)', 'Name (used in tool names mcp__<name>__…)')}</label>
+        <input className="set-input mono" value={name} placeholder="blender" spellCheck={false} autoFocus={!init.prevName} onChange={(e) => setName(e.target.value)} />
+      </div>
+      {type === 'stdio' ? (
+        <>
+          <div className="set-field">
+            <label>{t('명령', 'Command')}</label>
+            <input className="set-input mono" value={command} placeholder="uvx" spellCheck={false} onChange={(e) => setCommand(e.target.value)} />
+          </div>
+          <div className="set-field">
+            <label>{t('인자 (공백 구분, 따옴표로 묶기 가능)', 'Arguments (space-separated, quotes allowed)')}</label>
+            <input className="set-input mono" value={args} placeholder="blender-mcp" spellCheck={false} onChange={(e) => setArgs(e.target.value)} />
+          </div>
+          <div className="set-field">
+            <label>{t('환경변수 (줄마다 KEY=VALUE — 값에 ${KEY_NAME} 으로 Keys 보관함 참조)', 'Environment (one KEY=VALUE per line — ${KEY_NAME} references the Keys vault)')}</label>
+            <textarea className="set-input ta" value={env} placeholder={'API_KEY=${MY_API_KEY}'} spellCheck={false} onChange={(e) => setEnv(e.target.value)} />
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="set-field">
+            <label>URL</label>
+            <input className="set-input mono" value={url} placeholder="https://example.com/mcp" spellCheck={false} onChange={(e) => setUrl(e.target.value)} />
+          </div>
+          <div className="set-field">
+            <label>{t('헤더 (줄마다 Name: Value — 값에 ${KEY_NAME} 으로 Keys 보관함 참조)', 'Headers (one Name: Value per line — ${KEY_NAME} references the Keys vault)')}</label>
+            <textarea className="set-input ta" value={headers} placeholder={'Authorization: Bearer ${MY_API_KEY}'} spellCheck={false} onChange={(e) => setHeaders(e.target.value)} />
+          </div>
+        </>
+      )}
+      {err && <div className="set-msg err">{err}</div>}
+      <div className="set-acts">
+        <button className="set-chipbtn on" disabled={busy || !canSave} onClick={() => void save()}>
+          {t('저장', 'Save')}
+        </button>
+        <button className="set-chipbtn" disabled={busy} onClick={onCancel}>
+          {t('취소', 'Cancel')}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function McpView({ cwd }: { cwd: string }) {
   const [servers, setServers] = useState<McpServerInfo[] | null>(null)
-  const [scope, setScope] = useState<'all' | 'global' | 'local'>('all')
-  const [busy, setBusy] = useState<string | null>(null)
+  const [prefs, setPrefs] = useState<McpPrefs | null>(null)
+  const [busy, setBusy] = useState<string | null>(null) // 토글 중인 서버
+  const [form, setForm] = useState<{ prevName?: string; name: string; spec: McpServerSpec } | null>(null)
+  const [cands, setCands] = useState<McpImportCandidate[] | null>(null) // 가져오기 패널
+  const [oauth, setOauth] = useState<{ name: string; url?: string } | null>(null) // 진행 중 OAuth
+  const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
 
+  // try/catch — dev HMR로 렌더러만 새 코드가 된 사이(preload/main은 재시작 전)엔 새 브리지
+  // 메서드가 없다. 그 창에서 탭이 통째로 죽지 않게 옛 목록이라도 보여준다.
   const refresh = (): void => {
-    window.api.mcp
-      .list(cwd)
-      .then(setServers)
-      .catch(() => setServers([]))
+    try {
+      window.api.mcp
+        .list(cwd)
+        .then(setServers)
+        .catch(() => setServers([]))
+      window.api.mcp
+        .getPrefs()
+        .then(setPrefs)
+        .catch(() => {})
+    } catch {
+      setServers([])
+    }
   }
   useEffect(refresh, [cwd])
+  // OAuth 진행 이벤트 — 폴백 링크·완료·오류. 완료면 목록을 다시 읽어 '연결됨' 배지로.
+  useEffect(() => {
+    try {
+      return window.api.mcp.onOAuthEvent((ev) => {
+        if (ev.phase === 'url') {
+          setOauth({ name: ev.name, url: ev.url })
+          return
+        }
+        setOauth(null)
+        if (ev.phase === 'done') {
+          setMsg({ kind: 'ok', text: t(`${ev.name} 연결됐어요 — 다음 메시지부터 모든 대화에서 쓰여요.`, `${ev.name} connected — available in every chat from the next message.`) })
+          refresh()
+        } else if (ev.phase === 'error') setMsg({ kind: 'err', text: ev.error ?? 'error' })
+      })
+    } catch {
+      return undefined
+    }
+  }, [cwd])
 
   const toggle = async (s: McpServerInfo): Promise<void> => {
     const next = !s.enabled
@@ -1789,90 +2021,464 @@ function McpView({ cwd }: { cwd: string }) {
       setBusy(null)
     }
   }
-
-  const counts = {
-    all: servers?.length ?? 0,
-    global: servers?.filter((s) => s.scope === 'global').length ?? 0,
-    local: servers?.filter((s) => s.scope === 'local').length ?? 0
+  const connect = async (s: McpServerInfo): Promise<void> => {
+    setMsg(null)
+    setOauth({ name: s.name })
+    try {
+      const r = await window.api.mcp.oauthConnect(s.name, cwd)
+      if (!r.ok && r.error && r.error !== 'cancelled') setMsg({ kind: 'err', text: r.error })
+    } catch (e) {
+      setMsg({ kind: 'err', text: ipcErr(e) })
+    } finally {
+      setOauth(null)
+      refresh()
+    }
   }
-  const rows = (servers ?? []).filter((s) => scope === 'all' || s.scope === scope)
-  // 카드 타일 이니셜 — PoC 문법(context7 → C7): 영숫자만 남겨 앞 두 글자
-  const tileTxt = (name: string): string => name.replace(/[^a-z0-9]/gi, '').slice(0, 2).toUpperCase() || '?'
+  const disconnect = async (s: McpServerInfo): Promise<void> => {
+    await window.api.mcp.oauthDisconnect(s.name, cwd).catch(() => {})
+    refresh()
+  }
+  const remove = async (s: McpServerInfo): Promise<void> => {
+    await window.api.mcp.remove(s.name).catch(() => {})
+    refresh()
+  }
+  const saveForm = async (name: string, spec: McpServerSpec, prevName?: string): Promise<void> => {
+    await window.api.mcp.upsert(name, spec, prevName) // 검증 실패는 폼이 잡아 보여준다
+    setForm(null)
+    setMsg({ kind: 'ok', text: t(`${name} 저장됨 — 다음 메시지부터 모든 대화에 붙어요.`, `${name} saved — attached to every chat from the next message.`) })
+    refresh()
+  }
+  const openImport = async (): Promise<void> => {
+    setMsg(null)
+    setCands(await window.api.mcp.importCandidates(cwd).catch(() => []))
+  }
+  const importItems = async (items: McpImportCandidate[]): Promise<void> => {
+    if (!items.length) return
+    await window.api.mcp.import(items.map((c) => ({ name: c.name, spec: c.spec }))).catch((e) => setMsg({ kind: 'err', text: ipcErr(e) }))
+    setCands((cur) => cur?.map((c) => (items.includes(c) ? { ...c, exists: true } : c)) ?? cur)
+    refresh()
+  }
+  const importTokens = async (): Promise<void> => {
+    try {
+      const n = await window.api.mcp.oauthImportGlobal()
+      setMsg({ kind: 'ok', text: t(`터미널의 MCP 로그인 토큰을 가져왔어요 — 연결 ${n}개.`, `Imported MCP sign-in tokens from the terminal — ${n} connected.`) })
+    } catch (e) {
+      setMsg({ kind: 'err', text: ipcErr(e) })
+    }
+    refresh()
+  }
+  const setAllowProject = async (v: boolean): Promise<void> => {
+    setPrefs((p) => (p ? { ...p, allowProjectMcp: v } : p))
+    setPrefs(await window.api.mcp.setPrefs({ allowProjectMcp: v }).catch(() => prefs ?? { allowProjectMcp: v }))
+    refresh()
+  }
+
+  const rowsOf = (...o: McpOrigin[]): McpServerInfo[] => (servers ?? []).filter((s) => o.includes(s.origin))
+  const appRows = rowsOf('app')
+  const pluginRows = rowsOf('plugin')
+  const projRows = rowsOf('project')
+  const termRows = rowsOf('user', 'local')
+
+  const Row = (s: McpServerInfo): React.ReactElement => {
+    const inFlight = oauth?.name === s.name
+    return (
+      <div className={'sc2 row2 mcp' + (s.enabled ? '' : ' off') + (s.applied ? '' : ' na')} key={s.origin + ':' + s.name}>
+        <div className="set-tile">{mcpTile(s.name)}</div>
+        <div className="rmain">
+          <div className="em">
+            <span className="emt">{s.name}</span>
+            {s.transport !== 'unknown' && <span className="set-badge off">{s.transport}</span>}
+            {s.oauth &&
+              (s.oauth.connected ? (
+                <span className="set-badge has-tip" data-tip={fmtOAuthExpiry(s.oauth.expiresAt, s.oauth.hasRefresh)}>
+                  {t('연결됨', 'Connected')}
+                </span>
+              ) : (
+                <span className="set-badge warn">{t('로그인 필요', 'Sign-in needed')}</span>
+              ))}
+            {!s.applied && (
+              <span className="set-badge warn has-tip tip-wrap" data-tip={t('앱은 계정별 격리 config로 실행돼 터미널 ~/.claude.json 서버를 읽지 않아요. 앱으로 가져오면 모든 대화에서 쓰여요.', 'The app runs with an isolated config per account and does not read terminal ~/.claude.json servers. Import it to use in every chat.')}>
+                {t('앱 실행 미적용', 'Not applied in app')}
+              </span>
+            )}
+          </div>
+          <div className="meta mono has-tip tip-wrap" data-tip={s.source ?? s.detail ?? ''}>
+            {s.detail || t('연결 정보가 없습니다.', 'No connection details.')}
+          </div>
+          {inFlight && (
+            <div className="meta mcp-prog">
+              <span className="set-spin" />
+              {t('브라우저에서 승인 중…', 'Waiting for approval in the browser…')}
+              {oauth?.url && (
+                <a href={oauth.url} target="_blank" rel="noreferrer">
+                  {t('안 열렸으면 이 링크', 'Not open? Use this link')}
+                </a>
+              )}
+              <button className="set-chipbtn" onClick={() => void window.api.mcp.oauthCancel()}>
+                {t('취소', 'Cancel')}
+              </button>
+            </div>
+          )}
+        </div>
+        <div className="mcp-acts">
+          {s.oauth &&
+            !inFlight &&
+            (s.oauth.connected ? (
+              <button className="set-chipbtn" onClick={() => void disconnect(s)}>
+                {t('연결 해제', 'Disconnect')}
+              </button>
+            ) : (
+              <button className="set-chipbtn on" disabled={!!oauth} onClick={() => void connect(s)}>
+                {t('연결', 'Connect')}
+              </button>
+            ))}
+          {s.origin === 'app' && (
+            <>
+              <button className="set-chipbtn" onClick={() => s.spec && setForm({ prevName: s.name, name: s.name, spec: s.spec })}>
+                {t('편집', 'Edit')}
+              </button>
+              <button className="set-chipbtn danger" onClick={() => void remove(s)}>
+                {t('삭제', 'Delete')}
+              </button>
+            </>
+          )}
+          {(s.origin === 'user' || s.origin === 'local') && s.spec && (
+            <button className="set-chipbtn on" onClick={() => void importItems([{ name: s.name, origin: s.origin, source: s.source ?? '', spec: s.spec!, exists: false }])}>
+              {t('앱으로 가져오기', 'Import to app')}
+            </button>
+          )}
+        </div>
+        {s.applied && (
+          <button
+            className={'sw2' + (s.enabled ? ' on' : '')}
+            role="switch"
+            aria-checked={s.enabled}
+            aria-label={t(s.name + (s.enabled ? ' 끄기' : ' 켜기'), (s.enabled ? 'Turn off ' : 'Turn on ') + s.name)}
+            disabled={busy === s.name}
+            onClick={() => void toggle(s)}
+          />
+        )}
+      </div>
+    )
+  }
 
   return (
     <>
       <div className="set-h1">MCP</div>
       <div className="set-h1-sub">
-        {t(
-          '에이전트가 쓸 수 있는 MCP 서버를 범위별로 보고, 여기서 바로 켜고 끌 수 있습니다.',
-          'See the MCP servers the agent can use by scope, and turn them on or off right here.'
+        {isEn() ? (
+          <>
+            Servers registered here are attached to <strong>every chat and every account</strong>. Sign in to http
+            servers (Comfy Cloud etc.) right here — once — and API keys come from <strong>Keys</strong> via{' '}
+            <code>${'{KEY_NAME}'}</code>.
+          </>
+        ) : (
+          <>
+            여기 등록한 서버는 <strong>모든 대화·모든 계정</strong>에 붙습니다. http 서버(Comfy Cloud 등) 로그인도 여기서{' '}
+            한 번만 — API 키가 필요하면 <strong>Keys</strong>에 넣고 <code>${'{KEY_NAME}'}</code>으로 참조하세요.
+          </>
         )}
       </div>
 
-      <div className="set-sec">{t('서버', 'Servers')}</div>
-      <div className="set-tabs">
-        {/* tab — 지역변수 t는 i18n t()를 가리므로 이름을 피한다 */}
-        {scopeTabs().map((tab) => (
-          <button
-            key={tab.id}
-            className={'set-tab' + (scope === tab.id ? ' on' : '')}
-            onClick={() => setScope(tab.id)}
-          >
-            {tab.label}
-            <span className="n">{counts[tab.id]}</span>
-          </button>
-        ))}
-        <button className="set-iconbtn" onClick={refresh} aria-label={t('새로고침', 'Refresh')}>
+      <div className="set-sec">
+        {t('앱 서버', 'App servers')}
+        <button className="set-chipbtn" onClick={() => setForm({ name: '', spec: { type: 'stdio', command: '' } })} disabled={!!form}>
+          <IconPlus size={11} /> {t('서버 추가', 'Add server')}
+        </button>
+        <button className="set-chipbtn" onClick={() => void openImport()}>
+          <IconDownload size={11} /> {t('터미널에서 가져오기', 'Import from terminal')}
+        </button>
+        <button className="set-iconbtn" onClick={refresh} aria-label={t('새로고침', 'Refresh')} style={{ marginLeft: 0 }}>
           <IconRefresh size={13} />
         </button>
       </div>
-
+      {msg && <div className={'set-msg' + (msg.kind === 'err' ? ' err' : '')}>{msg.text}</div>}
+      {form && <McpServerForm init={form} onSave={saveForm} onCancel={() => setForm(null)} />}
+      {cands && (
+        <div className="sc2 form">
+          <div className="aphead">
+            <span className="apn">{t('터미널 Claude Code 설정에서 가져오기', 'Import from terminal Claude Code config')}</span>
+            <span className="sp" />
+            <button className="set-chipbtn" disabled={!cands.some((c) => !c.exists)} onClick={() => void importItems(cands.filter((c) => !c.exists))}>
+              {t('전부 가져오기', 'Import all')}
+            </button>
+            <button className="set-chipbtn" onClick={() => void importTokens()}>
+              {t('로그인 토큰도 가져오기', 'Import sign-in tokens')}
+            </button>
+            <button className="set-chipbtn" onClick={() => setCands(null)}>
+              {t('닫기', 'Close')}
+            </button>
+          </div>
+          {cands.length === 0 ? (
+            <div className="meta">{t('~/.claude.json 과 .mcp.json 에 서버가 없어요.', 'No servers in ~/.claude.json or .mcp.json.')}</div>
+          ) : (
+            cands.map((c, i) => (
+              <div className="mcp-cand" key={i}>
+                <div className="rmain">
+                  <div className="em">
+                    <span className="emt">{c.name}</span>
+                    <span className="set-badge off">{originLabel(c.origin)}</span>
+                    {c.exists && <span className="set-badge off">{t('이미 등록됨', 'Already added')}</span>}
+                  </div>
+                  <div className="meta mono has-tip tip-wrap" data-tip={c.source}>
+                    {c.spec.type === 'stdio' ? `${c.spec.command} ${joinArgs(c.spec.args)}`.trim() : c.spec.url}
+                  </div>
+                </div>
+                <button className={'set-chipbtn' + (c.exists ? '' : ' on')} onClick={() => void importItems([c])}>
+                  {c.exists ? t('다시 가져오기', 'Re-import') : t('가져오기', 'Import')}
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      )}
       {servers == null ? (
         <div className="sc2 hint">
           <span className="set-spin" /> {t('불러오는 중…', 'Loading…')}
         </div>
-      ) : rows.length === 0 ? (
+      ) : appRows.length === 0 ? (
+        !form && (
+          <div className="sc2 hint">
+            {t('아직 등록한 서버가 없어요 — 서버 추가 또는 터미널에서 가져오기.', 'No servers registered yet — add one or import from the terminal.')}
+          </div>
+        )
+      ) : (
+        appRows.map(Row)
+      )}
+
+      {pluginRows.length > 0 && (
+        <>
+          <div className="set-sec">{t('플러그인', 'Plugins')}</div>
+          {pluginRows.map(Row)}
+        </>
+      )}
+
+      <div className="set-sec">{t('이 프로젝트 (.mcp.json)', 'This project (.mcp.json)')}</div>
+      <div className="sc2 row2">
+        <div className="rmain">
+          <div className="em">{t('프로젝트 .mcp.json 서버 자동 허용', 'Allow project .mcp.json servers automatically')}</div>
+          <div className="meta">
+            {t(
+              '켜면 열려 있는 폴더(와 상위)의 .mcp.json 서버를 묻지 않고 붙입니다. 끄면 앱 실행에선 로드되지 않아요.',
+              'On: servers from the open folder’s (and parents’) .mcp.json attach without asking. Off: they are not loaded in app runs.'
+            )}
+          </div>
+        </div>
+        <button
+          className={'sw2' + (prefs?.allowProjectMcp ? ' on' : '')}
+          role="switch"
+          aria-checked={!!prefs?.allowProjectMcp}
+          disabled={!prefs}
+          onClick={() => void setAllowProject(!prefs?.allowProjectMcp)}
+        />
+      </div>
+      {projRows.length === 0 ? (
         <div className="sc2 hint">
-          {scope === 'local'
-            ? cwd
-              ? t(
-                  '이 프로젝트(.mcp.json·로컬)에 등록된 MCP 서버가 없습니다.',
-                  'No MCP servers registered in this project (.mcp.json or local).'
-                )
-              : t(
-                  '연결된 프로젝트가 없어 로컬 MCP 서버를 찾을 수 없습니다.',
-                  'No project is open, so local MCP servers can’t be found.'
-                )
-            : scope === 'global'
-              ? t('~/.claude.json 에 등록된 전역 MCP 서버가 없습니다.', 'No global MCP servers in ~/.claude.json.')
-              : t('등록된 MCP 서버가 없습니다.', 'No MCP servers registered.')}
+          {cwd ? t('이 프로젝트에 .mcp.json 서버가 없어요.', 'No .mcp.json servers in this project.') : t('열린 프로젝트가 없어요.', 'No project is open.')}
         </div>
       ) : (
-        rows.map((s) => (
-          <div className={'sc2 row2' + (s.enabled ? '' : ' off')} key={s.origin + ':' + s.name}>
-            <div className="set-tile">{tileTxt(s.name)}</div>
-            <div className="rmain has-tip tip-wrap" data-tip={s.detail || t('연결 정보가 없습니다.', 'No connection details.')}>
+        projRows.map(Row)
+      )}
+
+      {termRows.length > 0 && (
+        <>
+          <div className="set-sec">{t('터미널 설정 (앱 실행 미적용)', 'Terminal config (not applied in app)')}</div>
+          {termRows.map(Row)}
+        </>
+      )}
+
+      <div className="set-note2">
+        {isEn() ? (
+          <>
+            App servers are injected into every run via the SDK (<code>mcpServers</code>) and merged with plugin and
+            project servers. <strong>Connect</strong> runs the OAuth sign-in in your browser and stores the token in
+            the app (encrypted) — shared by every account, refreshed automatically by the engine. Turning a server
+            off blocks it on later runs. Changes apply from the next message.
+          </>
+        ) : (
+          <>
+            앱 서버는 SDK(<code>mcpServers</code>)로 매 실행에 주입돼 플러그인·프로젝트 서버와 합쳐집니다.{' '}
+            <strong>연결</strong>은 브라우저 OAuth 로그인 — 토큰은 앱에 암호화 저장돼 모든 계정이 공유하고 엔진이
+            자동 갱신해요. 끄면 이후 실행부터 그 서버를 쓰지 않습니다. 변경은 다음 메시지부터 반영돼요.
+          </>
+        )}
+      </div>
+    </>
+  )
+}
+
+// ── Keys — API 키·시크릿 보관함. 값은 메인에만(DPAPI) — 목록엔 끝 4자리뿐. ──
+// 쓰임 ① env 항목은 모든 엔진 실행의 환경변수(스킬·스크립트·stdio MCP 서버가 바로 읽음)
+//      ② MCP 서버 설정의 ${NAME} 참조(헤더·env·인자·URL) — 실행 직전 메인이 치환
+function KeysView() {
+  const [items, setItems] = useState<SecretInfo[] | null>(null)
+  const [name, setName] = useState('')
+  const [value, setValue] = useState('')
+  const [note, setNote] = useState('')
+  const [editing, setEditing] = useState<string | null>(null) // 값을 바꾸는 중인 항목 이름
+  const [err, setErr] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const nameRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    try {
+      window.api.secrets
+        .list()
+        .then(setItems)
+        .catch(() => setItems([]))
+    } catch {
+      setItems([]) // dev HMR 전환기(preload 재시작 전) — 브리지 없음
+    }
+  }, [])
+
+  const reset = (): void => {
+    setName('')
+    setValue('')
+    setNote('')
+    setEditing(null)
+    setErr(null)
+  }
+  const save = async (): Promise<void> => {
+    setBusy(true)
+    setErr(null)
+    try {
+      setItems(await window.api.secrets.set(name.trim(), value, { note }))
+      reset()
+    } catch (e) {
+      setErr(ipcErr(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  const startEdit = (s: SecretInfo): void => {
+    setEditing(s.name)
+    setName(s.name)
+    setValue('')
+    setNote(s.note)
+    setErr(null)
+    nameRef.current?.scrollIntoView({ block: 'nearest' })
+  }
+  const remove = async (s: SecretInfo): Promise<void> => {
+    setItems(await window.api.secrets.remove(s.name).catch(() => items ?? []))
+    if (editing === s.name) reset()
+  }
+  const toggleEnv = async (s: SecretInfo): Promise<void> => {
+    setItems((cur) => cur?.map((x) => (x.name === s.name ? { ...x, env: !s.env } : x)) ?? cur)
+    setItems(await window.api.secrets.setEnv(s.name, !s.env).catch(() => items ?? []))
+  }
+  const canSave = !!name.trim() && !!value.trim()
+
+  return (
+    <>
+      <div className="set-h1">Keys</div>
+      <div className="set-h1-sub">
+        {isEn() ? (
+          <>
+            A vault for API keys that MCP servers and skills need. Save a key once and it is available in{' '}
+            <strong>every chat and every account</strong> — as an environment variable of every run, and as{' '}
+            <code>${'{NAME}'}</code> inside MCP server settings.
+          </>
+        ) : (
+          <>
+            MCP 서버·스킬이 요구하는 API 키 보관함. 한 번 넣어두면 <strong>모든 대화·모든 계정</strong>에서 쓰여요 —
+            실행의 환경변수로, 그리고 MCP 서버 설정 안의 <code>${'{NAME}'}</code> 참조로.
+          </>
+        )}
+      </div>
+
+      <div className="set-sec">{editing ? t('값 변경', 'Change value') : t('키 추가', 'Add key')}</div>
+      <div className="sc2 form">
+        <div className="set-field">
+          <label>{t('이름 (환경변수 규칙 — 예: HIGGSFIELD_API_KEY)', 'Name (env-var rules — e.g. HIGGSFIELD_API_KEY)')}</label>
+          <input
+            ref={nameRef}
+            className="set-input mono"
+            value={name}
+            placeholder="MY_API_KEY"
+            spellCheck={false}
+            disabled={!!editing}
+            onChange={(e) => setName(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '_'))}
+          />
+        </div>
+        <div className="set-field">
+          <label>{t('값', 'Value')}</label>
+          <input
+            className="set-input mono"
+            type="password"
+            value={value}
+            placeholder={editing ? t('새 값', 'New value') : 'sk-…'}
+            spellCheck={false}
+            autoFocus={!!editing}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && canSave) void save()
+              if (e.key === 'Escape') reset()
+            }}
+          />
+        </div>
+        <div className="set-field">
+          <label>{t('메모 (선택)', 'Note (optional)')}</label>
+          <input className="set-input" value={note} placeholder={t('어디에 쓰는 키인지', 'What this key is for')} onChange={(e) => setNote(e.target.value)} />
+        </div>
+        {err && <div className="set-msg err">{err}</div>}
+        <div className="set-acts">
+          <button className="set-chipbtn on" disabled={busy || !canSave} onClick={() => void save()}>
+            {t('저장', 'Save')}
+          </button>
+          {(editing || name || value || note) && (
+            <button className="set-chipbtn" disabled={busy} onClick={reset}>
+              {t('취소', 'Cancel')}
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="set-sec">{t('보관 중', 'Stored')}</div>
+      {items == null ? (
+        <div className="sc2 hint">
+          <span className="set-spin" /> {t('불러오는 중…', 'Loading…')}
+        </div>
+      ) : items.length === 0 ? (
+        <div className="sc2 hint">{t('저장된 키가 없어요.', 'No keys saved yet.')}</div>
+      ) : (
+        items.map((s) => (
+          <div className={'sc2 row2' + (s.env ? '' : ' off')} key={s.name}>
+            <div className="set-tile">
+              <IconKey size={16} />
+            </div>
+            <div className="rmain">
               <div className="em">
-                {s.name}
-                <span className="set-badge off">
-                  {s.scope === 'global' ? t('전역', 'Global') : t('로컬', 'Local')}
-                </span>
+                <span className="emt mono">{s.name}</span>
+                {s.envLocked ? (
+                  <span className="set-badge warn has-tip tip-wrap" data-tip={t('실행 자체를 바꾸는 예약 이름이라 환경변수로는 주입하지 않아요 — ${NAME} 참조로만 쓰여요.', 'Reserved name that would change how runs bill/authenticate — not injected as env, only usable via ${NAME}.')}>
+                    {t('참조 전용', 'Reference only')}
+                  </span>
+                ) : s.env ? (
+                  <span className="set-badge">{t('환경변수 주입', 'Injected as env')}</span>
+                ) : (
+                  <span className="set-badge off">{t('참조만', 'Reference only')}</span>
+                )}
               </div>
               <div className="meta mono">
-                {(s.transport !== 'unknown' ? s.transport + ' · ' : '') +
-                  (s.detail || t('연결 정보가 없습니다.', 'No connection details.'))}
+                {'••••' + s.tail}
+                {s.note ? ' · ' + s.note : ''}
               </div>
             </div>
+            <div className="mcp-acts">
+              <button className="set-chipbtn" onClick={() => startEdit(s)}>
+                {t('값 변경', 'Change')}
+              </button>
+              <button className="set-chipbtn danger" onClick={() => void remove(s)}>
+                {t('삭제', 'Delete')}
+              </button>
+            </div>
             <button
-              className={'sw2' + (s.enabled ? ' on' : '')}
+              className={'sw2' + (s.env ? ' on' : '')}
               role="switch"
-              aria-checked={s.enabled}
-              aria-label={t(
-                s.name + (s.enabled ? ' 끄기' : ' 켜기'),
-                (s.enabled ? 'Turn off ' : 'Turn on ') + s.name
-              )}
-              disabled={busy === s.name}
-              onClick={() => void toggle(s)}
+              aria-checked={s.env}
+              aria-label={t(s.name + (s.env ? ' 환경변수 주입 끄기' : ' 환경변수 주입 켜기'), (s.env ? 'Stop injecting ' : 'Inject ') + s.name + ' as env')}
+              disabled={s.envLocked}
+              onClick={() => void toggleEnv(s)}
             />
           </div>
         ))
@@ -1881,13 +2487,17 @@ function McpView({ cwd }: { cwd: string }) {
       <div className="set-note2">
         {isEn() ? (
           <>
-            Global: <code>~/.claude.json</code> · Project: <code>&lt;project&gt;/.mcp.json</code> · Turning one off
-            keeps the agent from using that server on later runs.
+            Values are encrypted (DPAPI) in <code>~/.agentcodegui/secrets.json</code>, never shown again, and never
+            sent to the UI. The env toggle adds the key to every Claude Code / Codex run’s environment. In MCP server
+            settings, write <code>${'{NAME}'}</code> (or <code>${'{NAME:-default}'}</code>) in env, headers, args or
+            URL — the app substitutes it right before spawning. Changes apply from the next message.
           </>
         ) : (
           <>
-            전역: <code>~/.claude.json</code> · 프로젝트: <code>&lt;프로젝트&gt;/.mcp.json</code> · 끄면 이후 실행부터
-            에이전트가 그 서버를 사용하지 않습니다.
+            값은 <code>~/.agentcodegui/secrets.json</code>에 암호화(DPAPI)돼 다시 보이지 않고 UI로도 오지 않아요.
+            토글을 켜면 모든 Claude Code / Codex 실행의 환경변수에 실립니다. MCP 서버 설정의 env·헤더·인자·URL에{' '}
+            <code>${'{NAME}'}</code>(또는 <code>${'{NAME:-기본값}'}</code>)을 쓰면 실행 직전에 치환돼요. 변경은 다음
+            메시지부터 반영됩니다.
           </>
         )}
       </div>
@@ -3148,6 +3758,9 @@ export function SettingsModal({
               {view === 'version' && <EngineView />}
               {view === 'api' && <ApiView />}
               {view === 'mcp' && <McpView cwd={cwd} />}
+              {view === 'keys' && <KeysView />}
+              {view === 'tripo' && <TripoSettings />}
+              {view === 'comfy' && <ComfySettings />}
               {view === 'skill' && <SkillView cwd={cwd} />}
               {view === 'display' && <DisplayView />}
               {view === 'language' && <LanguageView />}

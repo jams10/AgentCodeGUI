@@ -39,13 +39,74 @@ function packageDir(version: string): string {
   return path.join(ENGINES_DIR, version, 'node_modules', ...PACKAGE.split('/'))
 }
 
-function installedVersionAt(version: string): string | null {
+// 0.15x부터 네이티브 실행 파일은 플랫폼별 선택적 의존성(@openai/codex-<os>-<arch> — npm 별칭
+// npm:@openai/codex@<v>-<os>-<arch>)으로 갈라졌다. bin/codex.js가 이 표로 찾고, 없으면 본
+// 패키지의 vendor/(≤0.14x가 번들하던 자리)를 본다 — 여기서도 같은 순서로 검증한다.
+const PLATFORM_PACKAGE_BY_TARGET: Record<string, string> = {
+  'x86_64-unknown-linux-musl': `${PACKAGE}-linux-x64`,
+  'aarch64-unknown-linux-musl': `${PACKAGE}-linux-arm64`,
+  'x86_64-apple-darwin': `${PACKAGE}-darwin-x64`,
+  'aarch64-apple-darwin': `${PACKAGE}-darwin-arm64`,
+  'x86_64-pc-windows-msvc': `${PACKAGE}-win32-x64`,
+  'aarch64-pc-windows-msvc': `${PACKAGE}-win32-arm64`
+}
+function platformTarget(): { pkg: string; triple: string; suffix: string } | null {
+  const { arch } = process
+  const plat = process.platform === 'android' ? 'linux' : process.platform
+  const triple =
+    plat === 'linux'
+      ? arch === 'x64'
+        ? 'x86_64-unknown-linux-musl'
+        : arch === 'arm64'
+          ? 'aarch64-unknown-linux-musl'
+          : null
+      : plat === 'darwin'
+        ? arch === 'x64'
+          ? 'x86_64-apple-darwin'
+          : arch === 'arm64'
+            ? 'aarch64-apple-darwin'
+            : null
+        : plat === 'win32'
+          ? arch === 'x64'
+            ? 'x86_64-pc-windows-msvc'
+            : arch === 'arm64'
+              ? 'aarch64-pc-windows-msvc'
+              : null
+          : null
+  if (!triple) return null
+  const pkg = PLATFORM_PACKAGE_BY_TARGET[triple]
+  return { pkg, triple, suffix: pkg.slice(PACKAGE.length + 1) }
+}
+
+// 실제 네이티브 실행 파일 경로 — 플랫폼 패키지(신) → 본 패키지 vendor(구) 순. 없으면 null.
+export function codexExeAt(version: string): string | null {
+  const tgt = platformTarget()
+  if (!tgt) return null
+  const exe = process.platform === 'win32' ? 'codex.exe' : 'codex'
+  const nm = path.join(ENGINES_DIR, version, 'node_modules')
+  for (const base of [path.join(nm, ...tgt.pkg.split('/')), packageDir(version)]) {
+    const p = path.join(base, 'vendor', tgt.triple, 'bin', exe)
+    if (fs.existsSync(p)) return p
+  }
+  return null
+}
+
+function packageVersionAt(version: string): string | null {
   try {
     const pkg = JSON.parse(fs.readFileSync(path.join(packageDir(version), 'package.json'), 'utf8'))
     return typeof pkg.version === 'string' ? pkg.version : null
   } catch {
     return null
   }
+}
+
+// 설치본 판정 = 패키지 + 실행 파일. 실행 파일 없는 반쪽 폴더(플랫폼 패키지 누락)는 설치본이
+// 아니다 — 목록·활성·정리 모두에서 빠져, 부팅 자동 업데이트가 그걸 활성으로 삼거나 정리가
+// 멀쩡한 옛 버전을 지우는 일이 없다(실측 2026-09-10: 0.154.0 반쪽 설치 → 활성 → 옛 버전 삭제
+// → `codex login`이 "Missing optional dependency @openai/codex-win32-x64"로 즉사).
+function installedVersionAt(version: string): string | null {
+  const v = packageVersionAt(version)
+  return v && codexExeAt(version) ? v : null
 }
 
 function compareDesc(a: string, b: string): number {
@@ -129,29 +190,18 @@ export async function codexListAvailable(): Promise<{ latest: string | null; ver
   }
 }
 
-export async function codexInstall(
+// npm 한 번 — 출력을 진행 로그로 흘리고 종료 코드를 돌려준다(스폰 자체 실패는 error)
+function runNpm(
+  args: string[],
+  cwd: string,
   version: string,
   onProgress: (p: EngineInstallProgress) => void
-): Promise<{ ok: boolean; error?: string }> {
-  const dir = path.join(ENGINES_DIR, version)
-  try {
-    await fsp.mkdir(dir, { recursive: true })
-    await fsp.writeFile(
-      path.join(dir, 'package.json'),
-      JSON.stringify({ name: `agent-code-gui-codex-${version}`, version: '0.0.0', private: true }, null, 2)
-    )
-  } catch (e) {
-    return { ok: false, error: t(`폴더 생성 실패: ${(e as Error).message}`, `Failed to create the folder: ${(e as Error).message}`) }
-  }
-
+): Promise<{ code: number | null; error?: string }> {
   const isWin = process.platform === 'win32'
   const npmCmd = isWin ? 'npm.cmd' : 'npm'
-  const args = ['install', `${PACKAGE}@${version}`, '--prefix', dir, '--no-audit', '--no-fund', '--loglevel=http']
-  onProgress({ version, line: `$ npm install ${PACKAGE}@${version}` })
-
-  return await new Promise((resolve) => {
+  return new Promise((resolve) => {
     const spawnArgs = isWin ? args.map((a) => (/\s/.test(a) ? `"${a}"` : a)) : args
-    const child = spawn(npmCmd, spawnArgs, { cwd: dir, env: process.env, windowsHide: true, shell: isWin })
+    const child = spawn(npmCmd, spawnArgs, { cwd, env: process.env, windowsHide: true, shell: isWin })
     const onData = (buf: Buffer): void => {
       for (const line of buf.toString().split(/\r?\n/)) {
         const t = line.trim()
@@ -162,24 +212,82 @@ export async function codexInstall(
     child.stderr?.on('data', onData)
     child.on('error', (e) => {
       // 지역 t(line.trim())는 onData 안에만 있어 여기의 i18n t()를 가리지 않는다
-      const error = t(
-        `npm 실행 실패: ${e.message}. npm(Node.js)이 설치돼 있고 PATH에 있는지 확인하세요.`,
-        `Failed to run npm: ${e.message}. Make sure npm (Node.js) is installed and on your PATH.`
-      )
-      onProgress({ version, done: true, ok: false, error })
-      resolve({ ok: false, error })
+      resolve({
+        code: null,
+        error: t(
+          `npm 실행 실패: ${e.message}. npm(Node.js)이 설치돼 있고 PATH에 있는지 확인하세요.`,
+          `Failed to run npm: ${e.message}. Make sure npm (Node.js) is installed and on your PATH.`
+        )
+      })
     })
-    child.on('close', (code) => {
-      if (code === 0 && installedVersionAt(version)) {
-        onProgress({ version, done: true, ok: true })
-        resolve({ ok: true })
-      } else {
-        const error = t(`설치 실패 (npm 종료 코드 ${code})`, `Install failed (npm exit code ${code})`)
-        onProgress({ version, done: true, ok: false, error })
-        resolve({ ok: false, error })
-      }
-    })
+    child.on('close', (code) => resolve({ code }))
   })
+}
+
+export async function codexInstall(
+  version: string,
+  onProgress: (p: EngineInstallProgress) => void
+): Promise<{ ok: boolean; error?: string }> {
+  const dir = path.join(ENGINES_DIR, version)
+  const rmDir = (): Promise<void> =>
+    fsp.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 }).catch(() => {})
+  const fail = async (error: string): Promise<{ ok: boolean; error?: string }> => {
+    await rmDir() // 반쪽 폴더를 남기지 않는다 — 다음 시도가 옛 lock의 빈 항목을 물려받지 않게
+    onProgress({ version, done: true, ok: false, error })
+    return { ok: false, error }
+  }
+  try {
+    // 이전 시도의 잔재(패키지는 있는데 실행 파일이 없는 폴더)는 먼저 비운다
+    if (fs.existsSync(dir) && installedVersionAt(version) == null) await rmDir()
+    await fsp.mkdir(dir, { recursive: true })
+    await fsp.writeFile(
+      path.join(dir, 'package.json'),
+      JSON.stringify({ name: `agent-code-gui-codex-${version}`, version: '0.0.0', private: true }, null, 2)
+    )
+  } catch (e) {
+    return { ok: false, error: t(`폴더 생성 실패: ${(e as Error).message}`, `Failed to create the folder: ${(e as Error).message}`) }
+  }
+
+  onProgress({ version, line: `$ npm install ${PACKAGE}@${version}` })
+  const r = await runNpm(
+    ['install', `${PACKAGE}@${version}`, '--prefix', dir, '--no-audit', '--no-fund', '--loglevel=http'],
+    dir,
+    version,
+    onProgress
+  )
+  if (r.error) return fail(r.error)
+  if (r.code !== 0 || !packageVersionAt(version)) {
+    return fail(t(`설치 실패 (npm 종료 코드 ${r.code})`, `Install failed (npm exit code ${r.code})`))
+  }
+
+  // 실행 파일 검증 — 플랫폼 패키지는 선택적 의존성이라 npm이 못 풀어도(캐시된 옛 패키지 목록에
+  // 방금 나온 <v>-win32-x64가 없던 실측) 조용히 건너뛰고 0으로 끝난다. 없으면 그 패키지만
+  // 콕 집어 --prefer-online(레지스트리 재조회)으로 한 번 더 받고, 그래도 없으면 실패로 보고한다.
+  if (!codexExeAt(version)) {
+    const tgt = platformTarget()
+    if (tgt) {
+      const spec = `${tgt.pkg}@npm:${PACKAGE}@${version}-${tgt.suffix}`
+      onProgress({ version, line: `$ npm install ${spec} --prefer-online` })
+      const r2 = await runNpm(
+        ['install', spec, '--prefix', dir, '--prefer-online', '--no-audit', '--no-fund', '--loglevel=http'],
+        dir,
+        version,
+        onProgress
+      )
+      if (r2.error) return fail(r2.error)
+    }
+    if (!codexExeAt(version)) {
+      const pkg = tgt?.pkg ?? t('플랫폼 패키지', 'platform package')
+      return fail(
+        t(
+          `설치 실패 — 실행 파일(${pkg})을 받지 못했어요. 잠시 뒤 다시 시도해 주세요.`,
+          `Install failed — could not download the executable (${pkg}). Please try again shortly.`
+        )
+      )
+    }
+  }
+  onProgress({ version, done: true, ok: true })
+  return { ok: true }
 }
 
 export async function codexUninstall(version: string): Promise<void> {
@@ -235,7 +343,8 @@ export function codexBin(): string {
       '.bin',
       process.platform === 'win32' ? 'codex.cmd' : 'codex'
     )
-    if (fs.existsSync(bin)) return process.platform === 'win32' && /\s/.test(bin) ? `"${bin}"` : bin
+    // 실행 파일까지 있어야 그 설치본 — 반쪽 폴더면 전역으로 폴백(없으면 스폰 실패가 사유로 올라간다)
+    if (fs.existsSync(bin) && codexExeAt(activeVersion)) return process.platform === 'win32' && /\s/.test(bin) ? `"${bin}"` : bin
   }
   return 'codex'
 }

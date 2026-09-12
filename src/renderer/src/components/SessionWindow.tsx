@@ -777,6 +777,7 @@ export function SessionWindow(): React.ReactElement {
               {twin.start > 0 && <div className="thread-older" ref={twin.sentinelRef} aria-hidden="true" />}
               {state.messages.slice(twin.start).map((m, i) => (
                 <MessageView
+                  cwd={state.session?.cwd || cwd}
                   key={m.id}
                   item={m}
                   live={twin.start + i === liveIdx && m.kind === 'msg' && m.role === 'assistant' && !m.error}
@@ -805,6 +806,9 @@ export function SessionWindow(): React.ReactElement {
         <ChatFind scrollRef={scrollRef} onOpenChange={(o) => o && twin.reveal()} />
         <MouseGestureLayer target={scrollEl} actions={gestures} />
         <WorkBar
+          cwd={state.session?.cwd || cwd}
+          generations={state.generations}
+          workFolders={state.workFolders}
           todos={state.todos}
           files={state.files}
           subagents={state.subagents}

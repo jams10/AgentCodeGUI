@@ -630,6 +630,7 @@ export const PanelView = memo(function PanelView({
               {twin.start > 0 && <div className="thread-older" ref={twin.sentinelRef} aria-hidden="true" />}
               {state.messages.slice(twin.start).map((m, i) => (
                 <MessageView
+                  cwd={state.session?.cwd || cwd}
                   key={m.id}
                   item={m}
                   live={twin.start + i === liveIdx && m.kind === 'msg' && m.role === 'assistant' && !m.error}
@@ -685,6 +686,9 @@ export const PanelView = memo(function PanelView({
       {/* 본채팅과 완전히 같은 WorkBar(할 일·서브에이전트·백그라운드 셸·변경된 파일·컨텍스트)
           + 진짜 Composer(모델 칩·"/" 팔레트·"@" 멘션·첨부·예약 큐) — zoom .8 미니어처 */}
       <WorkBar
+        cwd={state.session?.cwd || cwd}
+        generations={state.generations}
+        workFolders={state.workFolders}
         todos={state.todos}
         files={state.files}
         subagents={state.subagents}

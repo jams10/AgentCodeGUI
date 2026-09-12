@@ -22,6 +22,25 @@ export interface WebLink {
   url: string
 }
 
+export interface GenerationRecord {
+  id: string
+  service: string
+  tool: string
+  startedAt: number
+  updatedAt: number
+  status: 'running' | 'submitted' | 'completed' | 'error' | 'unknown'
+  prompt: string | null
+  model: string | null
+  parameters: string
+  truncated: boolean
+  jobIds: string[]
+  outputs: string[]
+  usage: { credits: number | null; tokens: number | null; inputTokens: number | null; outputTokens: number | null; usd: number | null }
+  durationMs: number | null
+}
+
+export interface WorkPathInfo { path: string; folder: string; kind: 'file' | 'directory' }
+
 export interface ToolLogItem {
   id: string // tool_use id
   verb: string // display label: Search / Read / Write / Edit / Bash / Task …
@@ -337,6 +356,8 @@ export interface AgentQuestion {
   header: string // short chip label, e.g. "정리 대상"
   multiSelect: boolean
   options: AgentQuestionOption[]
+  /** MCP boolean/enum forms must preserve their server-declared values. */
+  allowCustom?: boolean
 }
 
 // ── 백그라운드 작업 (Claude Code의 셸 추적 패리티) ────────────
@@ -389,6 +410,8 @@ export interface BgTaskRequest {
 
 // ── Engine → Renderer events ─────────────────────────────────
 export type EngineEvent =
+  | { type: 'generation'; runId: string; record: GenerationRecord; followup?: boolean }
+  | { type: 'work-folder'; runId: string; path: string }
   | { type: 'status'; runId: string; status: AgentStatus }
   | { type: 'session'; runId: string; sessionId: string; model: string; cwd: string; tools: string[] }
   | { type: 'assistant-done'; runId: string; messageId: string; text: string }
@@ -428,6 +451,7 @@ export type EngineEvent =
   // the agent called AskUserQuestion → surface an interactive choice card.
   // engine: 카드 헤더 표기용('Claude의 질문'/'GPT의 질문') — 생략하면 claude
   | { type: 'question-request'; runId: string; requestId: string; questions: AgentQuestion[]; engine?: EngineId }
+  | { type: 'question-resolved'; runId: string; requestId: string }
   | {
       type: 'result'
       runId: string
@@ -898,17 +922,100 @@ export interface AppUser {
 // ── MCP servers (Model Context Protocol) ─────────────────────
 /** Coarse scope used for the 전체/전역/로컬 filter tabs. */
 export type McpScope = 'global' | 'local'
-/** Finer source of a server config, shown as the row badge. */
-export type McpOrigin = 'user' | 'project' | 'local'
+/** Finer source of a server config, shown as the row badge.
+ *  app = 앱 등록(모든 대화·모든 계정에 주입) · plugin = 설치된 플러그인 번들 ·
+ *  user/local = 터미널 ~/.claude.json(앱 실행엔 미적용 — 가져오기 필요) · project = .mcp.json */
+export type McpOrigin = 'app' | 'plugin' | 'user' | 'project' | 'local'
 export type McpTransport = 'stdio' | 'http' | 'sse' | 'unknown'
+/** 앱 등록 서버 설정 원문. command/args/env/url/headers 값 안의 `${KEY}`는 실행 직전
+ *  보관함(설정 → Keys)의 키로 치환된다 — 렌더러엔 항상 이 원문만 오간다. */
+export type McpServerSpec =
+  | { type: 'stdio'; command: string; args?: string[]; env?: Record<string, string> }
+  | { type: 'http' | 'sse'; url: string; headers?: Record<string, string> }
+/** http/sse 서버의 OAuth 연결 상태 — 앱 보관소(mcp-oauth.json)의 토큰 기준. */
+export interface McpOAuthState {
+  connected: boolean // 액세스 또는 리프레시 토큰이 있음(만료된 액세스 토큰은 CLI가 리프레시)
+  expiresAt: number | null // 액세스 토큰 만료(ms epoch), 모르면 null
+  hasRefresh: boolean
+}
 /** A discovered MCP server, plus its in-app on/off state. */
 export interface McpServerInfo {
-  name: string // server name (the key in the mcpServers map)
-  scope: McpScope // global = ~/.claude.json user servers · local = project / private
-  origin: McpOrigin // user (~/.claude.json) · project (.mcp.json) · local (private)
+  name: string // server name (the key in the mcpServers map; plugin은 plugin:<plugin>:<server>)
+  scope: McpScope // global = 앱/플러그인/사용자 전역 · local = project / private
+  origin: McpOrigin
   transport: McpTransport // stdio (command) | http | sse
   detail: string // command line (stdio) or URL (http/sse)
   enabled: boolean // false → turned off in the app (engine gets deniedMcpServers)
+  applied: boolean // 앱 실행(계정별 격리 config)이 실제로 이 서버를 로드하는지
+  oauth: McpOAuthState | null // http/sse만 — stdio는 null
+  spec?: McpServerSpec // 설정 원문(${KEY} 미치환) — 앱 행은 편집 폼, 터미널 행은 가져오기 재료
+  source?: string // 설정이 온 파일 경로(플러그인·프로젝트·터미널)
+}
+/** 터미널 Claude Code 설정(~/.claude.json 전역·프로젝트별, .mcp.json)에서 앱으로 가져올 수 있는 서버 */
+export interface McpImportCandidate {
+  name: string
+  origin: McpOrigin
+  source: string // 어디서 왔는지(파일 경로 또는 프로젝트 폴더)
+  spec: McpServerSpec
+  exists: boolean // 같은 이름이 이미 앱에 등록돼 있음(가져오면 덮어씀)
+}
+/** main→renderer: 앱 안 MCP OAuth 진행 상황 */
+export interface McpOAuthEvent {
+  name: string
+  phase: 'url' | 'done' | 'error' | 'cancelled'
+  url?: string // phase 'url' — 브라우저가 안 열렸을 때의 폴백 링크
+  error?: string
+}
+export interface McpPrefs {
+  allowProjectMcp: boolean // 프로젝트 .mcp.json 서버를 묻지 않고 허용(enableAllProjectMcpServers)
+}
+
+// ── Keys — API 키·시크릿 보관함 (설정 → Keys) ────────────────
+/** 보관함 항목 스냅샷 — 값 원문은 절대 렌더러로 오지 않는다(끝 4자리만). */
+export interface SecretInfo {
+  name: string // 환경변수 이름 규칙([A-Za-z_][A-Za-z0-9_]*) — MCP 설정에서 ${NAME}로 참조
+  tail: string // 표시용 끝 4자리
+  env: boolean // true = 모든 엔진 실행의 환경변수로도 주입(스킬·스크립트가 바로 읽음)
+  envLocked: boolean // 예약 이름(ANTHROPIC_API_KEY 등)이라 env 주입 불가 — ${NAME} 참조만
+  note: string
+  updatedAt: number
+}
+
+export interface TripoStatus {
+  keySaved: boolean
+  keyTail: string
+  registered: boolean
+  enabled: boolean
+  nameConflict: boolean
+  cliAvailable: boolean
+  cliVersion: string
+}
+export type TripoConnectionResult = { ok: true; balance: number } | { ok: false; error: string }
+
+export interface ComfyStatus {
+  keySaved: boolean
+  keyTail: string
+  registered: boolean
+  enabled: boolean
+  nameConflict: boolean
+  authMode: 'api-key' | 'oauth-or-custom' | 'unconfigured'
+}
+export interface ComfyConnectionResult {
+  mcp: { ok: boolean; toolCount: number; elapsedMs: number; error?: string }
+  credits: ServiceCreditInfo
+}
+
+export type CreditService = 'tripo' | 'comfy-cloud'
+export interface ServiceCreditInfo {
+  service: CreditService
+  state: 'ready' | 'unconfigured' | 'auth-required' | 'unavailable'
+  balance: number | null // credits, never model tokens; null means unknown
+  frozen: number | null
+  account: string | null
+  plan: string | null
+  checkedAt: number | null // last successful balance check
+  stale: boolean
+  note: string | null
 }
 
 // ── Skills (SKILL.md agent capabilities) ─────────────────────
@@ -1049,8 +1156,33 @@ export const IPC = {
   uiLangChanged: 'ui-lang:changed', // UI 언어(ko/en) 브로드캐스트 → 전 창 표시 언어 동기화
   skillList: 'skill:list', // enumerate global + project skills with their on/off state
   skillSetEnabled: 'skill:set-enabled', // turn a skill on/off (persisted to the app home)
-  mcpList: 'mcp:list', // enumerate user + project + local MCP servers with on/off state
+  mcpList: 'mcp:list', // enumerate app + plugin + user + project + local MCP servers with on/off·OAuth state
   mcpSetEnabled: 'mcp:set-enabled', // turn an MCP server on/off (persisted to the app home)
+  mcpUpsert: 'mcp:upsert', // ({ name, spec, prevName? }) 앱 등록 서버 추가/편집 — 모든 대화·계정에 주입
+  mcpRemove: 'mcp:remove', // (name) 앱 등록 서버 삭제
+  mcpImportCandidates: 'mcp:import-candidates', // (cwd) 터미널 ~/.claude.json·.mcp.json에서 가져올 수 있는 서버 목록
+  mcpImport: 'mcp:import', // ({ name, spec }[]) 후보를 앱 등록으로 복사
+  mcpPrefsGet: 'mcp:prefs-get',
+  mcpPrefsSet: 'mcp:prefs-set', // (McpPrefs)
+  mcpOAuthConnect: 'mcp:oauth-connect', // ({ name, cwd }) 앱 안에서 OAuth(브라우저) 연결 — 완료까지 대기, { ok, error? }
+  mcpOAuthCancel: 'mcp:oauth-cancel', // 진행 중인 OAuth 중단
+  mcpOAuthDisconnect: 'mcp:oauth-disconnect', // ({ name, cwd }) 저장된 토큰 삭제(앱 보관소 + 계정 폴더)
+  mcpOAuthImportGlobal: 'mcp:oauth-import-global', // 터미널(~/.claude/.credentials.json)에서 MCP 토큰 가져오기 — 가져온 수
+  mcpOAuthEvent: 'mcp:oauth-event', // main→renderer: McpOAuthEvent (폴백 URL·완료·오류)
+  // Keys — API 키·시크릿 보관함. 값 원문은 메인에만(safeStorage) — 렌더러엔 끝 4자리뿐.
+  secretsList: 'secrets:list',
+  secretsSet: 'secrets:set', // ({ name, value, env?, note? }) 추가/변경 — 새 목록
+  secretsRemove: 'secrets:remove', // (name) — 새 목록
+  secretsSetEnv: 'secrets:set-env', // ({ name, env }) 환경변수 주입 토글 — 새 목록
+  tripoStatus: 'tripo:status',
+  comfyStatus: 'comfy:status',
+  comfyRegister: 'comfy:register',
+  comfyCheck: 'comfy:check',
+  tripoRegister: 'tripo:register', // optional API key -> vault + bundled official MCP preset
+  tripoCheck: 'tripo:check', // read-only balance/auth check, never generates an asset
+  serviceCreditsGet: 'credits:get', // provider balance only; no credentials cross IPC
+  workPathsInspect: 'work:inspect-paths',
+  workFolderOpen: 'work:open-folder',
   shellOpenPath: 'shell:open-path', // open a file with the OS default app
   shellRevealPath: 'shell:reveal-path', // reveal a file/folder in the OS file manager (Explorer/Finder)
   fsRename: 'fs:rename', // rename a file/folder within its parent (explorer context menu)

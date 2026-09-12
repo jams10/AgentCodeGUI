@@ -21,8 +21,14 @@ import { codexAccountRunDir, codexApiKeyRunDir, codexDefaultAccountEmail, syncCo
 import { parseUnifiedDiff, reverseApplyUnified } from './unidiff'
 import { computeLineDiff, newFileDiff } from '../claude/diff'
 import { getOpenaiApiKey } from '../apiConfig'
+import { secretEnv } from '../secrets'
+import { codexAppMcpConfig, mcpSpawnFingerprint } from '../mcp'
 import { codexBin } from './versions'
+import { codexPolicy } from './policy'
+import { mcpForm, mcpFormResponse, type McpForm } from './elicitation'
 import { lspManager } from '../lsp/manager'
+import { GenerationCapture } from '../generationRecords'
+import { reportedGenerationUsage } from '../generationUsage'
 import { isEn, t } from '../lang'
 import type {
   AgentQuestion,
@@ -33,7 +39,6 @@ import type {
   EffortId,
   EngineEvent,
   FileDiff,
-  ModeId,
   PermissionResponse,
   QuestionResponse,
   RunRequest,
@@ -52,7 +57,7 @@ type Emit = (event: EngineEvent) => void
 //    백그라운드 터미널로 등록된다(폴링·중지·출력은 아래 bgTerms 배선).
 const THREAD_CONFIG = {
   tools: { experimental_request_user_input: {} },
-  features: { default_mode_request_user_input: true, unified_exec: true }
+  features: { default_mode_request_user_input: true, unified_exec: true, mcp_oauth_refresh_coordination: true }
 }
 
 let runCounter = 0
@@ -69,26 +74,6 @@ function codexEffort(effort: EffortId, supported: string[] | null): string {
     if (supported.includes(e)) return e
   }
   return supported[supported.length - 1] ?? 'medium'
-}
-
-/** picker ModeId → Codex approvalPolicy + sandbox. Claude 모드 의미에 최대한 대응. */
-function codexPolicy(mode: ModeId): { approvalPolicy: string; sandbox: string } {
-  switch (mode) {
-    case 'plan':
-      // 플랜 대응: 읽기 전용 샌드박스 — 계획/분석만 하고 변경은 승인 후 다음 턴에서
-      return { approvalPolicy: 'on-request', sandbox: 'read-only' }
-    case 'acceptEdits':
-      // 워크스페이스 안 파일 편집은 자동, 그 밖(네트워크·바깥 경로)은 요청 시 승인
-      return { approvalPolicy: 'on-request', sandbox: 'workspace-write' }
-    case 'auto':
-      return { approvalPolicy: 'never', sandbox: 'workspace-write' }
-    case 'bypass':
-      return { approvalPolicy: 'never', sandbox: 'danger-full-access' }
-    case 'normal':
-    default:
-      // 변경마다 승인 요청
-      return { approvalPolicy: 'untrusted', sandbox: 'workspace-write' }
-  }
 }
 
 // ── 파일 변경 미리보기 정책 (Claude 엔진 fileChangePending과 같은 값·같은 이유) ──
@@ -194,6 +179,7 @@ interface Pending {
 
 export class CodexEngine {
   private emit: Emit
+  private activity: GenerationCapture
   private proc: ChildProcessWithoutNullStreams | null = null
   private stdoutBuf = ''
   private rpcId = 0
@@ -201,6 +187,7 @@ export class CodexEngine {
   private initialized: Promise<void> | null = null
   /** 지금 프로세스가 어느 계정의 CODEX_HOME으로 떠 있나 — 계정이 바뀌면 재기동 */
   private procHome: string | null = null
+  private procMcpFingerprint = ''
   /** 이번 실행이 소비하는 계정 — finishRun에서 리프레시 토큰 되싱크에 쓴다 */
   private activeAccountEmail: string | null = null
 
@@ -227,6 +214,8 @@ export class CodexEngine {
   private permCounter = 0
   /** 질문 카드 requestId → 서버 요청 id + 질문 id 순서 (위치 기반 답 → id 매핑용) */
   private questionWaiters = new Map<string, { rpcId: number | string; qids: string[] }>()
+  private mcpWaiters = new Map<string, { rpcId: number | string; form: McpForm }>()
+  private shownMcpRequest: string | null = null
   /** 서버 요청이 아닌 앱 자체 질문 카드(수용량 전환 확인) — requestId → resolve */
   private localQuestionWaiters = new Map<string, (answers: string[][] | null) => void>()
 
@@ -275,7 +264,8 @@ export class CodexEngine {
   private modelCache: { at: number; models: CodexModelInfo[] } | null = null
 
   constructor(emit: Emit) {
-    this.emit = emit
+    this.activity = new GenerationCapture(emit, reportedGenerationUsage)
+    this.emit = event => { this.activity.observe(event); emit(event) }
   }
 
   get isRunning(): boolean {
@@ -292,30 +282,36 @@ export class CodexEngine {
   private setHome(home: string | null): void {
     if (this.procHome === home) return
     this.procHome = home
-    if (this.proc && this.proc.exitCode === null) {
-      try {
-        this.proc.kill() // exit 핸들러가 pending·initialized를 정리한다
-      } catch {
-        /* ignore */
-      }
-      this.proc = null
-      this.initialized = null
-    }
+    this.resetProc()
+  }
+
+  private resetProc(): void {
+    const previous = this.proc
+    this.proc = null
+    this.initialized = null
+    this.stdoutBuf = ''
+    for (const [, p] of this.pending) p.reject(new Error('Codex process configuration changed'))
+    this.pending.clear()
+    try { previous?.kill() } catch { /* process already exited */ }
   }
 
   private ensureProc(): ChildProcessWithoutNullStreams {
     if (this.proc && this.proc.exitCode === null) return this.proc
+    this.procMcpFingerprint = mcpSpawnFingerprint()
     // 앱이 설치·관리하는 codex 실행본(없으면 전역 PATH 폴백) — .cmd라 shell 경유가 견고
     const proc = spawn(codexBin(), ['app-server'], {
       shell: process.platform === 'win32',
       stdio: ['pipe', 'pipe', 'pipe'],
       cwd: os.homedir(),
-      env: { ...process.env, ...(this.procHome ? { CODEX_HOME: this.procHome } : {}) }
+      // 설정 → Keys의 env 항목도 펼친다(Claude 엔진과 동일 — 스킬·스크립트가 바로 읽게)
+      env: { ...process.env, ...secretEnv(), ...(this.procHome ? { CODEX_HOME: this.procHome } : {}) }
     })
     proc.on('error', () => {
       /* exit 핸들러가 정리 */
     })
     proc.on('exit', () => {
+      // An old process may exit after its replacement has already started.
+      if (this.proc !== proc) return
       // 진행 중이던 요청은 모두 실패 처리 — 다음 run이 새 프로세스를 띄운다
       for (const [, p] of this.pending) p.reject(new Error(t('codex app-server 종료', 'codex app-server exited')))
       this.pending.clear()
@@ -330,7 +326,7 @@ export class CodexEngine {
         this.finishRun('error')
       }
     })
-    proc.stdout.on('data', (d: Buffer) => this.onStdout(d.toString('utf8')))
+    proc.stdout.on('data', (d: Buffer) => { if (this.proc === proc) this.onStdout(d.toString('utf8')) })
     proc.stderr.on('data', () => {
       /* 진단 로그 — 이벤트로 올리지 않는다 */
     })
@@ -425,6 +421,19 @@ export class CodexEngine {
       this.emit({ type: 'permission-request', runId, requestId, toolName, summary, engine: 'codex' })
     }
     switch (method) {
+      case 'mcpServer/elicitation/request': {
+        try {
+          const form = mcpForm(params)
+          const requestId = `cxmcp-${LAUNCH_TAG}-${++this.permCounter}`
+          this.mcpWaiters.set(requestId, { rpcId: id, form })
+          this.showNextMcpRequest()
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error)
+          this.emit({ type: 'notice', runId, text: t(`MCP 서버 ${String(params.serverName ?? '')}의 입력 요청을 표시하지 못했습니다: ${reason}. 사용자가 취소한 요청이 아닙니다.`, `Could not display input requested by MCP server ${String(params.serverName ?? '')}: ${reason}. This was not a user cancellation.`) })
+          this.respondRpcError(id, 'MCP input UI unavailable: ' + reason)
+        }
+        return
+      }
       case 'item/commandExecution/requestApproval': {
         const cmd = (params.command as string) ?? ''
         const reason = (params.reason as string) ?? ''
@@ -465,6 +474,9 @@ export class CodexEngine {
         }
         const requestId = `cxq-${LAUNCH_TAG}-${++this.permCounter}`
         this.questionWaiters.set(requestId, { rpcId: id, qids: raw.map((q) => String(q.id ?? '')) })
+        // The shared dialog can show one card. Redisplay a parked MCP form once
+        // this ordinary question is answered, without resolving it implicitly.
+        this.shownMcpRequest = null
         this.emit({ type: 'question-request', runId, requestId, questions, engine: 'codex' })
         return
       }
@@ -477,6 +489,17 @@ export class CodexEngine {
   private onNotification(method: string, params: Record<string, unknown>): void {
     const runId = this.activeRunId
     if (!runId) return
+    if (method === 'serverRequest/resolved') {
+      for (const [requestId, waiter] of this.mcpWaiters) {
+        if (String(waiter.rpcId) !== String(params.requestId)) continue
+        this.mcpWaiters.delete(requestId)
+        this.emit({ type: 'question-resolved', runId, requestId })
+        if (this.shownMcpRequest === requestId) this.shownMcpRequest = null
+        this.showNextMcpRequest()
+        break
+      }
+      return
+    }
     // 다른 스레드의 알림 — 추적 중인 서브에이전트 스레드면 카드로 라우팅(메인 채팅
     // 오염 금지), 아니면 무시 (한 프로세스에 여러 스레드가 살 수 있다)
     const threadId = params.threadId as string | undefined
@@ -636,6 +659,8 @@ export class CodexEngine {
     const type = item.type as string
     const id = String(item.id ?? '')
     if (!id) return
+    if (type === 'mcpToolCall') this.activity.start(runId, id, String(item.tool ?? ''), item.arguments, String(item.server ?? ''))
+    if (type === 'commandExecution' && typeof item.cwd === 'string') this.emit({ type: 'work-folder', runId, path: item.cwd })
     const start = (kind: ToolLogItem['kind'], verb: string, target: string): void => {
       this.items.set(id, { kind, startedAt: Date.now() })
       this.emit({ type: 'tool-start', runId, tool: { id, verb, kind, target, status: 'running' } })
@@ -756,6 +781,7 @@ export class CodexEngine {
         const type = String(item.type ?? '')
         const id = String(item.id ?? '')
         if (!id) return
+        if (type === 'mcpToolCall') this.activity.start(runId, id, String(item.tool ?? ''), item.arguments, String(item.server ?? ''))
         const tool = (kind: ToolLogItem['kind'], verb: string, target: string): void => {
           this.items.set(id, { kind, startedAt: Date.now() })
           this.emit({ type: 'tool-start', runId, tool: { id, verb, kind, target, status: 'running', parentToolId: aid } })
@@ -772,6 +798,7 @@ export class CodexEngine {
         const item = params.item as Record<string, unknown> | undefined
         if (!item) return
         const id = String(item.id ?? '')
+        if (item.type === 'mcpToolCall') this.activity.finish(runId, id, item.result ?? item.error, /fail|declin/i.test(String(item.status ?? '')))
         const meta = this.items.get(id)
         if (meta) {
           const type = String(item.type ?? '')
@@ -831,6 +858,7 @@ export class CodexEngine {
     if (!item) return
     const type = item.type as string
     const id = String(item.id ?? '')
+    if (type === 'mcpToolCall') this.activity.finish(runId, id, item.result ?? item.error, /fail|declin/i.test(String(item.status ?? '')))
     switch (type) {
       case 'agentMessage': {
         this.emit({ type: 'assistant-done', runId, messageId: `cx${LAUNCH_TAG}-${id}`, text: String(item.text ?? '') })
@@ -1350,6 +1378,12 @@ export class CodexEngine {
     this.permWaiters.clear()
     for (const [, w] of this.questionWaiters) this.respondRpcError(w.rpcId, 'run ended')
     this.questionWaiters.clear()
+    for (const [requestId, w] of this.mcpWaiters) {
+      this.respondRpc(w.rpcId, { action: 'cancel', content: null })
+      this.emit({ type: 'question-resolved', runId, requestId })
+    }
+    this.mcpWaiters.clear()
+    this.shownMcpRequest = null
     // 수용량 전환 확인 카드도 정리 — null로 풀면 ask 흐름이 runId 가드로 조용히 끝난다
     for (const [, resolve] of this.localQuestionWaiters) resolve(null)
     this.localQuestionWaiters.clear()
@@ -1365,6 +1399,15 @@ export class CodexEngine {
   }
 
   // ── 공개 계약 (ClaudeEngine과 동일) ──────────────────────────
+  private showNextMcpRequest(): void {
+    if (this.shownMcpRequest || !this.activeRunId || this.questionWaiters.size || this.localQuestionWaiters.size) return
+    const next = this.mcpWaiters.entries().next().value
+    if (!next) return
+    const [requestId, waiter] = next
+    this.shownMcpRequest = requestId
+    this.emit({ type: 'question-request', runId: this.activeRunId, requestId, questions: waiter.form.questions, engine: 'codex' })
+  }
+
   respondPermission(res: PermissionResponse): void {
     const w = this.permWaiters.get(res.requestId)
     if (!w) return
@@ -1380,11 +1423,29 @@ export class CodexEngine {
   }
 
   respondQuestion(res: QuestionResponse): void {
+    const mcp = this.mcpWaiters.get(res.requestId)
+    if (mcp) {
+      if (this.shownMcpRequest !== res.requestId) return
+      this.mcpWaiters.delete(res.requestId)
+      this.shownMcpRequest = null
+      try {
+        this.respondRpc(mcp.rpcId, mcpFormResponse(mcp.form, res.answers))
+      } catch (error) {
+        // Validation failure is a client error, never an invented user decline.
+        const message = error instanceof Error ? error.message : String(error)
+        this.respondRpcError(mcp.rpcId, message)
+        if (this.activeRunId) this.emit({ type: 'notice', runId: this.activeRunId, text: message })
+      }
+      if (this.activeRunId) this.emit({ type: 'question-resolved', runId: this.activeRunId, requestId: res.requestId })
+      this.showNextMcpRequest()
+      return
+    }
     // 앱 자체 질문(수용량 전환 확인) — 서버 rpc가 없으니 로컬 waiter로 푼다
     const local = this.localQuestionWaiters.get(res.requestId)
     if (local) {
       this.localQuestionWaiters.delete(res.requestId)
       local(res.answers)
+      this.showNextMcpRequest()
       return
     }
     const w = this.questionWaiters.get(res.requestId)
@@ -1394,6 +1455,7 @@ export class CodexEngine {
       // 건너뛰기 — 오류로 풀면 도구 호출만 실패하고 턴은 이어진다 (실측: 모델이
       // "응답을 받지 못했다"로 인지하고 진행)
       this.respondRpcError(w.rpcId, 'user dismissed the question without answering')
+      this.showNextMcpRequest()
       return
     }
     const answers: Record<string, { answers: string[] }> = {}
@@ -1401,6 +1463,7 @@ export class CodexEngine {
       answers[qid] = { answers: res.answers?.[i] ?? [] }
     })
     this.respondRpc(w.rpcId, { answers })
+    this.showNextMcpRequest()
   }
 
   // 셸 칩의 중지 버튼 — backgroundTerminals/terminate. 정착(bg-task-end)은 곧바로
@@ -1524,6 +1587,9 @@ export class CodexEngine {
   async run(req: RunRequest): Promise<string> {
     if (this.isRunning) await this.cancel()
 
+    // Refresh keys and MCP tools only at the next run boundary, never mid-turn.
+    if (this.proc && this.procMcpFingerprint !== mcpSpawnFingerprint()) this.resetProc()
+
     this.lastUsedAt = Date.now()
     const runId = nextRunId()
     this.activeRunId = runId
@@ -1547,9 +1613,10 @@ export class CodexEngine {
     // 수정이 승인 없이 통과하게 하고(읽기는 원래 전역 허용), ② developerInstructions에
     // 목록을 실어 모델이 그 폴더의 존재를 알게 한다 (Claude additionalDirectories 대응)
     const addDirs = (req.addDirs ?? []).filter((p) => typeof p === 'string' && p.trim())
-    const threadConfig = addDirs.length
-      ? { ...THREAD_CONFIG, sandbox_workspace_write: { writable_roots: addDirs } }
-      : THREAD_CONFIG
+    const threadConfig = {
+      ...THREAD_CONFIG, ...codexAppMcpConfig(),
+      ...(addDirs.length ? { sandbox_workspace_write: { writable_roots: addDirs } } : {})
+    }
     const devNotes: string[] = []
     if (req.systemPrompt?.trim()) devNotes.push(req.systemPrompt.trim())
     if (addDirs.length)
@@ -1694,11 +1761,6 @@ export class CodexEngine {
       clearInterval(this.bgPollTimer)
       this.bgPollTimer = null
     }
-    try {
-      this.proc?.kill()
-    } catch {
-      /* ignore */
-    }
-    this.proc = null
+    this.resetProc()
   }
 }

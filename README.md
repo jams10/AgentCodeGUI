@@ -31,6 +31,9 @@ AgentCodeGUI is a Windows app that brings the terminal coding agents (**Claude C
 
 ## Features
 
+- **Tripo 3D generation** — Settings → Tripo saves your API key, registers the bundled official MCP server, and checks authentication through a balance query. Generate and download assets from Claude/Codex chats. [Setup and validation](docs/tripo.md)
+- **ComfyCloud** — Settings → ComfyCloud encrypts your API key and checks MCP tools and credits separately. Claude/Codex chats and balance queries use the same key. [Connection and authentication](docs/comfy-cloud.md)
+
 **Chat · Agents**
 
 - Streaming replies · tool-call logs · approval/question cards (answered ones stay in the thread) · queue messages while a run is going

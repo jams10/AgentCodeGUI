@@ -5,6 +5,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { EngineRouter } from './engineRouter'
+import { inspectWorkPaths } from './workPaths'
 import { coalesceStream } from './streamCoalesce'
 import { CodexEngine } from './codex/engine'
 import * as engineVersions from './engine/versions'
@@ -26,7 +27,13 @@ import { readMulti, readMultiSession, writeMulti } from './maStore'
 import { readTalk, writeTalk } from './talkStore'
 import { readSessionChats, writeSessionChats, type SessionChatRecord } from './sessionChats'
 import { listSkills, setSkillEnabled } from './skills'
-import { listMcpServers, setMcpEnabled } from './mcp'
+import { listMcpServers, setMcpEnabled, upsertAppServer, removeAppServer, importCandidates, importAppServers, mcpPrefs, setMcpPrefs, findUrlSpec } from './mcp'
+import { connectMcpOAuth, cancelMcpOAuth, disconnectMcpOAuth, importGlobalMcpOAuth, importGlobalMcpOAuthOnce } from './mcpOAuth'
+import { listSecrets, setSecret, removeSecret, setSecretEnv } from './secrets'
+import { tripoStatus, registerTripo, checkTripoConnection, refreshTripoRegistration } from './tripo'
+import { getServiceCredits } from './serviceCredits'
+import { comfyStatus, registerComfy, checkComfyConnection } from './comfy'
+import type { CreditService } from '@shared/protocol'
 import { listProjectFiles, listDir } from './files'
 import {
   gitRepos,
@@ -49,7 +56,7 @@ import { lspManager } from './lsp/manager'
 import { initAutoUpdater, checkForUpdates, quitAndInstall, getUpdateStatus } from './updater'
 import { IPC } from '@shared/protocol'
 import { ATTACH_IMAGE_EXTS, ATTACH_TEXT_EXTS } from '@shared/attachments'
-import type { EngineEvent, RunRequest, PermissionResponse, QuestionResponse, BgTaskRequest, BtwOpenRequest, UsageInfo, UsageWindow, FileReadResult, FileWriteResult, UserProfile, MultiRunRequest, MultiPermissionResponse, MultiQuestionResponse, MultiEngineEvent, PanelPopState, PanelPopClosed, LspPos, AgentStatus, SessionWindowInfo, SessionPersistPayload, SessionHydrateData, EngineUpdateItem, EngineUpdateStatus, ModelId, EffortId, TrayMenuItem } from '@shared/protocol'
+import type { EngineEvent, RunRequest, PermissionResponse, QuestionResponse, BgTaskRequest, BtwOpenRequest, UsageInfo, UsageWindow, FileReadResult, FileWriteResult, UserProfile, MultiRunRequest, MultiPermissionResponse, MultiQuestionResponse, MultiEngineEvent, PanelPopState, PanelPopClosed, LspPos, AgentStatus, SessionWindowInfo, SessionPersistPayload, SessionHydrateData, EngineUpdateItem, EngineUpdateStatus, ModelId, EffortId, TrayMenuItem, McpServerSpec, McpPrefs } from '@shared/protocol'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -1502,7 +1509,54 @@ function registerIpc(): void {
   ipcMain.handle(IPC.mcpSetEnabled, async (_e, a: { name: string; enabled: boolean }) =>
     setMcpEnabled(a.name, a.enabled)
   )
+  // 앱 등록 서버(모든 대화·계정 공통) — 추가/편집/삭제/터미널 설정 가져오기
+  ipcMain.handle(IPC.mcpUpsert, async (_e, a: { name: string; spec: McpServerSpec; prevName?: string }) =>
+    upsertAppServer(String(a?.name ?? ''), a.spec, a.prevName)
+  )
+  ipcMain.handle(IPC.mcpRemove, async (_e, name: string) => removeAppServer(String(name ?? '')))
+  ipcMain.handle(IPC.mcpImportCandidates, async (_e, cwd: string) => importCandidates(cwd || ''))
+  ipcMain.handle(IPC.mcpImport, async (_e, items: { name: string; spec: McpServerSpec }[]) =>
+    importAppServers(Array.isArray(items) ? items : [])
+  )
+  ipcMain.handle(IPC.mcpPrefsGet, async () => mcpPrefs())
+  ipcMain.handle(IPC.mcpPrefsSet, async (_e, p: Partial<McpPrefs>) => setMcpPrefs(p ?? {}))
+  // MCP OAuth — 앱 안에서 브라우저 로그인, 토큰은 앱 보관소 + 모든 계정 폴더로
+  ipcMain.handle(IPC.mcpOAuthConnect, async (e, a: { name: string; cwd: string }) => {
+    const spec = findUrlSpec(String(a?.name ?? ''), a?.cwd || '')
+    if (!spec) return { ok: false, error: t('http/sse 서버가 아니거나 찾을 수 없어요.', 'Not an http/sse server, or not found.') }
+    return connectMcpOAuth(a.name, spec, e.sender)
+  })
+  ipcMain.handle(IPC.mcpOAuthCancel, async () => cancelMcpOAuth())
+  ipcMain.handle(IPC.mcpOAuthDisconnect, async (_e, a: { name: string; cwd: string }) => {
+    const spec = findUrlSpec(String(a?.name ?? ''), a?.cwd || '')
+    if (spec) disconnectMcpOAuth(a.name, spec)
+  })
+  ipcMain.handle(IPC.mcpOAuthImportGlobal, async () => importGlobalMcpOAuth())
+  // Keys — API 키·시크릿 보관함(값 원문은 메인에만)
+  ipcMain.handle(IPC.secretsList, async () => listSecrets())
+  refreshTripoRegistration()
+  ipcMain.handle(IPC.tripoStatus, async () => tripoStatus())
+  ipcMain.handle(IPC.comfyStatus, async () => comfyStatus())
+  ipcMain.handle(IPC.comfyRegister, async (_e, apiKey?: string) => registerComfy(apiKey))
+  ipcMain.handle(IPC.comfyCheck, async () => checkComfyConnection())
+  ipcMain.handle(IPC.tripoRegister, async (_e, apiKey?: string) => registerTripo(apiKey))
+  ipcMain.handle(IPC.tripoCheck, async () => checkTripoConnection())
+  ipcMain.handle(IPC.serviceCreditsGet, async (_e, a: { service: CreditService; fresh?: boolean; codexAccount?: string }) =>
+    getServiceCredits(a?.service, a?.fresh === true, typeof a?.codexAccount === 'string' ? a.codexAccount : undefined))
+  ipcMain.handle(IPC.secretsSet, async (_e, a: { name: string; value: string; env?: boolean; note?: string }) =>
+    setSecret(String(a?.name ?? ''), String(a?.value ?? ''), { env: a?.env, note: a?.note })
+  )
+  ipcMain.handle(IPC.secretsRemove, async (_e, name: string) => removeSecret(String(name ?? '')))
+  ipcMain.handle(IPC.secretsSetEnv, async (_e, a: { name: string; env: boolean }) => setSecretEnv(String(a?.name ?? ''), !!a?.env))
 
+  ipcMain.handle(IPC.workPathsInspect, async (_e, a: { cwd: string; paths: string[] }) =>
+    inspectWorkPaths(typeof a?.cwd === 'string' ? a.cwd : '', a?.paths))
+  ipcMain.handle(IPC.workFolderOpen, async (_e, a: { cwd: string; path: string }) => {
+    const [found] = await inspectWorkPaths(typeof a.cwd === 'string' ? a.cwd : '', [a.path])
+    if (!found) throw new Error(t('폴더가 이동되었거나 삭제되었어요.', 'The folder was moved or deleted.'))
+    const error = await shell.openPath(found.folder)
+    if (error) throw new Error(t('파일 탐색기에서 폴더를 열지 못했어요.', 'Could not open the folder in the file manager.'))
+  })
   ipcMain.handle(IPC.shellOpenPath, async (_e, a: { cwd: string; relPath: string }) => {
     const abs = path.isAbsolute(a.relPath) ? a.relPath : path.join(a.cwd, a.relPath)
     await shell.openPath(abs)
@@ -1984,6 +2038,9 @@ function bootstrap(): void {
   // (그동안 스플래시가 떠 있다). Codex(OpenAI)도 같은 문법으로 이관.
   await migrateAccounts()
   await migrateCodexAccounts()
+  // 터미널에서 이미 로그인해 둔 MCP 서버 토큰(~/.claude/.credentials.json)을 1회 가져와
+  // 첫 실행부터 붙게 — 이후는 설정 → MCP의 "터미널에서 가져오기"로 수동
+  importGlobalMcpOAuthOnce()
   // Production CSP. Skipped in dev because Vite's HMR needs inline/eval + ws.
   if (!process.env['ELECTRON_RENDERER_URL']) {
     session.defaultSession.webRequest.onHeadersReceived((details, cb) => {

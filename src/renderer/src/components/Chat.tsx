@@ -36,6 +36,8 @@ import { FileBadge } from './fileType'
 import { MouseGestureLayer, scrollGestures } from './mouseGesture'
 import { Todos, FileRow, SubAgent } from './AgentPanel'
 import { WinControls } from './TitleBar'
+import { ServiceCredits } from './ServiceCredits'
+import { WorkHistory } from './WorkHistory'
 import { mentionAtCaret, mentionEntries, type MentionEntry } from '../lib/mentions'
 import { imageSrc, imageName, filesToAttachmentPaths, isImagePath, isAttachablePath } from '../lib/images'
 import {
@@ -665,7 +667,7 @@ function ToolGroup({
 // 글자 수가 이 한도를 넘는 답변은 부드러운 공개 애니메이션을 생략한다 (아래 주석 참고)
 const REVEAL_LIMIT = 24_000
 
-function SmoothMarkdown({ text, running }: { text: string; running: boolean }) {
+function SmoothMarkdown({ text, running, cwd, onOpenFile }: { text: string; running: boolean; cwd?: string; onOpenFile?: (path: string) => void }) {
   const [shown, setShown] = useState(() => (running ? 0 : text.length))
   const targetRef = useRef(text)
   targetRef.current = text
@@ -735,7 +737,7 @@ function SmoothMarkdown({ text, running }: { text: string; running: boolean }) {
 
   // colorize only once the run finished AND the reveal caught up (avoids flicker)
   const plain = running || shown < text.length
-  return <Markdown text={text.slice(0, shown)} plain={plain} />
+  return <Markdown text={text.slice(0, shown)} plain={plain} cwd={cwd} onOpenFile={onOpenFile} />
 }
 
 // memoized so typing in the composer (which re-renders the app) doesn't re-parse
@@ -810,6 +812,7 @@ function renderNoticeText(text: string): ReactNode {
 }
 
 export const MessageView = memo(function MessageView({
+  cwd,
   item,
   live,
   running,
@@ -817,6 +820,7 @@ export const MessageView = memo(function MessageView({
   onOpenImage
 }: {
   item: ThreadItem
+  cwd?: string
   live?: boolean // this is the latest assistant message (smooth-reveal it)
   running?: boolean // a run is in progress (start the reveal from empty)
   onOpenFile?: (path: string) => void // open a file referenced by a tool-log row
@@ -912,9 +916,9 @@ export const MessageView = memo(function MessageView({
             (isUser ? (
               <p>{item.animate ? <Typewriter text={item.text} /> : item.text}</p>
             ) : live ? (
-              <SmoothMarkdown text={item.text} running={!!running} />
+              <SmoothMarkdown text={item.text} running={!!running} cwd={cwd} onOpenFile={onOpenFile} />
             ) : (
-              <Markdown text={item.text} />
+              <Markdown text={item.text} cwd={cwd} onOpenFile={onOpenFile} />
             ))}
         </div>
       </div>
@@ -3140,6 +3144,9 @@ function BgTaskModal({ t: tk, onStop, onClose }: { t: BgTask | null; onStop?: (i
 // (한 번에 하나, Esc·바깥 클릭으로 닫힘). 예전 오른쪽 에이전트 패널(.agent)을 대체해
 // 대화 칼럼을 넓힌다. App이 매 틱 리렌더해도 컴포저 타이핑과 분리되도록 memo.
 export const WorkBar = memo(function WorkBar({
+  generations,
+  workFolders,
+  cwd,
   todos,
   files,
   subagents,
@@ -3162,6 +3169,9 @@ export const WorkBar = memo(function WorkBar({
   onBgTask,
   onRefreshUsage
 }: {
+  generations?: import('@shared/protocol').GenerationRecord[]
+  workFolders?: string[]
+  cwd?: string
   todos: Todo[]
   files: ChangedFile[]
   subagents: SubAgentInfo[]
@@ -3513,6 +3523,8 @@ export const WorkBar = memo(function WorkBar({
             {i === 0 && <div className="wb-psep" />}
           </Fragment>
         ))}
+        <div className="wb-psep" />
+        <ServiceCredits compact codexAccount={codexAccount} busy={busy} />
         {/* 토큰 사용량(대화 누적) — 맨 아래 참고 섹션 (엔진·API 모드 불문 실측, 새 대화는 0) */}
         <div className="wb-psep" />
         {tokRows.map((r, i) => (
@@ -3530,6 +3542,7 @@ export const WorkBar = memo(function WorkBar({
 
   return (
     <div className="workbar-wrap">
+      <WorkHistory records={generations} folders={workFolders} cwd={cwd} files={files} />
       <div className="workbar" ref={ref}>
         {chips.map((c) => (
           <div className="wb-cell" key={c.key}>
@@ -3851,7 +3864,7 @@ function QuestionDialog({
       if (n <= cur.options.length) {
         e.preventDefault()
         choose(cur.options[n - 1].label)
-      } else if (n === cur.options.length + 1) {
+      } else if (cur.allowCustom !== false && n === cur.options.length + 1) {
         // 마지막 번호 = 직접 입력 줄 — 포커스만 옮긴다 (답은 Enter로 확정)
         e.preventDefault()
         freeRef.current?.focus()
@@ -3895,7 +3908,7 @@ function QuestionDialog({
       <div className="qcard scroll" ref={modalRef} tabIndex={-1} role="dialog" aria-modal="true">
         <div className="qhead">
           <IconMascot size={17} />
-          <span className="qhl">{engine === 'codex' ? t('GPT의 질문', 'GPT’s question') : t('Claude의 질문', 'Claude’s question')}</span>
+          <span className="qhl">{cur.header?.startsWith('MCP · ') ? cur.header : engine === 'codex' ? t('GPT의 질문', 'GPT’s question') : t('Claude의 질문', 'Claude’s question')}</span>
           <span className="qsp" />
           {/* 좁은 패널에서만 제공 — 패널 확장으로 넘어가면 카드가 리마운트돼 지금까지의
               선택이 초기화되므로, 답을 고르기 전에 누르는 걸 상정한다 */}
@@ -3926,7 +3939,7 @@ function QuestionDialog({
               </button>
             )}
           </div>
-          <div className="qbt">{cur.question}</div>
+          <div className="qbt" style={cur.header?.startsWith('MCP · ') ? { whiteSpace: 'pre-wrap' } : undefined}>{cur.question}</div>
           <div className="qopts">
             {cur.options.map((o, oi) => {
               const on = sel[step].includes(o.label)
@@ -3941,7 +3954,7 @@ function QuestionDialog({
               )
             })}
             {/* 직접 입력 — 항상 마지막 줄의 인라인 입력 (PoC qopt-free). Enter로 답한다 */}
-            <div className={'qopt qopt-free' + (freeOn ? ' on' : '')} onClick={() => freeRef.current?.focus()}>
+            {cur.allowCustom !== false && <div className={'qopt qopt-free' + (freeOn ? ' on' : '')} onClick={() => freeRef.current?.focus()}>
               <input
                 ref={freeRef}
                 placeholder={t('원하는 답을 직접 입력… (Enter)', 'Type your own answer… (Enter)')}
@@ -3957,7 +3970,7 @@ function QuestionDialog({
               <span className="qck">
                 <IconCheck size={13} />
               </span>
-            </div>
+            </div>}
           </div>
           {/* 다중 선택만 진행 버튼이 필요하다 — 단일 선택은 고르는 즉시 넘어간다 */}
           {cur.multiSelect && (

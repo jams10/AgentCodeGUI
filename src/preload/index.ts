@@ -19,7 +19,10 @@ import type {
   AgentStatus,
   SessionWindowInfo,
   SessionPersistPayload,
-  EngineUpdateStatus
+  EngineUpdateStatus,
+  McpServerSpec,
+  McpPrefs,
+  McpOAuthEvent
 } from '@shared/protocol'
 import type { LspPos } from '@shared/protocol'
 import type { WindowApi } from '@shared/api'
@@ -213,7 +216,39 @@ const api: WindowApi = {
   mcp: {
     list: (cwd: string) => ipcRenderer.invoke(IPC.mcpList, cwd),
     setEnabled: (name: string, enabled: boolean) =>
-      ipcRenderer.invoke(IPC.mcpSetEnabled, { name, enabled })
+      ipcRenderer.invoke(IPC.mcpSetEnabled, { name, enabled }),
+    upsert: (name: string, spec: McpServerSpec, prevName?: string) =>
+      ipcRenderer.invoke(IPC.mcpUpsert, { name, spec, prevName }),
+    remove: (name: string) => ipcRenderer.invoke(IPC.mcpRemove, name),
+    importCandidates: (cwd: string) => ipcRenderer.invoke(IPC.mcpImportCandidates, cwd),
+    import: (items: { name: string; spec: McpServerSpec }[]) => ipcRenderer.invoke(IPC.mcpImport, items),
+    getPrefs: () => ipcRenderer.invoke(IPC.mcpPrefsGet),
+    setPrefs: (p: Partial<McpPrefs>) => ipcRenderer.invoke(IPC.mcpPrefsSet, p),
+    oauthConnect: (name: string, cwd: string) => ipcRenderer.invoke(IPC.mcpOAuthConnect, { name, cwd }),
+    oauthCancel: () => ipcRenderer.invoke(IPC.mcpOAuthCancel),
+    oauthDisconnect: (name: string, cwd: string) => ipcRenderer.invoke(IPC.mcpOAuthDisconnect, { name, cwd }),
+    oauthImportGlobal: () => ipcRenderer.invoke(IPC.mcpOAuthImportGlobal),
+    onOAuthEvent: (cb: (ev: McpOAuthEvent) => void) => subscribe(IPC.mcpOAuthEvent, cb)
+  },
+  comfy: {
+    status: () => ipcRenderer.invoke(IPC.comfyStatus),
+    register: (apiKey?: string) => ipcRenderer.invoke(IPC.comfyRegister, apiKey),
+    check: () => ipcRenderer.invoke(IPC.comfyCheck)
+  },
+  tripo: {
+    status: () => ipcRenderer.invoke(IPC.tripoStatus),
+    register: (apiKey?: string) => ipcRenderer.invoke(IPC.tripoRegister, apiKey),
+    check: () => ipcRenderer.invoke(IPC.tripoCheck)
+  },
+  credits: {
+    get: (service, fresh, codexAccount) => ipcRenderer.invoke(IPC.serviceCreditsGet, { service, fresh, codexAccount })
+  },
+  secrets: {
+    list: () => ipcRenderer.invoke(IPC.secretsList),
+    set: (name: string, value: string, opts?: { env?: boolean; note?: string }) =>
+      ipcRenderer.invoke(IPC.secretsSet, { name, value, ...(opts ?? {}) }),
+    remove: (name: string) => ipcRenderer.invoke(IPC.secretsRemove, name),
+    setEnv: (name: string, env: boolean) => ipcRenderer.invoke(IPC.secretsSetEnv, { name, env })
   },
   talk: {
     run: (req: RunRequest) => ipcRenderer.invoke(IPC.talkRun, req),
@@ -226,6 +261,10 @@ const api: WindowApi = {
     onEvent: (cb: (e: EngineEvent) => void) => subscribe(IPC.talkEvent, cb)
   },
   openSessionWindow: () => ipcRenderer.invoke(IPC.openSessionWindow),
+  work: {
+    inspectPaths: (cwd, paths) => ipcRenderer.invoke(IPC.workPathsInspect, { cwd, paths }),
+    openFolder: (cwd, path) => ipcRenderer.invoke(IPC.workFolderOpen, { cwd, path })
+  },
   btwOpen: (req: BtwOpenRequest) => ipcRenderer.invoke(IPC.btwOpen, req),
   session: {
     run: (req: RunRequest) => ipcRenderer.invoke(IPC.sessionRun, req),

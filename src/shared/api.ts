@@ -31,6 +31,17 @@ import type {
   DirEntry,
   SkillInfo,
   McpServerInfo,
+  McpServerSpec,
+  McpImportCandidate,
+  McpPrefs,
+  McpOAuthEvent,
+  SecretInfo,
+  TripoStatus,
+  TripoConnectionResult,
+  ComfyStatus,
+  ComfyConnectionResult,
+  CreditService,
+  ServiceCreditInfo,
   UpdateStatus,
   LspStatus,
   LspProjectStatus,
@@ -334,12 +345,51 @@ export interface WindowApi {
     /** turn a skill on/off by name — applied to subsequent runs by the engine */
     setEnabled(name: string, enabled: boolean): Promise<void>
   }
-  /** MCP servers. Listed by scope (user/project/local); toggled on/off from Settings. */
+  /** MCP servers. 앱 등록(모든 대화·계정 공통) + 플러그인 + 프로젝트 + 터미널(미적용) 열거,
+   *  on/off, 등록 편집, 가져오기, 앱 안 OAuth 연결. */
   mcp: {
-    /** enumerate user (~/.claude.json) + project (.mcp.json) + local servers for `cwd` */
+    /** enumerate app + plugin + project (.mcp.json) + terminal (~/.claude.json) servers for `cwd` */
     list(cwd: string): Promise<McpServerInfo[]>
     /** turn an MCP server on/off by name — applied to subsequent runs by the engine */
     setEnabled(name: string, enabled: boolean): Promise<void>
+    /** 앱 등록 서버 추가/편집(prevName = 이름 변경 전 이름). 검증 실패는 throw. */
+    upsert(name: string, spec: McpServerSpec, prevName?: string): Promise<void>
+    remove(name: string): Promise<void>
+    /** 터미널 Claude Code 설정(~/.claude.json 전역·모든 프로젝트, cwd .mcp.json)에서 가져올 수 있는 서버 */
+    importCandidates(cwd: string): Promise<McpImportCandidate[]>
+    import(items: { name: string; spec: McpServerSpec }[]): Promise<void>
+    getPrefs(): Promise<McpPrefs>
+    setPrefs(p: Partial<McpPrefs>): Promise<McpPrefs>
+    /** 브라우저 OAuth로 http/sse 서버에 연결 — 완료/실패까지 대기. 진행은 onOAuthEvent로. */
+    oauthConnect(name: string, cwd: string): Promise<{ ok: boolean; error?: string }>
+    oauthCancel(): Promise<void>
+    /** 저장된 토큰 삭제(앱 보관소 + 모든 계정 폴더) */
+    oauthDisconnect(name: string, cwd: string): Promise<void>
+    /** 터미널(~/.claude/.credentials.json)의 MCP 토큰 가져오기 → 보관소의 연결 수 */
+    oauthImportGlobal(): Promise<number>
+    onOAuthEvent(cb: (ev: McpOAuthEvent) => void): () => void
+  }
+  tripo: {
+    status(): Promise<TripoStatus>
+    register(apiKey?: string): Promise<TripoStatus>
+    check(): Promise<TripoConnectionResult>
+  }
+  comfy: {
+    status(): Promise<ComfyStatus>
+    register(apiKey?: string): Promise<ComfyStatus>
+    check(): Promise<ComfyConnectionResult>
+  }
+  credits: {
+    get(service: CreditService, fresh?: boolean, codexAccount?: string): Promise<ServiceCreditInfo>
+  }
+  /** Keys — API 키·시크릿 보관함. 값 원문은 메인에만(safeStorage) — 목록엔 끝 4자리뿐. */
+  secrets: {
+    list(): Promise<SecretInfo[]>
+    /** 추가/변경 — env·note 생략 시 기존 값 유지(신규는 env=true). 이름 규칙 위반은 throw. */
+    set(name: string, value: string, opts?: { env?: boolean; note?: string }): Promise<SecretInfo[]>
+    remove(name: string): Promise<SecretInfo[]>
+    /** 엔진 실행 환경변수 주입 토글 */
+    setEnv(name: string, env: boolean): Promise<SecretInfo[]>
   }
   /** 채팅 — a pure-conversation workspace on its own dedicated engine + persistence.
    *  No project folder, explorer, or tools UI; its own conversation list, separate from
@@ -361,6 +411,10 @@ export interface WindowApi {
    *  resizable, movable to a second monitor) running its own conversation on its own
    *  engine. Callable from any mode; each window is fully independent of the others. */
   openSessionWindow(): Promise<void>
+  work: {
+    inspectPaths(cwd: string, paths: string[]): Promise<import('./protocol').WorkPathInfo[]>
+    openFolder(cwd: string, path: string): Promise<void>
+  }
   /** /btw — 현재 대화의 컨텍스트를 포크(forkSession)해 별도 질문 창(추가 채팅)으로 연다.
    *  fork가 없으면 컨텍스트 없이 새 대화. 원본 채팅 화면의 btw 알약이 창을 되부른다. */
   btwOpen(req: BtwOpenRequest): Promise<void>

@@ -16,6 +16,8 @@ import type {
   WorkflowState
 } from '@shared/protocol'
 import { t } from '../lib/i18n'
+import type { GenerationRecord } from '@shared/protocol'
+import { mergeGeneration, restoreGenerations } from '@shared/workRecords'
 
 export type ThreadItem =
   | { kind: 'msg'; id: string; role: 'user' | 'assistant'; text: string; animate: boolean; error?: boolean; time: string; images?: string[] }
@@ -48,6 +50,8 @@ export type ThreadItem =
   | { kind: 'qa'; id: string; pairs: { q: string; a: string[] }[] }
 
 export interface SessionState {
+  generations: GenerationRecord[]
+  workFolders: string[]
   status: AgentStatus
   messages: ThreadItem[]
   todos: Todo[]
@@ -221,6 +225,8 @@ export function effectiveStatus(s: SessionState): AgentStatus {
 }
 
 export const initialSessionState: SessionState = {
+  generations: [],
+  workFolders: [],
   status: 'idle',
   messages: [],
   todos: [],
@@ -391,6 +397,8 @@ export function sanitizeSnapshot(raw: unknown): SessionState {
       : null,
     spentUsd: typeof r.spentUsd === 'number' ? r.spentUsd : 0,
     tokenTotals,
+    generations: restoreGenerations(r.generations),
+    workFolders: arr<unknown>(r.workFolders).filter((p): p is string => typeof p === 'string'),
     seq: typeof r.seq === 'number' ? r.seq : 0,
     // 예전 이름(dismissedNotices)도 읽어 마이그레이션
     shownNotices: arr<unknown>(r.shownNotices ?? r.dismissedNotices).filter((x): x is string => typeof x === 'string')
@@ -537,6 +545,12 @@ export function reducer(state: SessionState, action: Action): SessionState {
   const staleRun = (runId: string): boolean =>
     state.curRunId === PENDING_RUN || (!!state.curRunId && state.curRunId !== runId)
   switch (e.type) {
+    case 'generation':
+      if (staleRun(e.runId) && !(state.generations ?? []).some(r => r.id === e.record.id)) return state
+      return { ...state, generations: mergeGeneration(state.generations ?? [], e.record, e.followup) }
+    case 'work-folder':
+      if (staleRun(e.runId)) return state
+      return !e.path || (state.workFolders ?? []).includes(e.path) ? state : { ...state, workFolders: [...(state.workFolders ?? []), e.path] }
     case 'status':
       // analyzing = 모든 실행의 첫 이벤트 (엔진 계약) — 이 실행을 현재 실행으로 채택
       if (e.status === 'analyzing') return { ...state, status: 'analyzing', curRunId: e.runId, interrupted: false }
@@ -858,6 +872,9 @@ export function reducer(state: SessionState, action: Action): SessionState {
 
     case 'question-request':
       return { ...state, pendingQuestion: { requestId: e.requestId, questions: e.questions, engine: e.engine } }
+
+    case 'question-resolved':
+      return state.pendingQuestion?.requestId === e.requestId ? { ...state, pendingQuestion: null } : state
 
     case 'compact': {
       // 컨텍스트가 가득 차 CLI가 스스로 대화를 요약함(auto-compact) — 게이지가 곧 뚝

@@ -31,6 +31,9 @@ AgentCodeGUI는 터미널의 코딩 에이전트(**Claude Code** · **Codex CLI*
 
 ## Features
 
+- **Tripo 3D 생성** — 설정 → Tripo에서 API 키 저장·MCP 등록·잔액으로 연결 확인. 공식 CLI를 포함하며 Claude/Codex 대화에서 모델을 만들고 내려받습니다. [설정과 검증](docs/tripo.md)
+- **ComfyCloud** — 설정 → ComfyCloud에서 API 키를 암호화해 저장하고 생성 도구 연결과 잔액을 각각 확인합니다. Claude·Codex 대화와 잔액 조회가 같은 키를 사용합니다. [연결과 인증](docs/comfy-cloud.md)
+
 **대화 · 에이전트**
 
 - 스트리밍 응답 · 도구 호출 로그 · 승인/질문 카드(답한 문답은 대화에 흔적으로) · 실행 중 메시지 예약

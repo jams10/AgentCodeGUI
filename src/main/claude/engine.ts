@@ -5,7 +5,8 @@ import { app } from 'electron'
 import { loadActiveQuery, APP_HOME } from '../engine/versions'
 import { readUiPrefs } from '../uiPrefs'
 import { disabledSkillOverrides } from '../skills'
-import { deniedMcpServers } from '../mcp'
+import { deniedMcpServers, resolvedAppServers, mcpRunSettings, mcpSpawnFingerprint } from '../mcp'
+import { secretEnv } from '../secrets'
 import { getApiKey, addSpend, envKeyChoice, setEnvKeyChoice } from '../apiConfig'
 import { recordApiUsage } from '../apiUsage'
 import { accountRunDir, syncAccountTokens, defaultAccountEmail } from '../auth'
@@ -30,6 +31,8 @@ import type {
 import { computeLineDiff, newFileDiff } from './diff'
 import { lspManager } from '../lsp/manager'
 import { t } from '../lang'
+import { GenerationCapture } from '../generationRecords'
+import { reportedGenerationUsage } from '../generationUsage'
 
 type Emit = (event: EngineEvent) => void
 
@@ -266,6 +269,7 @@ function dlog(msg: string): void {
 
 export class ClaudeEngine {
   private emit: Emit
+  private activity: GenerationCapture
   /** 이 엔진이 속한 화면 (chat/talk/ma) — API 사용 원장의 분류 축 */
   private source: ApiUsageSource
   private abort: AbortController | null = null
@@ -328,7 +332,8 @@ export class ClaudeEngine {
   private taskSessionId: string | null = null
 
   constructor(emit: Emit, source: ApiUsageSource = 'chat') {
-    this.emit = emit
+    this.activity = new GenerationCapture(emit, reportedGenerationUsage)
+    this.emit = event => { this.activity.observe(event); emit(event) }
     this.source = source
   }
 
@@ -759,6 +764,13 @@ export class ClaudeEngine {
       // MCP servers turned off in 설정 → MCP: a per-run denylist spanning every scope
       // (null when none disabled). Like skillOverrides, never edits ~/.claude.json.
       const mcpDenied = deniedMcpServers()
+      // 설정 → MCP의 앱 등록 서버(모든 대화·계정 공통) — SDK mcpServers로 스폰마다 주입.
+      // ${KEY}는 이미 보관함 값으로 치환된 상태(원문은 디스크에만). 설정 → Keys의 env 항목은
+      // 자식 프로세스 환경변수로 펼친다(스킬·스크립트·stdio 서버가 바로 읽게).
+      const appMcp = resolvedAppServers()
+      const mcpSettings = mcpRunSettings()
+      const keyEnv = secretEnv()
+      const mcpFp = mcpSpawnFingerprint() // 주입 게이트가 비교 — 등록/토글/키 변경 = 새 스폰
       const apiKey = useApi ? getApiKey() : null
 
       if (!query) {
@@ -847,7 +859,7 @@ export class ClaudeEngine {
       }
       // 구독 실행 env — 위에서 "구독으로"를 골랐으면 env 키를 걷어내 하이재킹을 차단
       const subEnv: NodeJS.ProcessEnv | null = accountDir
-        ? { ...process.env, CLAUDE_CONFIG_DIR: accountDir }
+        ? { ...process.env, ...keyEnv, CLAUDE_CONFIG_DIR: accountDir }
         : null
       if (subEnv && dropEnvKey) delete subEnv.ANTHROPIC_API_KEY
 
@@ -872,8 +884,14 @@ export class ClaudeEngine {
             // (claude_code 프리셋 경로 실측: -p + --settings로 스타일 활성 확인)
             ...(outputStyle ? { outputStyle } : {}),
             ...(skillOverrides ? { skillOverrides } : {}),
-            ...(mcpDenied ? { deniedMcpServers: mcpDenied } : {})
+            ...(mcpDenied ? { deniedMcpServers: mcpDenied } : {}),
+            // 프로젝트 .mcp.json을 묻지 않고 허용(설정 → MCP) — 격리 config엔 프로젝트별
+            // 승인 기록이 없어 헤드리스 실행이 조용히 건너뛰던 것을 막는다
+            ...mcpSettings
           },
+          // 앱 등록 MCP 서버 — 설정 → MCP. 계정·프로젝트와 무관하게 모든 실행에 붙는다
+          // (프로젝트 .mcp.json·플러그인 서버와 합쳐진다 — strictMcpConfig 아님).
+          ...(appMcp ? { mcpServers: appMcp } : {}),
           // 참조 폴더 — cwd 밖 폴더들을 추가 작업 루트로 (CLI --add-dir 패리티). 도구
           // 접근·@멘션·CLAUDE.md 인식이 그 폴더들까지 넓어진다.
           ...(req.addDirs?.length ? { additionalDirectories: req.addDirs } : {}),
@@ -892,7 +910,7 @@ export class ClaudeEngine {
           // 계정 오버라이드: CLAUDE_CONFIG_DIR로 그 계정의 격리 config 폴더를 가리킨다.
           // SDK의 env 옵션은 process.env를 대체(merge 아님)하므로 반드시 펼쳐서 준다.
           ...(useApi && apiKey
-            ? { env: { ...process.env, ANTHROPIC_API_KEY: apiKey } }
+            ? { env: { ...process.env, ...keyEnv, ANTHROPIC_API_KEY: apiKey } }
             : subEnv
               ? { env: subEnv }
               : {}),
@@ -1193,7 +1211,9 @@ export class ClaudeEngine {
           (nreq.systemPrompt?.trim() ?? '') === (req.systemPrompt?.trim() ?? '') &&
           JSON.stringify(nreq.addDirs ?? []) === JSON.stringify(req.addDirs ?? []) &&
           // 출력 스타일도 스폰에만 정해지는 옵션 — 설정을 바꿨으면 새 스폰으로 반영
-          claudeOutputStyle() === outputStyle
+          claudeOutputStyle() === outputStyle &&
+          // MCP 등록/토글·보관함 키도 스폰에만 실린다 — 바뀌었으면 새 스폰
+          mcpSpawnFingerprint() === mcpFp
         if (!optsMatch) {
           this.injectMissReason = 'opts'
           return null
@@ -1885,6 +1905,7 @@ export class ClaudeEngine {
     const name = block.name!
     const id = block.id!
     const input = (block.input ?? {}) as Record<string, unknown>
+    this.activity.start(runId, id, name, input)
     // AskUserQuestion is surfaced as an interactive choice card (handled in
     // canUseTool), not a tool-log row — so don't render or track it here.
     if (name === 'AskUserQuestion') return
@@ -2068,6 +2089,7 @@ export class ClaudeEngine {
     const meta = this.tools.get(id)
     const isError = !!block.is_error
     const text = resultText(block.content)
+    this.activity.finish(runId, id, block.content, isError)
 
     // Subagent finished
     if (this.subagents.has(id)) {

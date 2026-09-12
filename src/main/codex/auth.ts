@@ -328,9 +328,23 @@ export function codexLoginCancel(): void {
   }
 }
 
+// CLI 출력 끝자락에서 사람이 읽을 실패 사유 한 줄 — 'error'가 든 마지막 줄, 없으면 마지막 줄
+function lastMeaningfulLine(out: string): string {
+  const lines = out
+    .replace(/\x1b\[[0-9;]*[A-Za-z]/g, '')
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l && !/^at\s/.test(l)) // 스택 프레임 제외
+  const pick = [...lines].reverse().find((l) => /error/i.test(l)) ?? lines[lines.length - 1] ?? ''
+  return pick.length > 240 ? pick.slice(0, 240) + '…' : pick
+}
+
 // `codex login` — 임시 CODEX_HOME(~/.agentcodegui/codex/login)으로 브라우저 OAuth.
 // 완료 후 auth.json에서 신원을 읽어 편입 + 계정 폴더 물질화, 임시 폴더는 지운다.
 // (Temp 아래가 아니라 앱 홈이라 codex의 PATH 헬퍼 거부 경고도 없다)
+// 계정이 편입되지 않았는데 취소(버튼·새 로그인·시간 초과)도 아니면 실패로 reject — CLI의
+// 마지막 출력 줄을 사유로 올린다(실측 2026-09-10: 실행 파일 없는 반쪽 설치본의 "Missing
+// optional dependency @openai/codex-win32-x64"가 조용히 삼켜져 '버튼을 눌러도 아무 일 없음').
 export async function codexLogin(wc: WebContents): Promise<CodexAccountInfo[]> {
   codexLoginCancel()
   try {
@@ -339,7 +353,7 @@ export async function codexLogin(wc: WebContents): Promise<CodexAccountInfo[]> {
   } catch {
     /* ignore */
   }
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const child = spawn(codexBin(), ['login'], {
       windowsHide: true,
       shell: true,
@@ -347,11 +361,17 @@ export async function codexLogin(wc: WebContents): Promise<CodexAccountInfo[]> {
     })
     loginProc = child
     let opened = false
+    let cancelled = false
+    let done = false
+    let spawnErr: Error | null = null
+    let tail = ''
     // 브라우저는 CLI가 직접 연다 — 앱이 또 열면 이중 탭. 게다가 출력의 첫 URL은 인증
     // 페이지가 아니라 로컬 로그인 서버(`http://localhost:1455.` — 문장 끝 마침표까지 붙어
     // 404 텍스트 페이지가 뜬다). https만 잡아 렌더러 폴백 링크로 전달한다.
     const onData = (buf: Buffer): void => {
-      const m = buf.toString().match(/https:\/\/[^\s"'）)]+/)
+      const s = buf.toString()
+      tail = (tail + s).slice(-4000)
+      const m = s.match(/https:\/\/[^\s"'）)]+/)
       if (m && !opened) {
         opened = true
         if (!wc.isDestroyed()) wc.send(IPC.authLoginUrl, m[0].replace(/[.,]+$/, ''))
@@ -359,20 +379,42 @@ export async function codexLogin(wc: WebContents): Promise<CodexAccountInfo[]> {
     }
     child.stdout?.on('data', onData)
     child.stderr?.on('data', onData)
-    const timer = setTimeout(() => codexLoginCancel(), 5 * 60 * 1000)
+    const timer = setTimeout(() => {
+      cancelled = true // 시간 초과 = 브라우저에서 끝내지 않은 것 — 오류가 아니라 조용히 접는다
+      codexLoginCancel()
+    }, 5 * 60 * 1000)
     const finish = async (): Promise<void> => {
+      if (done) return
+      done = true
       clearTimeout(timer)
+      // codexLoginCancel()이 먼저 loginProc을 비웠으면(취소 버튼·새 로그인 시작) 취소로 본다
+      const wasCancelled = cancelled || loginProc !== child
       if (loginProc === child) loginProc = null
-      importAccountFromDir(LOGIN_DIR)
+      const email = importAccountFromDir(LOGIN_DIR)
       try {
         fs.rmSync(LOGIN_DIR, { recursive: true, force: true }) // 평문 토큰을 임시 자리에 남기지 않는다
       } catch {
         /* ignore */
       }
-      resolve(await codexListAccounts())
+      if (email || wasCancelled) {
+        resolve(await codexListAccounts())
+        return
+      }
+      const why = spawnErr?.message ?? lastMeaningfulLine(tail)
+      reject(
+        new Error(
+          t(
+            `OpenAI 로그인이 완료되지 않았어요${why ? ` — ${why}` : ''}`,
+            `OpenAI sign-in was not completed${why ? ` — ${why}` : ''}`
+          )
+        )
+      )
     }
     child.on('close', () => void finish())
-    child.on('error', () => void finish())
+    child.on('error', (e) => {
+      spawnErr = e
+      void finish()
+    })
   })
 }
 

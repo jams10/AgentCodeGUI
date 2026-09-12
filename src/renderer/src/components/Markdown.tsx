@@ -1,8 +1,9 @@
 import { memo, useMemo } from 'react'
-import ReactMarkdown, { type Components } from 'react-markdown'
+import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { highlightCode } from '../lib/highlight'
 import { paletteClassFor } from './fileType'
+import { LocalWorkPath } from './WorkHistory'
 
 // flatten a hast node to its raw text (used to pull code out of a <pre>)
 function nodeText(node: unknown): string {
@@ -73,30 +74,43 @@ const componentsPlain: Components = { ...baseComponents, pre: makePre(true) }
 export const Markdown = memo(function Markdown({
   text,
   plain,
+  cwd,
+  onOpenFile,
   codeLang,
   decorate
 }: {
   text: string
   plain?: boolean
+  cwd?: string
+  onOpenFile?: (path: string) => void
   /** 인라인 코드까지 이 언어로 신택스 하이라이트 (호버 카드 — 칩이 코드 색을 입는다) */
   codeLang?: string
   /** 하이라이트 HTML 후처리 — 호버 카드의 시맨틱 색 사전 주입 지점 */
   decorate?: (html: string) => string
 }) {
   const components = useMemo<Components>(() => {
-    if (!codeLang && !decorate) return plain ? componentsPlain : componentsHighlighted
+    const local: Partial<Components> = cwd !== undefined && !plain ? {
+      code: ({ children }) => {
+        const value = Array.isArray(children) ? children.join('') : String(children ?? '')
+        return <LocalWorkPath value={value} cwd={cwd} onOpenFile={onOpenFile}><code className="inline">{children}</code></LocalWorkPath>
+      },
+      a: ({ href, children }) => href && !/^(?:https?:|mailto:|#)/i.test(href)
+        ? <LocalWorkPath value={href} cwd={cwd} onOpenFile={onOpenFile}>{children}</LocalWorkPath>
+        : <a href={href} target="_blank" rel="noreferrer">{children}</a>
+    } : {}
+    if (!codeLang && !decorate) return { ...(plain ? componentsPlain : componentsHighlighted), ...local }
     const inline: Components['code'] = ({ children }) => {
       const txt = Array.isArray(children) ? children.join('') : String(children ?? '')
       const html = (decorate ?? ((h: string) => h))(highlightCode(txt, codeLang ?? ''))
       return <code className="inline hljs" dangerouslySetInnerHTML={{ __html: html }} />
     }
     return { ...baseComponents, code: inline, pre: makePre(!!plain, decorate) }
-  }, [plain, codeLang, decorate])
+  }, [plain, codeLang, decorate, cwd, onOpenFile])
   // remark 파싱도 동기 작업이다 — 아주 큰 본문(거대한 .md 파일, 초장문 답변)은 파싱
   // 자체가 프레임을 통째로 잡아먹으므로 구조 없이 원문 그대로 보여준다
   if (text.length > MD_PARSE_LIMIT) return <pre className="md-overflow">{text}</pre>
   return (
-    <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={components} urlTransform={url => cwd !== undefined && /^(?:\/?[A-Za-z]:[\\/]|file:)/i.test(url) ? url : defaultUrlTransform(url)}>
       {text}
     </ReactMarkdown>
   )
