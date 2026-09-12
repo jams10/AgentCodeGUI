@@ -1,0 +1,103 @@
+{
+  "app": "tauri-3.0.0",
+  "panels": 4,
+  "itemsPerPanel": 120,
+  "gridPanels": 4,
+  "at": "2026-08-22T09:14:52.089Z",
+  "idleGrid": {
+    "totalWsMB": 466.5,
+    "totalPrivMB": 251.5,
+    "procs": 6
+  },
+  "idleWithWindows": {
+    "totalWsMB": 525.4,
+    "totalPrivMB": 270.4,
+    "procs": 6
+  },
+  "windowCost": {
+    "wsMBPerWindow": 29.4,
+    "procsAdded": 0
+  },
+  "scrollInPanel": {
+    "frames": 357,
+    "avgFps": 60,
+    "p95Ms": 16.8,
+    "worstMs": 16.8,
+    "droppedPct": 0,
+    "longTaskMs": 0
+  },
+  "procDetail": [
+    {
+      "name": "agentcodegui.exe",
+      "wsMB": 33.5,
+      "privMB": 15.1
+    },
+    {
+      "name": "msedgewebview2.exe",
+      "wsMB": 220.2,
+      "privMB": 102.4
+    },
+    {
+      "name": "msedgewebview2.exe",
+      "wsMB": 19.2,
+      "privMB": 3.4
+    },
+    {
+      "name": "msedgewebview2.exe",
+      "wsMB": 43.7,
+      "privMB": 13.7
+    },
+    {
+      "name": "msedgewebview2.exe",
+      "wsMB": 21,
+      "privMB": 9
+    },
+    {
+      "name": "msedgewebview2.exe",
+      "wsMB": 214.2,
+      "privMB": 144.3
+    }
+  ],
+  "repeats": {
+    "note": "같은 빌드·같은 픽스처로 5회. 이 파일 본문은 마지막 회차(하네스가 마지막 것을 쓴다) — 대표값은 아래 중앙값을 쓸 것. WS 편차가 15MB라 한 회차만 인용하면 결론이 바뀔 수 있다.",
+    "idleGridWsMB": [
+      470,
+      479.3,
+      481.5,
+      475.7,
+      466.5
+    ],
+    "idleGridPrivMB": [
+      251.6,
+      252.5,
+      250.9,
+      258.4,
+      251.5
+    ],
+    "medianWsMB": 475.7,
+    "medianPrivMB": 251.6,
+    "target": {
+      "wsMB": 356,
+      "privMB": 253
+    },
+    "verdict": "WS 475.7 > 356 (미달, 2.6.2 대비 0.67) · Priv 251.6 ≤ 253 (통과, 0.50) — 단 Priv는 5회 중 1회가 258.4로 목표를 넘었다. 여유가 1.4MB뿐이라는 뜻이다.",
+    "idleWithWindowsWsMB": [
+      520.4,
+      521.1,
+      525.4
+    ],
+    "wsPerWindowMB": [
+      19.4,
+      22.7,
+      29.4
+    ],
+    "scrollFps": [
+      "60 / 0%",
+      "60 / 0%",
+      "59.4 / 0.8%",
+      "60 / 0%",
+      "60 / 0%",
+      "60 / 0%"
+    ]
+  }
+}

@@ -11,14 +11,22 @@ import type {
   PanelPopClosed,
   PanelPopStates,
   EngineEvent,
+  ChatTooling,
   WindowState,
+  ViewerOpenPayload,
+  ViewerAskPayload,
+  ViewerMode,
   UsageInfo,
   ApiConfigStatus,
   AuthStatus,
   AccountInfo,
   AccountUsage,
+  AccountsUsageOpts,
   CodexAccountInfo,
   CodexAccountUsage,
+  CodexResetCreditResult,
+  CodexContextSettings,
+  CodexContextResult,
   ApiUsageRecord,
   UserProfile,
   EngineVersionEntry,
@@ -68,8 +76,7 @@ import type {
   GitBranch,
   GitResult,
   GitAiMessageResult,
-  ModelId,
-  EffortId,
+  GitAiMessageOptions,
   NotifyEventPayload,
   NotifyEntry,
   NotifyTarget,
@@ -112,35 +119,47 @@ export interface WindowApi {
     cancelLogin(): Promise<void>
     /** 로그인 OAuth URL 수신 (브라우저가 안 열릴 때 폴백 링크용) */
     onLoginUrl(cb: (url: string) => void): () => void
-    /** 등록 계정 목록 — 기본 계정은 isDefault:true */
+    /** BUG-0013 — 웹 구독 확인이 끝나 셸이 그 계정의 구독 종류(플랜 라벨)를 되싱크했다 — 목록을 다시 가져올 신호 */
+    onAccountRefreshed(cb: (email: string) => void): () => void
+    /** 등록 계정 목록 — **맨 위 계정**이 isDefault:true (★R28 ACCT §4: 기본은 파생값) */
     listAccounts(): Promise<AccountInfo[]>
-    /** 새 채팅·미지정 채팅이 쓸 기본 계정 지정 → 갱신된 목록 */
+    /** ★R28 ACCT §4 — 「맨 위로 이동」과 **동치**. 이름은 2.6.2 채널 호환으로만 남았다 */
     setDefaultAccount(email: string): Promise<AccountInfo[]>
     /** 등록 목록에서 계정 제거(토큰 해지 없이 — 해지는 logout) → 갱신된 목록 */
     removeAccount(email: string): Promise<AccountInfo[]>
     /** 계정 표시 순서 변경(설정 꾹-드래그) — 채팅 계정 picker에도 같은 순서 → 갱신된 목록 */
     reorderAccounts(emails: string[]): Promise<AccountInfo[]>
-    /** 등록 계정별 한도 사용률(5시간·주간·Fable) — 각 계정 토큰으로 일괄 조회 */
-    accountsUsage(): Promise<AccountUsage[]>
+    /** 등록 계정별 한도 사용률(5시간·주간·Fable) — 각 계정 토큰으로 일괄 조회.
+     *  ★R28 ACCT §1 — `opts`로 캐시 우선(cachedOnly)·우선 조회(priority)·워밍(warm). */
+    accountsUsage(opts?: AccountsUsageOpts): Promise<AccountUsage[]>
   }
   /** Codex(OpenAI) 계정 — Anthropic과 동일: 앱 등록 계정만, 전역 ~/.codex 불가침 (설정 → Account). */
   codexAuth: {
-    /** 등록 계정 목록 — 기본 계정은 isDefault:true */
+    /** 등록 계정 목록 — **맨 위 계정**이 isDefault:true (★R28 ACCT §4: 기본은 파생값) */
     listAccounts(): Promise<CodexAccountInfo[]>
     /** 계정 추가 — 격리 CODEX_HOME 브라우저 OAuth. 완료 시 등록 + 갱신된 목록 */
     login(): Promise<CodexAccountInfo[]>
     /** 계정 삭제 — 그 계정 auth 제거 + 등록 삭제 → 갱신된 목록 */
     logout(email: string): Promise<CodexAccountInfo[]>
-    /** 새 채팅·미지정 채팅이 쓸 기본 계정 지정 → 갱신된 목록 */
+    /** ★R28 ACCT §4 — 「맨 위로 이동」과 동치(3.0 화면은 reorderAccounts를 쓴다) */
     setDefaultAccount(email: string): Promise<CodexAccountInfo[]>
     cancelLogin(): Promise<void>
     /** 계정 표시 순서 변경(설정 꾹-드래그) → 갱신된 목록 */
     reorderAccounts(emails: string[]): Promise<CodexAccountInfo[]>
     /** 등록 계정별 한도(rateLimits) 일괄 조회 — planType은 표시 플랜으로도 우선 사용 */
-    accountsUsage(): Promise<CodexAccountUsage[]>
+    accountsUsage(fresh?: boolean): Promise<CodexAccountUsage[]>
+    consumeResetCredit(email: string, idempotencyKey: string): Promise<CodexResetCreditResult>
+    /** BUG-0013 — 계정 토큰을 새로 받은 뒤 한도·플랜을 다시 조회(구독 변경 직후) */
+    refreshAccount(email: string): Promise<CodexAccountUsage>
+    /** 웹 구독 확인이 끝나 셸이 그 계정을 되싱크했다 — 목록·한도를 다시 가져올 신호 */
+    onAccountRefreshed(cb: (email: string) => void): () => void
   }
   /** 두 엔진 CLI 공통 자동 업데이트 — 인자 있으면 설정, 항상 현재 값을 반환 (설정 → Engine → 공통) */
   engineAutoUpdate(enabled?: boolean): Promise<boolean>
+  codexContext: {
+    get(): Promise<CodexContextResult>
+    save(settings: Partial<CodexContextSettings>): Promise<CodexContextResult>
+  }
   /** 부팅 자동 업데이트 카드 — 메인이 부팅 직후 두 엔진을 설치→활성화→정리하며
    *  진행 스냅샷(REPLACE)을 흘린다. status()는 마운트 때 현재 상태 따라잡기용. */
   engineUpdate: {
@@ -187,6 +206,8 @@ export interface WindowApi {
   openPath(cwd: string, relPath: string): Promise<void>
   /** reveal (highlight) a file/folder in the OS file manager — explorer "파일 탐색기에서 보기" */
   revealPath(cwd: string, relPath: string): Promise<void>
+  /** ★3.0.4 open an http(s) link in the OS default browser — resolves false for any other scheme */
+  openExternal(url: string): Promise<boolean>
   /** rename a file/folder within its parent — explorer context menu */
   renamePath(cwd: string, relPath: string, newName: string): Promise<{ ok: boolean; error?: string }>
   /** move a file/folder to the OS trash (recycle bin) — explorer context menu */
@@ -249,7 +270,7 @@ export interface WindowApi {
     aiMessage(
       cwd: string,
       files: string[],
-      opts?: { account?: string; model?: ModelId; effort?: EffortId }
+      opts?: GitAiMessageOptions
     ): Promise<GitAiMessageResult>
   }
   /** LSP code intelligence for the in-app viewer (lazy per-project language servers) */
@@ -316,7 +337,10 @@ export interface WindowApi {
   }
   /** Claude Code engine (SDK) version management. */
   engine: {
-    listAvailable(): Promise<{ latest: string | null; versions: EngineVersionEntry[] }>
+    /** `error`는 ★3.0이 얹은 필드 — 2.6.2는 예외를 던지고 렌더러가 catch했지만, 3.0 계약면은
+     *  값이라 실패 사유가 여기로 온다(`{latest:null, versions:[], error}`). 이 필드를 안 읽으면
+     *  npm(Node.js)이 없는 컴퓨터에서 화면이 **목록 0개 + 오류 0줄**이 된다(CRIT R1). */
+    listAvailable(): Promise<{ latest: string | null; versions: EngineVersionEntry[]; error?: string }>
     state(): Promise<EngineVersionState>
     install(version: string): Promise<{ ok: boolean; error?: string }>
     uninstall(version: string): Promise<void>
@@ -327,7 +351,8 @@ export interface WindowApi {
   }
   /** Codex CLI 버전 관리 — Claude Code와 동일한 문법 (state.bundled 자리는 전역 codex 버전 폴백). */
   codexEngine: {
-    listAvailable(): Promise<{ latest: string | null; versions: EngineVersionEntry[] }>
+    /** `error` — 위 `engine.listAvailable`과 같은 규약(CRIT R1). */
+    listAvailable(): Promise<{ latest: string | null; versions: EngineVersionEntry[]; error?: string }>
     state(): Promise<EngineVersionState>
     install(version: string): Promise<{ ok: boolean; error?: string }>
     uninstall(version: string): Promise<void>
@@ -473,6 +498,19 @@ export interface WindowApi {
     loadSession(id: string): Promise<unknown>
     /** subscribe to one panel's streaming engine events (returns an unsubscribe fn) */
     onEvent(panelId: string, cb: (event: EngineEvent) => void): () => void
+    /**
+     * ★M9 R2 — 이 패널의 **도구 환경을 다시 묻는다**(마운트 시 1회).
+     *
+     * 푸시(`onEvent` → `{type:'tooling'}`)는 스폰당 한 장뿐이라, 껍데기가 갈리면
+     * (「크게 보기」·팝아웃·그리드 복귀) 새 컴포넌트는 아무것도 못 받는다. 셸의 옮김기에는
+     * 그 값이 그대로 있으므로 여기서 한 번 물어 채운다. `null` = 아직 모름(런타임 없음 ·
+     * `system/init` 전 · 재시작 직후) — 「MCP 없음」과 다른 말이라 화면은 칩을 안 세운다.
+     *
+     * **선택 메서드인 이유**: 이 계약면은 3.0 심(`app/src/api/shim.ts`)과 2.6.2
+     * preload(`src/preload`, 동결)가 함께 만족해야 한다. 3.0에만 있는 채널을 필수로
+     * 선언하면 동결 트리의 `typecheck:node`가 깨진다(`TS2741`). 호출부는 `?.()`로 부른다.
+     */
+    toolingGet?(panelId: string): Promise<ChatTooling | null>
     /** 패널 팝아웃 창 열기 — 이미 열려 있으면 그 창을 앞으로 (메인 창에서 호출) */
     openPanelWindow(state: PanelPopState): Promise<void>
     /** 팝아웃 창 → 자기 부트 페이로드(연 순간의 패널 상태) 조회 */
@@ -529,4 +567,33 @@ export interface WindowApi {
   /** Subscribe to streaming engine events. Returns an unsubscribe fn. */
   onEngineEvent(cb: (event: EngineEvent) => void): () => void
   onWinState(cb: (state: WindowState) => void): () => void
+  /** 파일 뷰어 독립 창(3.0) — 코드 뷰어 카드를 별도 OS 창으로. **선택 블록인 이유**는
+   *  `multi.toolingGet`과 같다: 이 계약면은 동결된 2.6.2 preload도 만족해야 하므로 3.0
+   *  전용 채널은 필수로 선언하지 않는다(호출부는 `?.`로 부른다). */
+  viewer?: {
+    /** 끈적한 모드 조회 — 부팅 페이로드에 실려 첫 호출은 왕복이 없다 */
+    state(): Promise<ViewerMode>
+    /** 모드 전환 — main이 전 창에 `onMode`로 브로드캐스트한다 */
+    setMode(on: boolean): Promise<void>
+    /** 파일 하나를 뷰어 창으로(창이 없으면 생성). false = 창을 못 세웠다 → 호출 창이 카드 뷰어로 */
+    open(p: ViewerOpenPayload): Promise<boolean>
+    /** 뷰어 창 → 마운트/재로드 복원분(닫은 뒤면 null) */
+    hydrate(): Promise<ViewerOpenPayload | null>
+    /** 뷰어 창 → 파일을 그렸다(이제 창을 보여도 된다) */
+    shown(): Promise<void>
+    /** 뷰어 창 → 파일을 닫았다(창은 숨긴다) */
+    hide(): Promise<void>
+    /** 뷰어 창 → 「창 안으로」: 모드 해제 + 이 파일을 원래 창의 카드 뷰어로 */
+    dock(p: ViewerOpenPayload): Promise<void>
+    /** 뷰어 창 → 질문 패널 전송(원래 창의 채팅으로) */
+    askSelection(p: ViewerAskPayload): Promise<void>
+    /** main → 뷰어 창: 다음 파일 */
+    onOpen(cb: (p: ViewerOpenPayload) => void): () => void
+    /** main → 전 창: 모드 변경 */
+    onMode(cb: (m: ViewerMode) => void): () => void
+    /** main → 원래 창: 「창 안으로」로 되돌아온 파일 */
+    onDocked(cb: (p: ViewerOpenPayload) => void): () => void
+    /** main → 원래 창: 뷰어 창에서 보낸 질문 */
+    onAskSelection(cb: (p: ViewerAskPayload) => void): () => void
+  }
 }

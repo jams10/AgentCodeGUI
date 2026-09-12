@@ -1,0 +1,641 @@
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
+import { captureExternalContext } from '../api/bridge'
+import type { ExternalContextSnapshot } from '@shared/externalTools'
+import type { ApiConfigStatus, BgTaskRequest, ChatStatusLite, PanelPopState, SessionWindowInfo, UsageInfo } from '@shared/protocol'
+import type { EngineId } from '@shared/protocol'
+import { listChatWindows, onChatIdentity, onChatStatus, onChatWindows, type WindowSlot } from '../api/unified'
+import { MAIN_SLOT_NAME, panelIdOfChat, putChatStatuses, putSlotNames, WINDOW_SLOT_NAME } from '../lib/accounts'
+import { panelSlotOfChat, pickerAfterLanding, queueAfterLanding } from '../lib/identityLanding'
+import { useAgentSession, initialSessionState, sameCwd, commandOf, sanitizeSnapshot, snapshotForPersist, type SessionState } from '../store/session'
+import { parseBtw, btwForkOf } from '../lib/btw'
+import { getPref, setPref } from '../lib/prefs'
+import { t, useLang } from '../lib/i18n'
+import { extractMentions } from '../lib/mentions'
+import { pushRecentDir } from '../lib/recentDirs'
+import { useManagedLimitResume } from '../lib/useManagedLimitResume'
+import { useZoom, ZoomBadge } from './zoom'
+import { openInViewerWindow, setViewerWindowMode, viewerWindowMode } from '../lib/viewerWindow'
+import { WinControls } from './TitleBar'
+import { FolderSwitchDialog } from './FolderSwitchDialog'
+import { SubAgentModal } from './AgentPanel'
+import { ImageViewer } from './ImageViewer'
+import type { PickerState, ScheduledMsg } from './Chat'
+import {
+  PanelView,
+  EMPTY_USAGE,
+  freshPanel,
+  deriveTitle,
+  defaultTag,
+  nextTag,
+  sanitizePanelPicker,
+  sanitizeRefDirs,
+  sanitizeTag,
+  useEvent,
+  type PanelMeta
+} from './MultiAgent'
+const FileModal = lazy(() => import('./FileModal').then((m) => ({ default: m.FileModal }))) // CodeMirror 청크 지연 로드
+
+// ── 패널 팝아웃 창 (#mapanel) — 멀티 패널 하나를 독립 OS 창으로 ─────────────────
+// 크게 보기 카드의 창 버전: 같은 PanelView(expanded)를 별도 BrowserWindow에 그린다.
+// 엔진은 메인 프로세스의 패널 풀(panelId) 그대로 — 이 창은 그 panelId의 maEvent를 구독해
+// 그리는 두 번째 뷰라서, 창을 여닫아도 실행·백그라운드·resume은 끊기지 않는다.
+// 초안·예약 큐·메타의 소유권은 떠 있는 동안 이 창에 있고(그리드엔 유령), 변화는 600ms
+// 디바운스로 메인에 페르시스트 → 창이 닫히면 그 마지막 상태가 그리드로 복귀한다.
+
+function metaFromBoot(b: PanelPopState): PanelMeta {
+  return {
+    ...freshPanel(),
+    title: typeof b.title === 'string' ? b.title : '',
+    custom: !!b.custom,
+    locked: !!b.locked,
+    color: sanitizeTag(b.color),
+    cwd: typeof b.cwd === 'string' ? b.cwd : '',
+    refDirs: sanitizeRefDirs(b.refDirs),
+    picker: sanitizePanelPicker(b.picker as Partial<PickerState> | null),
+    api: !!b.api,
+    input: typeof b.input === 'string' ? b.input : '',
+    images: Array.isArray(b.images) ? b.images.filter((x): x is string => typeof x === 'string') : [],
+    queue: Array.isArray(b.queue) ? (b.queue as ScheduledMsg[]).filter((q) => q && typeof q.text === 'string') : []
+  }
+}
+
+export function PanelWindow(): React.ReactElement {
+  const [boot, setBoot] = useState<PanelPopState | null>(null)
+  const [missing, setMissing] = useState(false)
+  useEffect(() => {
+    window.api.multi
+      ?.panelHydrate?.()
+      .then((b) => (b ? setBoot(b) : setMissing(true)))
+      .catch(() => setMissing(true))
+  }, [])
+  if (missing) {
+    // 부트 페이로드가 없다 — 비정상 기동(개발 중 리로드 등). 빈 창으로 두느니 안내만.
+    return (
+      <div className="sw pwin">
+        <div className="pw-head">
+          <span className="pw-drag" />
+          <WinControls />
+        </div>
+        <div className="ma-hydrate">
+          <span className="ma-foot-hint">{t('패널 정보를 찾지 못했어요 — 창을 닫고 다시 열어주세요', 'Panel state not found — close this window and pop it out again')}</span>
+        </div>
+      </div>
+    )
+  }
+  if (!boot) {
+    return (
+      <div className="sw pwin">
+        <div className="pw-head">
+          <span className="pw-drag" />
+          <WinControls />
+        </div>
+        <div className="ma-hydrate">
+          <span className="ma-hydrate-spin" />
+        </div>
+      </div>
+    )
+  }
+  return <PanelHost boot={boot} />
+}
+
+function PanelHost({ boot }: { boot: PanelPopState }): React.ReactElement {
+  useLang() // 언어 전환 브로드캐스트 재렌더 (메인 창 설정에서 바꿔도 따라온다)
+  const panelId = boot.panelId
+  const slot = boot.slot
+  const { state, elapsed, busy, begin, answerPermission, clearQuestion, answerQuestion, load, interruptTurn } = useAgentSession(
+    (cb) => window.api.multi?.onEvent?.(panelId, cb) ?? (() => {})
+  )
+  const [meta, setMeta] = useState<PanelMeta>(() => metaFromBoot(boot))
+  const patch = useEvent((p: Partial<PanelMeta>) => setMeta((m) => ({ ...m, ...p })))
+  const [renaming, setRenaming] = useState(false)
+
+  // 연 순간의 스냅샷 복원 — 이후는 panelId 구독이 라이브로 잇는다 (그리드 복원과 같은 규칙)
+  useEffect(() => {
+    if (boot.snapshot) load(sanitizeSnapshot(boot.snapshot as SessionState))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // ── ★3.0.5 — 「계정 → 살아 있는 자리」 역인덱스 (SessionWindow와 같은 배선) ──────
+  // 본채팅·추가 채팅 창만 `chat:status`를 스토어에 앉히고 있어서, 팝아웃 창의 계정 picker는
+  // 이 창의 런타임이 물고 있는 계정(「현재」)도, 다른 자리가 쓰는 계정(「사용 중」)도 몰랐다 —
+  // 정렬 뒤 맨 위 계정을 「현재」로 적었다(2026-09-03 보고). REPLACE는 셸이 모든 창에
+  // `emit`하므로 구독만 하면 같은 표가 선다. 자기 자리는 `panelId`(`chatId={panelId}`)로 뺀다.
+  useEffect(() => {
+    // 첫 REPLACE가 리스너보다 이를 수 있어(F12) 등록 뒤 스냅샷을 한 번 당긴다.
+    const catchUp = (): void => {
+      void window.api
+        .getChats()
+        .then((raw) => {
+          const r = raw as { chats?: { id: string; title?: string }[]; statuses?: Record<string, ChatStatusLite> } | null
+          if (r?.statuses) putChatStatuses(Object.values(r.statuses).filter((v): v is ChatStatusLite => !!v))
+          if (Array.isArray(r?.chats))
+            putSlotNames('chats', Object.fromEntries(r!.chats!.filter((c) => c?.id).map((c) => [c.id, c.title?.trim() || MAIN_SLOT_NAME()])))
+        })
+        .catch(() => {})
+    }
+    return onChatStatus(putChatStatuses, catchUp)
+  }, [])
+  // ★2026-09-04 — 엔진이 착지한 계정(한도 자동 전환·되돌리기)을 이 자리의 picker에 미러링한다
+  // (그리드 MultiAgent와 같은 규칙 — lib/identityLanding.ts). 이 창은 자기 chatId를 모른다(부팅
+  // 상태는 panelId뿐) — 살아 있는 행(chatId ↔ panelId)이 우선, 없으면 채번 규칙으로 판정한다.
+  useEffect(
+    () =>
+      onChatIdentity((p) => {
+        const id = p.chatId ?? ''
+        if (!id) return
+        const cut = panelId.lastIndexOf('::')
+        const board = cut < 0 ? '' : panelId.slice(0, cut)
+        const slotN = cut < 0 ? NaN : Number(panelId.slice(cut + 2))
+        const mine = panelIdOfChat(id) === panelId || (!!board && panelSlotOfChat(id, board) === slotN)
+        if (!mine) return
+        setMeta((m) => {
+          const pk = pickerAfterLanding(m.picker, p)
+          const q = queueAfterLanding(m.queue, p)
+          return pk === m.picker && q === m.queue ? m : { ...m, picker: pk, queue: q }
+        })
+      }),
+    [panelId]
+  )
+
+  useEffect(() => {
+    const apply = (slots: WindowSlot[]): void =>
+      putSlotNames('wins', Object.fromEntries(slots.map((s) => [s.chatId, s.title?.trim() || WINDOW_SLOT_NAME()])))
+    return onChatWindows(apply, () => void listChatWindows().then(apply).catch(() => {}))
+  }, [])
+
+  // 창 타이틀(OS 작업 표시줄) — 패널 제목을 따라간다
+  useEffect(() => {
+    const title = meta.title || t('패널', 'Panel') + ' ' + boot.num
+    document.title = `${title} — AgentCodeGUI`
+  }, [meta.title, boot.num])
+
+  // ── 페르시스트 — 초안·메타·스냅샷을 메인에 600ms 디바운스로. 창이 닫히면 이 마지막
+  // 상태가 maPanelClosed로 그리드에 복귀한다(첫 페르시스트 전 닫힘은 부트 상태가 복귀분).
+  const buildRef = useRef<() => PanelPopState>(() => boot)
+  buildRef.current = () => ({
+    panelId,
+    slot,
+    num: boot.num,
+    title: meta.title,
+    custom: meta.custom,
+    locked: meta.locked,
+    color: meta.color,
+    cwd: meta.cwd,
+    refDirs: meta.refDirs,
+    picker: meta.picker,
+    api: meta.api,
+    input: meta.input,
+    images: meta.images,
+    queue: meta.queue,
+    snapshot: snapshotForPersist(state)
+  })
+  const sig = state.status + ':' + state.messages.length
+  useEffect(() => {
+    const timer = setTimeout(() => window.api.multi?.panelPersist?.(buildRef.current()).catch(() => {}), 600)
+    return () => clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [meta, sig])
+  // 닫히는 순간의 최종 상태도 최선으로 — invoke가 프로세스 종료 전에 닿으면 마지막
+  // 600ms의 타이핑까지 복귀분에 실린다 (못 닿아도 직전 디바운스분이 있다)
+  useEffect(() => {
+    const flush = (): void => void window.api.multi?.panelPersist?.(buildRef.current()).catch(() => {})
+    window.addEventListener('beforeunload', flush)
+    return () => window.removeEventListener('beforeunload', flush)
+  }, [])
+
+  // ── 과금·계정 사용량 (SessionWindow와 같은 규칙) ──
+  const [apiCfg, setApiCfg] = useState<ApiConfigStatus | null>(null)
+  const [autoResume, setAutoResume] = useState<boolean>(() => getPref<boolean>('limitResume.on', false))
+  const onAutoResumeChange = (on: boolean): void => {
+    setPref('limitResume.on', on)
+    setAutoResume(on)
+  }
+  useEffect(() => {
+    const refresh = (): void => {
+      setAutoResume(getPref<boolean>('limitResume.on', false))
+      window.api.apiConfig
+        .get()
+        .then(setApiCfg)
+        .catch(() => {})
+    }
+    refresh()
+    window.addEventListener('focus', refresh)
+    return () => window.removeEventListener('focus', refresh)
+  }, [])
+  const [usage, setUsage] = useState<UsageInfo>(EMPTY_USAGE)
+  const fetchUsage = useEvent((fresh: boolean) => {
+    window.api
+      .getUsage(fresh, meta.picker.account || undefined)
+      .then(setUsage)
+      .catch(() => {})
+  })
+  useEffect(() => {
+    fetchUsage(false)
+    // 계정 바인딩이 바뀌면 그 계정의 한도로 갈아끼운다
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [meta.picker.account])
+  // 실행이 끝날 때마다 강제 새로고침 — 방금 소비가 컨텍스트 팝오버에 바로 반영되게
+  const prevBusyRef = useRef(busy)
+  useEffect(() => {
+    const was = prevBusyRef.current
+    prevBusyRef.current = busy
+    if (was && !busy) fetchUsage(true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busy])
+
+  // ── /btw 질문 창 — 팝아웃 창에서도 곁다리 질문 (원본 키 = 이 창의 panelId).
+  // 알약은 이 창의 패널 도크에 뜨고, 창을 닫아 그리드로 복귀하면 같은 panelId 도크가
+  // 이어받아 그린다 (목록 브로드캐스트가 전 창 공통이라 어느 쪽이든 최신).
+  const tryBtw = (text: string, pk: PickerState): boolean => {
+    const p = parseBtw(text)
+    if (!p) return false
+    const dir = meta.cwd || state.session?.cwd || ''
+    const seed = btwForkOf(state.session, dir, pk.engine === 'codex' ? 'codex' : 'claude')
+    window.api
+      .btwOpen({
+        origin: panelId,
+        // btw 채팅 이름 = 'BTW - <이 패널 제목>' (제목 전이면 자리 번호로)
+        originTitle: meta.title || t(`패널 ${boot.num}`, `Panel ${boot.num}`),
+        cwd: dir,
+        refDirs: meta.refDirs,
+        picker: pk,
+        fork: seed?.fork ?? null,
+        forkCwd: seed?.cwd ?? null,
+        prompt: p.prompt || null
+      })
+      .catch(() => {})
+    return true
+  }
+  // 이 panelId에서 띄운 질문 창들 — 패널 안 btw 알약 도크 (브로드캐스트 구독)
+  const [sessionWins, setSessionWins] = useState<SessionWindowInfo[]>([])
+  useEffect(() => {
+    window.api.sessionWindows.list().then(setSessionWins).catch(() => {})
+    return window.api.sessionWindows.onChanged(setSessionWins)
+  }, [])
+  const btwWins = useMemo(() => sessionWins.filter((w) => w.btwOf === panelId), [sessionWins, panelId])
+
+  // ── 전송 (ActiveSession.sendPanel의 단일 패널판 — panelId 고정) ──
+  const send = useEvent(async (opts?: { text: string; images: string[]; picker: PickerState; externalContext?: ExternalContextSnapshot | null }) => {
+    const text = (opts?.text ?? meta.input).trim()
+    const imgs = opts?.images ?? meta.images
+    const pk = opts?.picker ?? meta.picker
+    if ((!text && imgs.length === 0) || busy) return
+    if (text === '/clear') {
+      window.api.multi?.cancel(panelId).catch(() => {})
+      load(initialSessionState)
+      patch({ ...(meta.locked ? {} : { title: '', custom: false }), ...(opts ? {} : { input: '', images: [] }) })
+      limitResume.setHold(null)
+      return
+    }
+    // /btw — 클라이언트 명령: 이 패널의 컨텍스트를 포크한 별도 질문 창 (패널 대화엔 흔적 없음)
+    if (tryBtw(text, pk)) {
+      if (!opts) patch({ input: '' })
+      return
+    }
+    const cmd = commandOf(text)
+    let dir = meta.cwd || ''
+    if (!dir && state.session) dir = state.session.cwd
+    const folderSwitched = !!state.session && state.messages.length > 0 && !sameCwd(state.session.cwd, dir)
+    if (folderSwitched) load(initialSessionState)
+    const externalContext = cmd ? null : opts?.externalContext !== undefined ? opts.externalContext : captureExternalContext(panelId)
+    if (externalContext === false) return
+    begin(text, cmd, imgs, externalContext)
+    const title = deriveTitle(text)
+    patch({
+      ...(opts ? {} : { input: '', images: [] }),
+      title: meta.locked && meta.title ? meta.title : meta.custom && !folderSwitched ? meta.title : title,
+      custom: meta.locked ? meta.custom : folderSwitched ? false : meta.custom
+    })
+    let promptForEngine = text
+    if (!cmd) {
+      const notes: string[] = []
+      const mentions = extractMentions(text)
+      if (mentions.length)
+        notes.push(
+          `${t('[멘션된 파일 — 필요하면 Read 도구로 확인하세요]', '[Mentioned files — read them with the Read tool if needed]')}\n${mentions.map((p) => '- ' + p).join('\n')}`
+        )
+      if (imgs.length)
+        notes.push(`${t('[첨부 파일 — Read 도구로 확인하세요]', '[Attached files — check them with the Read tool]')}\n${imgs.map((p) => '- ' + p).join('\n')}`)
+      if (notes.length) promptForEngine = `${text}\n\n${notes.join('\n\n')}`
+    }
+    const extraDirs = meta.refDirs.filter((p) => !sameCwd(p, dir))
+    window.api.multi
+      ?.run({
+        externalContext,
+        panelId,
+        prompt: promptForEngine,
+        model: pk.model,
+        effort: pk.effort,
+        mode: pk.mode,
+        engine: pk.engine,
+        codexModel: pk.codexModel,
+        codexTier: pk.codexTier,
+        cwd: dir,
+        addDirs: extraDirs.length ? extraDirs : undefined,
+        resume: state.session && sameCwd(state.session.cwd, dir) ? state.session.sessionId : undefined,
+        useApi: meta.api || undefined,
+        account: pk.account,
+        codexAccount: pk.codexAccount,
+        // ★3.0.4 — 그리드(메인 창)의 유령 셀이 받을 사용자 말풍선 원문. 이게 없으면 팝아웃
+        // 동안 그리드 사본에 내 말이 빠지고, 그 사본이 저장을 이겨 재시작 뒤 내 말만 사라진다.
+        echoText: cmd ? undefined : text,
+        echoImages: imgs.length ? imgs : undefined
+      })
+      .catch(() => {})
+  })
+
+  // Read the same engine-owned quota hold as the grid, without a second timer.
+  const engine: EngineId = meta.picker.engine === 'codex' ? 'codex' : 'claude'
+  const limitResume = useManagedLimitResume({
+    state,
+    busy,
+    enabled: autoResume,
+    apiMode: meta.api,
+    engine,
+    account: engine === 'codex' ? meta.picker.codexAccount : meta.picker.account,
+    fable: engine === 'claude' && meta.picker.model === 'fable',
+    holdKey: `pop:${panelId}`,
+    send: (p) => void send({ text: p, images: [], picker: meta.picker })
+  }, panelId)
+
+  // 예약 큐 — 이 창이 소유(그리드 쪽 큐는 팝아웃 때 비워짐). 드레인 규칙은 그리드와 동일.
+  const schedule = useEvent(() => {
+    if (!busy || (!meta.input.trim() && meta.images.length === 0)) return
+    // /btw는 예약하지 않고 즉시 연다 — 작업 도는 동안의 곁다리 질문 (그리드 패널과 동일)
+    if (tryBtw(meta.input.trim(), meta.picker)) {
+      patch({ input: '' })
+      return
+    }
+    const id = crypto.randomUUID ? crypto.randomUUID() : `q-${Date.now()}-${meta.queue.length}`
+    const externalContext = commandOf(meta.input) ? null : captureExternalContext(panelId)
+    if (externalContext === false) return
+    setMeta((m) => ({ ...m, input: '', images: [], queue: [...m.queue, { id, text: m.input, images: m.images, picker: m.picker, externalContext }] }))
+  })
+  const drainingRef = useRef(false)
+  const busyEdgeRef = useRef(busy)
+  useEffect(() => {
+    const was = busyEdgeRef.current
+    busyEdgeRef.current = busy
+    if (busy || !was || drainingRef.current || limitResume.waiting) return
+    const q = meta.queue
+    let clears = 0
+    while (clears < q.length && q[clears].text.trim() === '/clear') clears++
+    const items = q.slice(0, Math.min(clears + 1, q.length))
+    if (!items.length) return
+    drainingRef.current = true
+    setMeta((m) => ({ ...m, queue: m.queue.slice(items.length) }))
+    void (async () => {
+      try {
+        for (const next of items) await send({ text: next.text, images: next.images, picker: next.picker, externalContext: next.externalContext ?? null })
+      } finally {
+        drainingRef.current = false
+      }
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busy, meta])
+
+  // ── 중지·비우기·카드 응답 (그리드의 단일 패널판) ──
+  const stop = useEvent(() => {
+    if (busy) {
+      interruptTurn()
+      window.api.multi?.interrupt?.(panelId).catch(() => {})
+    } else {
+      for (const w of state.workflows) if (w.status === 'running') window.api.multi?.bgTask?.(panelId, { action: 'stop', id: w.id }).catch(() => {})
+    }
+    setMeta((m) => (m.queue.length ? { ...m, queue: [] } : m))
+  })
+  const clearConversation = useEvent(() => {
+    if (busy) return
+    window.api.multi?.cancel(panelId).catch(() => {})
+    load(initialSessionState)
+    patch({ ...(meta.locked ? {} : { title: '', custom: false }), input: '', images: [] })
+    limitResume.setHold(null)
+  })
+  const onPermission = useEvent((behavior: 'allow' | 'allow_always' | 'deny') => {
+    if (!state.pendingPermission) return
+    window.api.multi?.respondPermission({ panelId, requestId: state.pendingPermission.requestId, behavior }).catch(() => {})
+    answerPermission(behavior)
+  })
+  const onAnswer = useEvent((answers: string[][]) => {
+    if (!state.pendingQuestion) return
+    window.api.multi?.respondQuestion({ panelId, requestId: state.pendingQuestion.requestId, answers }).catch(() => {})
+    answerQuestion(answers)
+  })
+  const onDismissQuestion = useEvent(() => {
+    if (!state.pendingQuestion) return
+    window.api.multi?.respondQuestion({ panelId, requestId: state.pendingQuestion.requestId, answers: null }).catch(() => {})
+    clearQuestion()
+  })
+
+  // ── 작업 폴더·참조 폴더 (그리드와 같은 확인 카드 흐름) ──
+  const [pendingFolder, setPendingFolder] = useState<string | null>(null)
+  const curCwd = meta.cwd || state.session?.cwd || ''
+  const requestFolder = useEvent((cwd: string) => {
+    if (!cwd || !curCwd || sameCwd(cwd, curCwd) || state.messages.length === 0) {
+      patch({ cwd })
+      if (cwd) pushRecentDir(cwd)
+      return
+    }
+    if (busy) return
+    setPendingFolder(cwd)
+  })
+  const confirmFolder = useEvent(() => {
+    if (!pendingFolder) return
+    patch({ cwd: pendingFolder, ...(meta.locked ? {} : { title: '', custom: false }) })
+    load(initialSessionState)
+    limitResume.setHold(null)
+    pushRecentDir(pendingFolder)
+    setPendingFolder(null)
+  })
+  const pickFolder = useEvent(async () => {
+    if (busy) return
+    const dir = await window.api.pickDirectory()
+    if (dir) requestFolder(dir)
+  })
+  const addRefDirPath = useEvent((dir: string) => {
+    if (!dir) return
+    setMeta((m) => {
+      const cur = m.cwd || state.session?.cwd || ''
+      if ((cur && sameCwd(dir, cur)) || m.refDirs.some((p) => sameCwd(p, dir)) || m.refDirs.length >= 8) return m
+      return { ...m, refDirs: [...m.refDirs, dir] }
+    })
+  })
+  const addRefDir = useEvent(async () => {
+    const dir = await window.api.pickDirectory()
+    if (dir) addRefDirPath(dir)
+  })
+
+  // ── 뷰어·모달 (그리드와 동일 부품, 이 창 스코프) ──
+  const [openFile, setOpenFile] = useState<string | null>(null)
+  const [openFileLine, setOpenFileLine] = useState<number | undefined>()
+  // 뷰어 창 → 이 창(원래 창): 「창 안으로」로 되돌아온 파일(cwd는 이 창 것이라 경로만 받는다)
+  useEffect(() => window.api.viewer?.onDocked((p) => { setOpenFile(p.path); setOpenFileLine(p.line) }), [])
+  // 끈적한 창 모드면 독립 뷰어 창으로(그리드·본채팅과 같은 규칙). 창을 못 세우면 카드로.
+  const openFileRouted = (rel: string, line?: number): void => {
+    setOpenFileLine(line)
+    if (viewerWindowMode()) {
+      void openInViewerWindow({ path: rel, line, cwd: curCwd, diffs: state.diffs, backToParent: !!openSub }).then((took) => {
+        if (!took) setOpenFile(rel)
+      })
+      return
+    }
+    setOpenFile(rel)
+  }
+  const [openSub, setOpenSub] = useState<string | null>(null)
+  const [viewer, setViewer] = useState<{ images: string[]; index: number } | null>(null)
+
+  // 읽기 배율 — 크게 보기 카드와 같은 표면(multi.expand.zoom)을 쓴다
+  const zoom = useZoom('multi.expand.zoom', true, 1)
+
+  // 창이 열리면 컴포저로 바로 커서 — 크게 보기 카드가 열릴 때와 같은 규칙
+  useEffect(() => {
+    requestAnimationFrame(() => {
+      const ta = document.querySelector('.composer textarea') as HTMLTextAreaElement | null
+      ta?.focus()
+    })
+  }, [])
+
+  // Esc = 실행 중지 (그리드 패널 Esc와 같은 의미) — 열린 카드/모달이 있으면 그쪽에 양보.
+  // Enter = 컴포저로 포커스 (그리드의 포커스 패널 Enter와 같은 의미 — 이 창은 패널이
+  // 하나뿐이라 항상 그 컴포저) — 질문 카드·모달이 떠 있으면 그쪽 Enter에 양보.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') {
+        if (!busy && !state.workflows.some((w) => w.status === 'running')) return
+        if (document.querySelector('.q-overlay, .q-mini, .wf-card, .set-dialog-overlay, .pr-overlay, .fv-overlay, .iv-overlay, .sa-overlay, .ctx-menu, .sel-bar, .translation-popover, .hpop')) return
+        e.preventDefault()
+        stop()
+        return
+      }
+      if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        const ae = document.activeElement as HTMLElement | null
+        if (ae && (['INPUT', 'TEXTAREA', 'SELECT'].includes(ae.tagName) || ae.isContentEditable)) return
+        if (document.querySelector('.q-overlay, .q-mini, .set-dialog-overlay, .pr-overlay, .fv-overlay, .iv-overlay, .sa-overlay, .hpop')) return
+        const ta = document.querySelector('.composer textarea') as HTMLTextAreaElement | null
+        if (ta) {
+          e.preventDefault()
+          ta.focus()
+        }
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busy, state.workflows])
+
+  return (
+    <div className="sw pwin">
+      <div className="blurwarm" />
+      {/* 창 드래그 띠 + 창 컨트롤 — 패널 헤더는 버튼이 많아 드래그 면으로 못 쓴다 */}
+      <div className="pw-head">
+        <span className="pw-drag" />
+        <WinControls />
+      </div>
+      <div className="pw-body" ref={zoom.ref}>
+        <PanelView
+          slot={slot}
+          // ★ R3 — 팝아웃 창은 자기 창 안에서만 마운트/언마운트되므로 자리 키를 창으로 판다
+          // (그리드 자리의 앵커를 여기서 소비하면 본창이 되올릴 때 착지할 것이 없다)
+          anchorKey={panelId + '::win'}
+          // ★M9 — 구독 주소는 창이 바뀌어도 같은 패널이다(앵커의 `::win`은 자리 키 전용).
+          panelId={panelId}
+          num={boot.num}
+          meta={meta}
+          state={state}
+          busy={busy}
+          elapsed={elapsed}
+          focused
+          expanded
+          usage={usage}
+          budgetUsd={apiCfg?.budgetUsd ?? null}
+          totalSpentUsd={apiCfg?.spentUsd ?? 0}
+          zoom={zoom.zoom}
+          onInput={(_s, text) => patch({ input: text })}
+          onAddImages={(_s, paths) => setMeta((m) => ({ ...m, images: Array.from(new Set([...m.images, ...paths])) }))}
+          onRemoveImage={(_s, i) => setMeta((m) => ({ ...m, images: m.images.filter((_, j) => j !== i) }))}
+          onSend={() => void send()}
+          onSchedule={() => schedule()}
+          onRemoveQueued={(_s, id) => setMeta((m) => ({ ...m, queue: m.queue.filter((q) => q.id !== id) }))}
+          onStop={() => stop()}
+          onClear={() => clearConversation()}
+          onPicker={(_s, p) => patch({ picker: p })}
+          apiReady={!!apiCfg?.hasKey}
+          apiReadyCodex={!!apiCfg?.hasOpenaiKey}
+          onApiMode={(_s, next, eng) => {
+            const ready = eng === 'codex' ? !!apiCfg?.hasOpenaiKey : !!apiCfg?.hasKey
+            if (next && !ready) {
+              window.api.openApiSettings?.().catch(() => {})
+              return
+            }
+            patch({ api: next })
+          }}
+          limitHold={limitResume.hold}
+          managedLimitHold={limitResume.managedHold}
+          autoResume={autoResume}
+          onCancelHold={() => limitResume.setHold(null)}
+          // ★R28c RCAP — 팝아웃 창도 자기 대기표를 굴린다(소유권 이전 규약) — 출구도 같이 온다
+          onResumeHold={() => limitResume.resumeNow()}
+          onAutoResume={onAutoResumeChange}
+          onPickFolder={() => void pickFolder()}
+          onSelectFolder={(_s, p) => requestFolder(p)}
+          onAddRefDir={() => void addRefDir()}
+          onAddRefDirPath={(_s, p) => addRefDirPath(p)}
+          onRemoveRefDir={(_s, p) => setMeta((m) => ({ ...m, refDirs: m.refDirs.filter((x) => !sameCwd(x, p)) }))}
+          onOpenFile={(_s, rel, line) => openFileRouted(rel, line)}
+          onOpenSubagent={(_s, id) => setOpenSub(id)}
+          onOpenImage={(imgs, index) => setViewer({ images: imgs, index })}
+          onBgTask={(_s, req: BgTaskRequest) => void window.api.multi?.bgTask?.(panelId, req).catch(() => {})}
+          onRefreshUsage={() => fetchUsage(true)}
+          onFocusPanel={() => {}}
+          onToggleExpand={() => window.api.win.close()}
+          renaming={renaming}
+          onStartRename={() => setRenaming(true)}
+          onRename={(_s, title, custom) => {
+            setRenaming(false)
+            if (title !== null) patch({ title, custom })
+          }}
+          onToggleLock={() => setMeta((m) => ({ ...m, locked: !m.locked }))}
+          onCycleColor={() => setMeta((m) => ({ ...m, color: nextTag(m.color || defaultTag(slot)) }))}
+          onPermission={(_s, b) => onPermission(b)}
+          onAnswer={(_s, a) => onAnswer(a)}
+          onDismissQuestion={() => onDismissQuestion()}
+          btwWins={btwWins}
+        />
+      </div>
+      <ZoomBadge pct={zoom.pct} show={zoom.flash} />
+
+      {pendingFolder && (
+        <FolderSwitchDialog from={curCwd} to={pendingFolder} onCancel={() => setPendingFolder(null)} onConfirm={confirmFolder} />
+      )}
+      {openFile && (
+        <Suspense fallback={null}>
+          <FileModal
+            path={openFile}
+            line={openFileLine}
+            backToParent={!!openSub}
+            cwd={curCwd}
+            diffs={state.diffs}
+            onClose={() => setOpenFile(null)}
+            // 「별도 창으로」 — 끈적한 모드를 켜고 이 파일을 독립 창에. 창을 못 세우면 모드를 되돌린다.
+            onPopout={(p) => {
+              setViewerWindowMode(true)
+              void openInViewerWindow({ path: p, line: p === openFile ? openFileLine : undefined, cwd: curCwd, diffs: state.diffs, backToParent: !!openSub }).then((took) => {
+                if (took) setOpenFile(null)
+                else setViewerWindowMode(false)
+              })
+            }}
+          />
+        </Suspense>
+      )}
+      <SubAgentModal agent={openSub ? (state.subagents.find((a) => a.id === openSub) ?? null) : null} cwd={curCwd} onClose={() => setOpenSub(null)} onOpenFile={openFileRouted} />
+      {viewer && (
+        <ImageViewer
+          images={viewer.images}
+          index={viewer.index}
+          onIndexChange={(i) => setViewer((v) => (v ? { ...v, index: i } : v))}
+          onClose={() => setViewer(null)}
+        />
+      )}
+    </div>
+  )
+}

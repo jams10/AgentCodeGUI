@@ -1,0 +1,4184 @@
+import { Fragment, useEffect, useRef, useState } from 'react'
+import type {
+  EngineVersionEntry,
+  EngineVersionState,
+  SkillInfo,
+  SkillScope,
+  McpServerInfo,
+  McpServerSpec,
+  McpOrigin,
+  McpImportCandidate,
+  McpPrefs,
+  SecretInfo,
+  LspServerInfo,
+  ApiConfigStatus,
+  AccountUsage,
+  CodexAccountUsage,
+  UpdateStatus
+} from '@shared/protocol'
+import { FileBadge } from './fileType'
+import { EngineEnvironmentCard } from './EngineEnvironmentCard'
+import { CodexResetCredits } from './CodexResetCredits'
+import { AccountSubscription } from './AccountSubscription'
+import { CodexContextCard } from './CodexContextCard'
+import { TranslationSettingsView } from './TranslationSettingsView'
+import { ExternalToolsSettingsView } from './ExternalToolsSettingsView'
+import { useEngineEnvironments } from '../api/engineEnvironment'
+// ★R28 ACCT §1·§3·§4 — 계정 목록·한도의 단일 스토어 + 「사용 중」 역인덱스.
+import {
+  ensureAccounts,
+  ensureCodexAccounts,
+  invalidateAccounts,
+  primeUsageFromDisk,
+  putAccounts,
+  putCodexAccounts,
+  refreshCodexAccount,
+  refreshCodexUsage,
+  refreshUsage,
+  updateAccounts,
+  updateCodexAccounts,
+  useAccounts
+} from '../lib/accounts'
+import { getPref, setPref } from '../lib/prefs'
+import { applyGlass, GLASS_DEFAULT, GLASS_PREF } from '../lib/glass'
+import {
+  SIDEBAR_AUTOHIDE,
+  SIDEBAR_AUTOHIDE_TRIGGER,
+  AUTOHIDE_DEFAULT,
+  AUTOHIDE_TRIGGER_DEFAULT,
+  AUTOHIDE_TRIGGER_MIN,
+  AUTOHIDE_TRIGGER_MAX,
+  SIDEBAR_AUTOHIDE_EVENT,
+  SIDEBAR_AUTOHIDE_TRIGGER_PREVIEW_EVENT
+} from '../lib/sidebarAutohide'
+import {
+  IconClose,
+  IconRefresh,
+  IconBot,
+  LogoClaude,
+  LogoOpenAI,
+  IconChevDown,
+  IconChevRight,
+  IconAlert,
+  IconCheck,
+  IconTrash,
+  IconCode,
+  IconKey,
+  IconLock,
+
+  IconUser,
+  IconCard,
+  IconPlus,
+  IconPencil,
+  IconFilter,
+  IconX2,
+  IconSearch,
+  IconMouse,
+  IconContrast,
+  IconGlobe,
+  IconTranslate,
+  IconDownload,
+  IconSparkles,
+  IconInfo,
+  IconPlug,
+  IconServer,
+  IconBook,
+  type IconProps
+} from './icons'
+import { getLang, isEn, setLang, t, type UiLang } from '../lib/i18n'
+import { GestureGlyph, GESTURE_DEFAULTS, MouseGestureLayer, scrollGestures } from './mouseGesture'
+import { remainTone } from './Chat'
+import { nowSec, windowRolled } from '../lib/usageWindow'
+import { TripoSettings } from './TripoSettings'
+import { ComfySettings } from './ComfySettings'
+import { ServiceCredits } from './ServiceCredits'
+import {
+  DEFAULT_HIDE_DIRS,
+  DEFAULT_HIDE_FILES,
+  getHideDirs,
+  getHideEnabled,
+  getHideFiles,
+  setHideDirs,
+  setHideEnabled,
+  setHideFiles
+} from '../lib/hideDirs'
+
+export type SettingsView = 'profile' | 'account' | 'version' | 'api' | 'mcp' | 'keys' | 'tripo' | 'comfy' | 'skill' | 'external-tools' | 'lsp' | 'explorer' | 'gesture' | 'display' | 'language' | 'translation' | 'app'
+type View = SettingsView
+
+// 레일 — PoC 재해석: 그룹 라벨(사용자/엔진/확장/환경) 아래 항목. keys는 검색어(한국어·영어 동의어).
+// 그룹 라벨이 언어를 따라가야 해서 상수가 아닌 함수 — 렌더 때 t()가 평가된다.
+function navGroups(): { label: string; items: { id: View; label: string; Icon: (p: IconProps) => React.ReactElement; keys: string }[] }[] {
+  return [
+    {
+      label: t('사용자', 'User'),
+      items: [
+        { id: 'profile', label: 'Profile', Icon: IconUser, keys: '프로필 닉네임 아바타 이름 색 profile nickname avatar name color' },
+        { id: 'account', label: 'Account', Icon: IconCard, keys: '계정 로그인 구독 기본 한도 openai chatgpt account login subscription default limit' }
+      ]
+    },
+    {
+      label: t('엔진', 'Engine'),
+      items: [
+        { id: 'version', label: 'Engine', Icon: IconBot, keys: '엔진 claude code codex cli 버전 업데이트 설치 engine version update install' },
+        { id: 'api', label: 'API', Icon: IconKey, keys: 'api 키 예산 과금 비용 key budget billing cost' }
+      ]
+    },
+    {
+      label: t('연동', 'Integrations'),
+      items: [
+        { id: 'external-tools', label: 'External Tools', Icon: IconPlug, keys: '외부 도구 연동 연결 프로그램 규격 설명서 지침 복사 붙여넣기 ai external tools integration connect adapter protocol guide copy paste' },
+        { id: 'mcp', label: 'MCP', Icon: IconServer, keys: 'mcp 서버 도구 연결 인증 oauth 로그인 blender comfy server tool connect auth' },
+        { id: 'keys', label: 'Keys', Icon: IconLock, keys: '키 보관함 시크릿 토큰 환경변수 api key secret token env vault' },
+        { id: 'tripo', label: 'Tripo', Icon: IconServer, keys: 'tripo 트리포 3d 모델 모델링 생성 blender 블렌더 api 키 mcp' },
+        { id: 'comfy', label: 'ComfyCloud', Icon: IconServer, keys: 'comfy cloud 컴피 이미지 생성 나노바나나 gpt image api 키 로그인 연결 잔액 크레딧' },
+        { id: 'skill', label: 'Skill', Icon: IconBook, keys: '스킬 명령 슬래시 skill command slash' }
+      ]
+    },
+    {
+      label: t('환경', 'Environment'),
+      items: [
+        { id: 'display', label: 'Display', Icon: IconContrast, keys: '화면 유리 투명 아크릴 벽지 비침 배경 glass 알림 토스트 notification display transparent acrylic wallpaper background toast sidebar' },
+        { id: 'language', label: 'Language', Icon: IconGlobe, keys: '언어 한국어 영어 한글 korean english language' },
+        { id: 'translation', label: 'Translation', Icon: IconTranslate, keys: '번역 모델 사고 수준 effort 현재 세션 계정 translate translation model account language' },
+        { id: 'lsp', label: 'Code', Icon: IconCode, keys: '코드 언어 서버 lsp 하이라이트 심볼 code language server highlight symbol' },
+        { id: 'explorer', label: 'Explorer', Icon: IconFilter, keys: '탐색기 숨김 필터 폴더 explorer hide filter folder' },
+        { id: 'gesture', label: 'Gestures', Icon: IconMouse, keys: '제스처 마우스 우클릭 gesture mouse right click' }
+      ]
+    },
+    {
+      label: t('앱', 'App'),
+      items: [
+        {
+          id: 'app',
+          // 사이드바 항목은 다른 항목처럼 영어 고정(Profile·Account·…) — 2026-09-05 사용자 요청. 본문 제목은 t()로 언어를 따른다.
+          label: 'Updates',
+          Icon: IconInfo,
+          keys: '앱 버전 업데이트 확인 설치 재시작 패치노트 소식 app version update check install restart relaunch patch notes changelog whats new'
+        }
+      ]
+    }
+  ]
+}
+
+// numeric semver-ish compare: <0 if a is older than b
+function cmpVer(a: string, b: string): number {
+  const pa = a.split('.').map((n) => parseInt(n, 10) || 0)
+  const pb = b.split('.').map((n) => parseInt(n, 10) || 0)
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] ?? 0) - (pb[i] ?? 0)
+    if (d) return d
+  }
+  return 0
+}
+
+// ── Profile (닉네임 + 아바타 색 — 사이드바 하단·채팅 첫 인사의 내 표시.
+//    말풍선의 ava/meta는 2.0 리뉴얼 CSS가 숨겨 채팅 본문엔 안 나온다) ────────────
+// 저장 즉시 메인 창에 반영 — App이 ccg-profile-changed 커스텀 이벤트를 구독.
+// 추가 채팅 창(SessionWindow)은 별도 OS 창이라 이 이벤트가 닿지 않음 — 창을 열 때 getProfile로 로드.
+// PoC 문법: 히어로 카드(큰 아바타 미리보기) + 필드, 스와치는 체크 대신 링.
+// 20색 = 스와치 줄(한 줄 10개)에 정확히 두 줄. 색상환 순서로 돌되 [0]은 기본색
+// 인디고 고정(App의 DEFAULT_USER와 동일), 끝은 브라운·뉴트럴로 마무리.
+const AVA_SWATCHES = [
+  '#6366F1', '#7C3AED', '#9333EA', '#C026D3', '#DB2777',
+  '#E11D48', '#DC2626', '#EA580C', '#D97706', '#CA8A04',
+  '#65A30D', '#16A34A', '#059669', '#0D9488', '#0891B2',
+  '#0EA5E9', '#2563EB', '#92400E', '#64748B', '#000000'
+]
+function ProfileView(): React.ReactElement {
+  const [nick, setNick] = useState('')
+  const [color, setColor] = useState(AVA_SWATCHES[0])
+  useEffect(() => {
+    window.api
+      .getProfile()
+      .then((p) => {
+        if (p) {
+          setNick(p.nickname)
+          setColor(p.color || AVA_SWATCHES[0])
+        }
+      })
+      .catch(() => {})
+  }, [])
+  // 빈 닉네임은 저장하지 않는다 — App도 빈 이름은 무시하므로 마지막 유효값이 유지된다
+  const apply = (nickname: string, c: string): void => {
+    if (!nickname.trim()) return
+    const profile = { nickname: nickname.trim(), color: c }
+    window.api.saveProfile(profile).catch(() => {})
+    window.dispatchEvent(new CustomEvent('ccg-profile-changed', { detail: profile }))
+  }
+  const shown = nick.trim() || 'User'
+  return (
+    <>
+      <div className="set-h1">Profile</div>
+      <div className="set-h1-sub">
+        {t(
+          '사이드바와 채팅 첫 인사에 보이는 내 이름과 아바타예요 — 바꾸면 바로 반영돼요.',
+          'Your name and avatar in the sidebar and the chat greeting — changes apply right away.'
+        )}
+      </div>
+      <div className="sc2 hero2">
+        <div className="set-bigava" style={{ background: color }}>{shown.charAt(0).toUpperCase()}</div>
+        <div>
+          <div className="n">{shown}</div>
+          <div className="s">{t('사이드바에 이 이름과 색으로 보여요', 'Shown in the sidebar with this name and color')}</div>
+        </div>
+      </div>
+      <div className="set-field">
+        <label>{t('닉네임', 'Nickname')}</label>
+        <input
+          className="set-input"
+          value={nick}
+          maxLength={20}
+          placeholder="User"
+          onChange={(e) => {
+            setNick(e.target.value)
+            apply(e.target.value, color)
+          }}
+        />
+      </div>
+      <div className="set-field">
+        <label>{t('아바타 색', 'Avatar color')}</label>
+        <div className="set-swatches">
+          {AVA_SWATCHES.map((c) => (
+            <button
+              key={c}
+              className={'set-swatch' + (c === color ? ' on' : '')}
+              style={{ background: c }}
+              aria-label={t('아바타 색 ', 'Avatar color ') + c}
+              onClick={() => {
+                setColor(c)
+                apply(nick, c)
+              }}
+            />
+          ))}
+        </div>
+      </div>
+    </>
+  )
+}
+
+// 배열 원소 이동(from → to) — 꾹-드래그 재정렬의 낙관 갱신용
+function arrMove<T>(arr: T[], from: number, to: number): T[] {
+  const next = arr.slice()
+  const [it] = next.splice(from, 1)
+  next.splice(to, 0, it)
+  return next
+}
+
+// ── 계정 카드 꾹-드래그 재정렬 ──────────────────────────────────────────────
+// 카드를 0.35초 꾹 누르면 집힌다(버튼 위 프레스는 제외 — 삭제/기본 클릭과 충돌 없음).
+// 집힌 뒤 세로 드래그로 목록이 즉시 재배열(move)되고, 놓으면 drop이 순서를 저장한다.
+// 홀드 전에 6px 이상 움직이거나 먼저 떼면 그냥 클릭 — 드래그로 승격하지 않는다.
+function useHoldReorder(
+  count: number,
+  move: (from: number, to: number) => void,
+  drop: () => void
+): { drag: number | null; press: (i: number) => (e: React.PointerEvent<HTMLDivElement>) => void } {
+  const [drag, setDrag] = useState<number | null>(null)
+  const press =
+    (i: number) =>
+    (e: React.PointerEvent<HTMLDivElement>): void => {
+      if (e.button !== 0 || count < 2) return
+      if ((e.target as HTMLElement).closest('button, a, input')) return
+      const el = e.currentTarget
+      const pid = e.pointerId
+      const startX = e.clientX
+      const startY = e.clientY
+      // 한 칸 이동 거리 = 행 높이 + 카드 간격(.sc2 + .sc2 의 8px) — 계정 카드 높이는 균일
+      const step = el.offsetHeight + 8
+      let active = false
+      let cur = i
+      const cleanup = (): void => {
+        window.clearTimeout(timer)
+        window.removeEventListener('pointermove', onMove)
+        window.removeEventListener('pointerup', onUp)
+        window.removeEventListener('pointercancel', onUp)
+        document.body.style.userSelect = ''
+        try {
+          el.releasePointerCapture(pid)
+        } catch {
+          /* 캡처 전 종료 */
+        }
+      }
+      const timer = window.setTimeout(() => {
+        active = true
+        setDrag(i)
+        // 프레스 중 시작된 텍스트 선택을 걷어내고, 드래그 동안 새 선택을 막는다
+        window.getSelection()?.removeAllRanges()
+        document.body.style.userSelect = 'none'
+        try {
+          el.setPointerCapture(pid)
+        } catch {
+          /* ignore */
+        }
+      }, 350)
+      const onMove = (ev: PointerEvent): void => {
+        if (ev.pointerId !== pid) return
+        if (!active) {
+          if (Math.abs(ev.clientX - startX) > 6 || Math.abs(ev.clientY - startY) > 6) cleanup()
+          return
+        }
+        // 프레스 지점 대비 이동량을 칸 수로 환산 — 배열이 이미 재배열돼도 기준은 원래 자리(i)
+        const to = Math.max(0, Math.min(count - 1, i + Math.round((ev.clientY - startY) / step)))
+        if (to !== cur) {
+          move(cur, to)
+          cur = to
+          setDrag(to)
+        }
+      }
+      const onUp = (ev: PointerEvent): void => {
+        if (ev.pointerId !== pid) return
+        cleanup()
+        if (active) {
+          setDrag(null)
+          if (cur !== i) drop()
+        }
+      }
+      window.addEventListener('pointermove', onMove)
+      window.addEventListener('pointerup', onUp)
+      window.addEventListener('pointercancel', onUp)
+    }
+  return { drag, press }
+}
+
+// ── Account 정렬 — 초기화 임박순 / 한도 적게 남은순 ─────────────────────────────
+// 클릭 = 그 기준으로 "저장 순서 자체"를 재배열하고 저장한다(꾹-드래그로 옮긴 것과 동일
+// 경로 — reorderAccounts). 순간 뷰 정렬이던 초판은 화면을 벗어나면 도로 흐트러지고
+// 드래그까지 잠갔는데, 사용자가 원한 건 "누르면 그 순서로 굳는" 쪽(실사용 피드백) —
+// 그래서 뷰 모드·영속 pref('account.sort')·드래그 잠금을 전부 걷었다. 정렬 결과는 채팅
+// 계정 picker에도 그대로 반영되고, 이후 꾹-드래그로 언제든 다시 다듬을 수 있다.
+type AcctSort = 'reset' | 'left'
+// 라벨은 ko/en 필드 + 렌더 시 isEn() 분기 — 모듈 스코프 t() 금지(언어 전환이 못 따라옴)
+const ACCT_SORTS: { id: AcctSort; ko: string; en: string }[] = [
+  { id: 'reset', ko: '초기화 임박순', en: 'Resets soonest' },
+  { id: 'left', ko: '한도 적게 남은순', en: 'Least limit left' }
+]
+// 정렬 키 — 초기화(reset)는 주간류(Fable·주간) 창 중 가장 이른 시각: 5시간 창은 어느
+// 계정이든 엇비슷하게 곧 돌아와("1시간 안팎") 섞으면 정렬을 지배해버린다(실측 — 주간
+// 12시간 남은 계정이 1일 22시간 계정 뒤로 밀림). 주간류가 없을 때만 5시간으로 폴백.
+// 잔여(left)는 모든 창 중 가장 적게 남은 % — 가장 급한 창이 계정을 대표한다. 조회 못 한
+// 계정(토큰 만료·아직 로딩 전)은 Infinity로 맨 뒤 — 동률 비교의 NaN은 sort 규약상 0 취급.
+type AcctSortKeys = { reset: number; left: number }
+function antSortKeys(u?: AccountUsage): AcctSortKeys {
+  // ★2026-09-05 — 지난 창(리셋 시각을 넘긴 값)은 정렬 재료가 아니다: 그 창은 이미 돌아왔고
+  // (잔량은 100으로 읽는다) 그 시각은 「임박」이 아니라 과거다 — 조회가 막힌 계정이
+  // 「곧」인 채 임박순 맨 위에 눌러앉던 자리.
+  const now = nowSec()
+  const win = (pct: number | null | undefined, at: number | null | undefined): { left: number | null; reset: number | null } =>
+    windowRolled(at, now)
+      ? { left: pct != null ? 100 : null, reset: null }
+      : { left: pct != null ? 100 - pct : null, reset: at ?? null }
+  const fh = win(u?.fiveHourPct, u?.fiveHourResetsAt)
+  const fb = win(u?.fablePct, u?.fableResetsAt)
+  const wk = win(u?.weeklyPct, u?.weeklyResetsAt)
+  const weekly = [fb.reset, wk.reset].filter((x): x is number => x != null)
+  const resets = weekly.length ? weekly : [fh.reset].filter((x): x is number => x != null)
+  const lefts = [fh.left, fb.left, wk.left].filter((x): x is number => x != null)
+  return { reset: resets.length ? Math.min(...resets) : Infinity, left: lefts.length ? Math.min(...lefts) : Infinity }
+}
+function cxSortKeys(u?: CodexAccountUsage): AcctSortKeys {
+  const wins = u?.windows ?? []
+  // 시간 단위 창('5시간' 등) 제외 — 주간/일 단위 창이 하나도 없을 때만 전체로 폴백
+  const long = wins.filter((w) => !/^\d+시간$/.test(w.label))
+  const resets = (long.length ? long : wins).map((w) => w.resetsAt).filter((x): x is number => x != null)
+  const lefts = wins.map((w) => 100 - w.usedPct)
+  return { reset: resets.length ? Math.min(...resets) : Infinity, left: lefts.length ? Math.min(...lefts) : Infinity }
+}
+// 키로 정렬한 사본 — Array.sort는 안정 정렬이라 동률(둘 다 조회 전 등)은 기존 순서를 지킨다.
+function sortAccounts<T>(list: T[], sort: AcctSort, keys: (a: T) => AcctSortKeys): T[] {
+  return list
+    .map((a) => ({ a, k: keys(a) }))
+    .sort((x, y) => (sort === 'reset' ? x.k.reset - y.k.reset : x.k.left - y.k.left))
+    .map((x) => x.a)
+}
+
+// (한도 우선순위 카드(LimitPolicySection)는 픽커 「한도 소진 시」 체크 행으로 이전·제거 — 2026-09-01 사용자)
+
+// ── Account (구독 로그인 Anthropic·OpenAI — 앱 등록 계정만, 전환 개념 없음) ───────
+// 로그인/로그아웃 전부 격리 CONFIG_DIR(main/auth.ts) — 전역 ~/.claude 불가침.
+// PoC 문법: 계정 카드(아바타·이메일·기본 배지·플랜) + 잔여 한도 미니 게이지 + 점선 추가 행.
+function AccountView(): React.ReactElement {
+  // 'login' | 'codex-login' | <email>(삭제 중) | 'codex'(OpenAI 삭제 중) | null
+  const [busy, setBusy] = useState<string | null>(null)
+  const [loginUrl, setLoginUrl] = useState<string | null>(null)
+  // 로그인 폴백 링크의 「복사」 피드백 — 새 로그인 시도마다 리셋
+  const [linkCopied, setLinkCopied] = useState(false)
+  useEffect(() => setLinkCopied(false), [loginUrl])
+  const [note, setNote] = useState<string | null>(null)
+
+  // ★R28 ACCT §1 — 목록·한도의 주인은 **단일 스토어**다(`lib/accounts.ts`).
+  //
+  // R1까지 이 화면은 자기 `useState` 넷을 들고 탭을 열 때마다 `accountsUsage()`를 새로
+  // 쐈다. 그런데 채팅 계정 picker도 자기 모듈 캐시로 같은 조회를 쐈다 — 두 표면을 같은
+  // 순간에 열면 **HTTP가 두 벌**이었고, 그 규약은 1200ms 직렬이라 계정 수만큼 곱해졌다.
+  // 이제 조회는 한 벌이고, 첫 그림은 디스크에 보존된 마지막 값이다(HTTP 0회).
+  const acct = useAccounts()
+  const accounts = acct.accounts
+  const usage = acct.usage
+  const cxAccounts = acct.cxAccounts
+  const cxUsage = acct.cxUsage
+
+  // 목록이 바뀐 뒤(로그인·삭제·순서 저장 실패) — 목록은 강제로 다시 뜨고, 한도도
+  // 새 목록 기준으로 다시 묻는다(계정이 늘거나 줄었으니 TTL을 넘는 게 맞다).
+  const reload = (): void => {
+    invalidateAccounts()
+    void ensureAccounts(true).then((list) => {
+      if (list.length) void refreshUsage({ priority: list[0]?.email, force: true })
+    })
+    void ensureCodexAccounts(true).then((list) => {
+      if (list.length) void refreshCodexUsage()
+    })
+  }
+  // 탭을 열면 ① 디스크 캐시로 **즉시** 그리고 ② 뒤에서 갱신한다(stale-while-revalidate).
+  // 주기 폴링은 없다 — usage API 예산이 빡빡해서(429) 호출을 아낀다. 우선 조회 대상은
+  // 맨 위(=기본) 계정이다: 사용자가 제일 먼저 보는 숫자가 제일 먼저 갱신되게.
+  // 429 백오프 재시도가 큐 안에서 끝나면 그 시점에 화면이 갱신된다(늦게 도착해도 반영).
+  useEffect(() => {
+    void primeUsageFromDisk()
+    void ensureAccounts().then((list) => {
+      if (list.length) void refreshUsage({ priority: list[0]?.email })
+    })
+    void ensureCodexAccounts().then((list) => {
+      if (list.length) void refreshCodexUsage()
+    })
+  }, [])
+  useEffect(() => window.api.auth.onLoginUrl(setLoginUrl), [])
+  // BUG-0013 — 웹 구독 확인이 끝나면 셸이 그 Codex 계정의 토큰·한도를 되싱크한다(subscriptions.rs).
+  // 목록(스토어 플랜)과 한도 행을 다시 가져와 카드의 플랜·초기화권이 「구독 중」과 같은 시점을 보게 한다.
+  useEffect(
+    () =>
+      window.api.codexAuth.onAccountRefreshed(() => {
+        void ensureCodexAccounts(true).then((list) => {
+          if (list.length) void refreshCodexUsage()
+        })
+      }),
+    []
+  )
+  // 클로드 축은 토큰이 불투명이라 한도는 늘 서버 값이고, 되싱크 대상은 스토어의 구독 종류(플랜 라벨)뿐이다.
+  useEffect(() => window.api.auth.onAccountRefreshed(() => void ensureAccounts(true)), [])
+  // 스토어에 앉히는 두 문 — 배열을 그대로 놓거나(`put`), 최신 값을 재료로 갱신하거나
+  // (`update`, 드래그 재정렬이 쓰는 함수형 갱신). 이름을 옛 setState와 같게 두면
+  // 아래 코드가 통째로 그대로 산다.
+  const setAccounts = putAccounts
+  const setCxAccounts = putCodexAccounts
+
+  const addAccount = async (): Promise<void> => {
+    setBusy('login')
+    setLoginUrl(null)
+    setNote(null)
+    try {
+      const res = await window.api.auth.login(false)
+      if (!res.ok) setNote(res.error ?? t('로그인이 완료되지 않았어요', 'Sign-in was not completed'))
+    } catch {
+      /* ignore */
+    }
+    setBusy(null)
+    setLoginUrl(null)
+    reload()
+  }
+  // ★R28f SHIPBLOCK N1(3) — 계정 쓰기의 **실패는 화면에 보인다**.
+  //
+  // R1까지 이 화면의 catch는 대부분 `/* ignore */`였고, 그래도 티가 안 났던 이유는 심이
+  // **실패를 안 던졌기** 때문이다(미구현 채널이 안전값 `[]`로 resolve → 목록이 빈 배열로
+  // 갈아끼워짐 → 아무 문구도 없음 — 최종 파리티 감사 R2 §N1). 이제 쓰기 채널은 reject하고
+  // (`api/shim.ts`의 `callStrict`), 그 reject가 도착하는 자리는 예외 없이 이 문구를 세운다.
+  // 셸이 사람이 읽는 사유를 실어 보냈으면(`ShimUnavailableError.detail` — 예: "codex 실행
+  // 파일을 찾지 못했어요") 그걸 그대로 보여 준다. 없으면 일반 문구.
+  const failNote = (e?: unknown): void =>
+    setNote(
+      (e as { detail?: string } | null)?.detail ??
+        t(
+          '요청이 실패했어요 — 앱을 재시작한 뒤 다시 시도해 주세요(계정 목록은 그대로 둡니다)',
+          'The request failed — restart the app and try again (the account list is left untouched)'
+        )
+    )
+  // 삭제 = 그 계정 토큰 해지(서버) + 등록 제거 — 다시 쓰려면 재로그인
+  const doDelete = async (email: string): Promise<void> => {
+    setBusy(email)
+    setNote(null)
+    try {
+      setAccounts(await window.api.auth.logout(email))
+    } catch (e) {
+      failNote(e)
+    }
+    setBusy(null)
+    reload()
+  }
+  // ★R28 ACCT §4의 「맨 위로」 버튼은 2026-09-01 사용자 결정으로 제거 — "기본 = 목록 0번"
+  // 규칙은 그대로고, 순서 변경은 꾹-드래그(drop → reorderAccounts)가 유일한 문이다.
+  // (셸 채널 `auth:set-default-account`는 남아 있다 — 되살릴 일이 있으면 그 채널이 「맨 위로 이동」이다.)
+  // OpenAI(Codex) — Anthropic과 같은 동작 2종 (추가/삭제)
+  const doCodexLogin = async (): Promise<void> => {
+    setBusy('codex-login')
+    setLoginUrl(null)
+    setNote(null)
+    try {
+      setCxAccounts(await window.api.codexAuth.login())
+    } catch (e) {
+      failNote(e)
+    }
+    setBusy(null)
+    setLoginUrl(null)
+    reload()
+  }
+  const doCodexDelete = async (email: string): Promise<void> => {
+    setBusy('cx:' + email)
+    setNote(null)
+    try {
+      setCxAccounts(await window.api.codexAuth.logout(email))
+    } catch (e) {
+      failNote(e)
+    }
+    setBusy(null)
+  }
+  // (Codex 축 「맨 위로」도 같은 결정으로 제거 — 셸 채널 `codexAuth.setDefaultAccount`는 남아 있다)
+  const planLabel = (ty?: string): string =>
+    ty ? ty.charAt(0).toUpperCase() + ty.slice(1) + t(' 플랜', ' plan') : t('구독', 'Subscription')
+
+  // ── 꾹-드래그 재정렬 — 스토어 배열 순서가 곧 표시 순서(채팅 계정 picker 공통)라 로컬을
+  // 즉시 재배열(낙관)하고, 놓을 때 최종 순서를 저장한다(실패하면 reload로 서버 순서 복원).
+  // drop의 함수형 setState는 저장 시점에 "마지막 move까지 반영된" 배열을 읽기 위한 것.
+  // 저장 실패는 **조용히 넘어가지 않는다** — 서버 순서로 되돌리고(reload) 문구를 세운다.
+  const orderFailed = (): void => {
+    setNote(t('순서를 저장하지 못했어요 — 앱을 재시작한 뒤 다시 시도해 주세요', 'Could not save the order — restart the app and try again'))
+    reload()
+  }
+  const antDrag = useHoldReorder(
+    accounts?.length ?? 0,
+    (from, to) => updateAccounts((prev) => (prev ? arrMove(prev, from, to) : prev)),
+    () =>
+      updateAccounts((prev) => {
+        if (prev) void window.api.auth.reorderAccounts(prev.map((a) => a.email)).then(setAccounts).catch(orderFailed)
+        return prev
+      })
+  )
+  const cxDrag = useHoldReorder(
+    cxAccounts?.length ?? 0,
+    (from, to) => updateCodexAccounts((prev) => (prev ? arrMove(prev, from, to) : prev)),
+    () =>
+      updateCodexAccounts((prev) => {
+        if (prev) void window.api.codexAuth.reorderAccounts(prev.map((a) => a.email)).then(setCxAccounts).catch(orderFailed)
+        return prev
+      })
+  )
+
+  // 정렬 버튼 = 저장 순서 재배열 — 꾹-드래그의 drop과 같은 경로(낙관 재배열 → reorder 저장,
+  // 실패하면 reload로 서버 순서 복원). 두 엔진 목록에 한 번에 적용하고, 이미 그 순서면
+  // (안정 정렬이 같은 배열을 내면) 저장을 건너뛴다. 함수형 setState라 드래그 직후의
+  // 마지막 배열을 그대로 재료로 쓴다.
+  const applySort = (sort: AcctSort): void => {
+    updateAccounts((prev) => {
+      if (!prev || prev.length < 2) return prev
+      const next = sortAccounts(prev, sort, (a) => antSortKeys(usage[a.email]))
+      if (next.every((a, i) => a === prev[i])) return prev
+      void window.api.auth.reorderAccounts(next.map((a) => a.email)).then(setAccounts).catch(orderFailed)
+      return next
+    })
+    updateCodexAccounts((prev) => {
+      if (!prev || prev.length < 2) return prev
+      const next = sortAccounts(prev, sort, (a) => cxSortKeys(cxUsage[a.email]))
+      if (next.every((a, i) => a === prev[i])) return prev
+      void window.api.codexAuth.reorderAccounts(next.map((a) => a.email)).then(setCxAccounts).catch(orderFailed)
+      return next
+    })
+  }
+
+  return (
+    <>
+      <div className="set-h1">Account</div>
+      <div className="set-h1-sub">
+        {/* ★R28 ACCT §4 — 「기본」이라는 별도 상태가 사라졌다. 안 고른 채팅이 쓰는 계정은
+            **이 목록의 맨 위**다. 설명도 그 규칙 하나만 말한다(옛 문구는 「기본」 배지·버튼을
+            가리켰는데 그 둘이 이제 없다). */}
+        {isEn() ? (
+          <>
+            Subscription sign-in — managed per engine. Runs only use accounts registered here — each chat can pick
+            its own account, and chats without one run on the <strong>account at the top of this list</strong>.
+            Press and hold a card to drag it into a different order; the sort buttons reorder and{' '}
+            <strong>save</strong> that order (the chat account picker follows it).
+          </>
+        ) : (
+          <>
+            구독 계정 로그인 — 엔진별로 따로 관리돼요. 실행에는 여기 등록된 계정만 쓰여요 — 채팅마다 계정을 따로
+            고를 수 있고, 안 고른 채팅은 <strong>이 목록 맨 위</strong> 계정으로 실행돼요. 계정 카드는 꾹 눌러 끌어
+            순서를 바꾸고, 정렬 버튼은 그 기준으로 순서를 <strong>저장</strong>까지 해요(채팅 계정 picker도 이
+            순서를 따라요).
+          </>
+        )}
+      </div>
+
+      {/* 정렬 버튼 — 클릭 = 그 기준으로 저장 순서 재배열(두 엔진 목록 함께) */}
+      <div className="set-sortrow" role="group" aria-label={t('정렬', 'Sort')}>
+        <span className="sl">{t('정렬', 'Sort')}</span>
+        {ACCT_SORTS.map((o) => (
+          <button key={o.id} className="set-chipbtn" onClick={() => applySort(o.id)}>
+            {isEn() ? o.en : o.ko}
+          </button>
+        ))}
+      </div>
+
+      <div className="set-sec">Anthropic</div>
+      {accounts == null ? (
+        <div className="sc2 acct">
+          <div className="meta">
+            <span className="set-spin" /> {t('불러오는 중…', 'Loading…')}
+          </div>
+        </div>
+      ) : (
+        <>
+          {accounts.map((a, i) => {
+            return (
+            <div
+              className={'sc2 acct' + (antDrag.drag === i ? ' drag' : '')}
+              key={a.email}
+              onPointerDown={busy == null ? antDrag.press(i) : undefined}
+            >
+              <div className="ava2" style={{ background: AVA_SWATCHES[i % AVA_SWATCHES.length] }}>
+                {a.email.charAt(0).toUpperCase()}
+              </div>
+              <div className="who">
+                <div className="em">
+                  <span className="emt">{a.email}</span>
+                  {/* ★R28 ACCT §4 — 배지는 **인덱스 0의 파생 표시**다(저장된 상태가 아니다).
+                      셸도 같은 규칙으로 `isDefault`를 싣는다 — 진실이 두 곳이 되지 않게 그 값을 쓴다. */}
+                  {/* 「기본 · 맨 위」 배지는 뗐다 — 맨 위 행이라는 사실 자체가 이미 보인다(2026-09-01 사용자) */}
+                  {/* ★R28 ACCT §3 — 다른 자리가 이 계정으로 **지금 돌고 있다**(주황).
+                      선택을 막지 않는다 — 사용자가 알고 쓰는 건 존중하고, 모르고 겹치는 것만 막는다. */}
+                  {/* 「사용 중 · N번 자리」 배지 제거(2026-09-01 사용자) — 어디서 쓰는지는
+                      계정 picker(팝오버)의 경고가 이미 말한다; 설정 행에선 소음이었다 */}
+                  {/* ★M11 R3(F2) — 토큰 교환이 실패한 계정. R2까지 이 사실은 stderr 한 줄로만
+                      남았고, 사용자는 갈아탄 자리에서 로그인 창을 보고서야 알았다. 자동 전환은
+                      이미 이 계정을 후보에서 뺐다(격리) — 그 판정을 여기서도 말한다.
+                      ★R4(G2) — R3의 문구는 "삭제하고 다시 로그인하면 풀립니다"였는데, 401이
+                      난 그 순간 계정이 스토어에 없었으면(로그아웃 = 토큰 해지라 흔한 판)
+                      표식에 지문이 안 적혀 **어떤 재로그인으로도 안 풀렸다**. 이제 해제 경로가
+                      셋이고(조회 성공 · 재로그인 · 크리덴셜 복귀) 문구도 그 셋을 말한다. */}
+                  {a.needsLogin && <span className="set-badge warn">{t('재로그인 필요할 수 있어요', 'May need sign-in')}</span>}
+                </div>
+                <div className="meta">
+                  {a.needsLogin
+                    ? t(
+                        '토큰 갱신이 실패해 자동 전환 후보에서 잠시 빠졌어요. 한도 조회가 한 번 성공하거나 다시 로그인하면 자동으로 풀려요.',
+                        'Token refresh failed, so this account is held out of auto-switch for now. It clears itself once a usage check succeeds, or after you sign in again.'
+                      )
+                    : planLabel(a.subscriptionType)}
+                </div>
+              </div>
+              <AccountLimits
+                u={usage[a.email]}
+                loading={acct.loading}
+                // 수동 재시도는 TTL을 넘는다 — 사용자가 「다시 시도」를 눌렀는데 캐시가
+                // 나오면 그 버튼은 아무 일도 안 하는 버튼이다.
+                onRetry={() => void refreshUsage({ priority: a.email, force: true })}
+              />
+              <div className="acts">
+                {/* 「맨 위로」 버튼 제거(2026-09-01 사용자) — 순서 변경은 카드 길게 눌러 드래그가 담당 */}
+                <button className="set-chipbtn danger" disabled={busy != null} onClick={() => void doDelete(a.email)}>
+                  {busy === a.email ? t('삭제 중…', 'Deleting…') : t('삭제', 'Delete')}
+                </button>
+              </div>
+              <AccountSubscription provider="claude" email={a.email} />
+            </div>
+            )
+          })}
+          {busy === 'login' ? (
+            <div className="sc2 acct">
+              <div className="ava2" style={{ background: 'rgba(255,255,255,.12)' }}>
+                <span className="set-spin" />
+              </div>
+              <div className="who">
+                <div className="em">{t('로그인 진행 중…', 'Signing in…')}</div>
+                <div className="meta">{t('브라우저에서 로그인을 완료하세요', 'Complete the sign-in in your browser')}</div>
+              </div>
+              <button className="set-chipbtn" onClick={() => window.api.auth.cancelLogin().catch(() => {})}>
+                {t('취소', 'Cancel')}
+              </button>
+            </div>
+          ) : (
+            <button className="set-addrow" disabled={busy != null} onClick={() => void addAccount()}>
+              <IconPlus size={12} /> {t('계정 추가', 'Add account')}
+            </button>
+          )}
+        </>
+      )}
+
+      <div className="set-sec">OpenAI</div>
+      {cxAccounts == null ? (
+        <div className="sc2 acct">
+          <div className="meta">
+            <span className="set-spin" /> {t('불러오는 중…', 'Loading…')}
+          </div>
+        </div>
+      ) : (
+        <>
+          {cxAccounts.map((a, i) => {
+            return (
+            <div
+              className={'sc2 acct' + (cxDrag.drag === i ? ' drag' : '')}
+              key={a.email}
+              onPointerDown={busy == null ? cxDrag.press(i) : undefined}
+            >
+              <div className="ava2" style={{ background: AVA_SWATCHES[(i + 6) % AVA_SWATCHES.length] }}>
+                {a.email.charAt(0).toUpperCase()}
+              </div>
+              <div className="who">
+                <div className="em">
+                  <span className="emt">{a.email}</span>
+                  {/* ★R28 ACCT §4 — Anthropic과 같은 규칙(맨 위 = 기본, 파생값) */}
+                  {/* 「기본 · 맨 위」 배지는 뗐다 — 맨 위 행이라는 사실 자체가 이미 보인다(2026-09-01 사용자) */}
+                </div>
+                {/* 플랜은 rateLimits의 planType이 최신 — 도착 전엔 스토어(id_token) 값. BUG-0013: 조회가
+                    실패한 행(planType null)은 옛 스토어 값을 현재처럼 보이지 않게 「확인 불가」로 가른다 —
+                    구독을 바꾼 직후 옛 토큰이 거부되는 그 창에서 「Free」가 확정처럼 보였다. */}
+                <div className="meta">
+                  {cxUsage[a.email] != null && cxUsage[a.email].planType == null && !acct.cxLoading ? (
+                    <>
+                      {t('ChatGPT 플랜 · 확인 불가', 'ChatGPT plan · unavailable')}{' '}
+                      <button className="set-chipbtn" disabled={busy != null} onClick={() => void refreshCodexAccount(a.email)}>
+                        {t('다시 확인', 'Retry')}
+                      </button>
+                    </>
+                  ) : (
+                    chatgptPlan(cxUsage[a.email]?.planType ?? a.plan)
+                  )}
+                </div>
+                <CodexResetCredits email={a.email} disabled={busy != null} />
+              </div>
+              <CodexLimits u={cxUsage[a.email]} />
+              <div className="acts">
+                {/* 「맨 위로」 버튼 제거(2026-09-01 사용자) — 순서 변경은 카드 길게 눌러 드래그가 담당 */}
+                <button className="set-chipbtn danger" disabled={busy != null} onClick={() => void doCodexDelete(a.email)}>
+                  {busy === 'cx:' + a.email ? t('삭제 중…', 'Deleting…') : t('삭제', 'Delete')}
+                </button>
+              </div>
+              <AccountSubscription
+                provider="codex"
+                email={a.email}
+                period={(cxUsage[a.email]?.planType ?? a.plan) === 'free' ? null : a.subscriptionPeriod}
+              />
+            </div>
+            )
+          })}
+          {busy === 'codex-login' ? (
+            <div className="sc2 acct">
+              <div className="ava2" style={{ background: 'rgba(255,255,255,.12)' }}>
+                <span className="set-spin" />
+              </div>
+              <div className="who">
+                <div className="em">{t('로그인 진행 중…', 'Signing in…')}</div>
+                <div className="meta">{t('브라우저에서 ChatGPT 로그인을 완료하세요', 'Complete the ChatGPT sign-in in your browser')}</div>
+              </div>
+              <button className="set-chipbtn" onClick={() => window.api.codexAuth.cancelLogin().catch(() => {})}>
+                {t('취소', 'Cancel')}
+              </button>
+            </div>
+          ) : (
+            <button className="set-addrow" disabled={busy != null} onClick={() => void doCodexLogin()}>
+              <IconPlus size={12} /> {t('계정 추가', 'Add account')}
+            </button>
+          )}
+        </>
+      )}
+
+      <ServiceCredits />
+      {note && <div className="set-note2">{note}</div>}
+      {(busy === 'login' || busy === 'codex-login') && loginUrl && (
+        // 각주(.set-note2 10.5px)가 아니라 행동 줄 — 브라우저 기본 파랑 링크는 다크 배경에서
+        // 안 보였다(2026-09-01 사용자 보고). 앱 공통 링크 톤 + 복사 칩(브라우저 직접 붙여넣기용).
+        <div className="set-loginlink">
+          {t('브라우저가 안 열렸나요?', 'Browser didn’t open?')}{' '}
+          <a href={loginUrl} target="_blank" rel="noreferrer">
+            {t('이 링크로 로그인', 'Sign in with this link')}
+          </a>
+          <button
+            className="set-chipbtn"
+            onClick={() => {
+              void navigator.clipboard?.writeText(loginUrl).then(
+                () => setLinkCopied(true),
+                () => {}
+              )
+            }}
+          >
+            {linkCopied ? t('복사됨', 'Copied') : t('링크 복사', 'Copy link')}
+          </button>
+        </div>
+      )}
+      <div className="set-note2">
+        {isEn() ? (
+          <>
+            All account credentials are stored <b>encrypted (DPAPI)</b> in <code>~/.agentcodegui3</code>. They are
+            fully separate from your terminal Claude Code (<code>~/.claude</code>) and codex (<code>~/.codex</code>)
+            logins — neither affects the other.
+          </>
+        ) : (
+          <>
+            계정 크리덴셜은 모두 <code>~/.agentcodegui3</code>에 <b>암호화(DPAPI)</b>되어 저장돼요. 터미널 Claude Code(
+            <code>~/.claude</code>)·codex(<code>~/.codex</code>)의 로그인과는 완전히 분리돼 서로 영향을 주지 않아요.
+          </>
+        )}
+      </div>
+    </>
+  )
+}
+
+// ChatGPT 플랜 표기 — Anthropic의 "Max 플랜"과 같은 문법
+function chatgptPlan(plan: string | null | undefined): string {
+  return 'ChatGPT' + (plan ? ' ' + plan.charAt(0).toUpperCase() + plan.slice(1) : '') + t(' 플랜', ' plan')
+}
+
+// 한도 초기화 절대 시각 — '7/18 (토) 15:00'. 표시는 남은 시간(fmtResetIn)이 맡고,
+// 이건 그 칸의 호버 툴팁으로만 남는다(정확한 시각이 궁금할 때).
+function fmtResetAt(ts?: number | null): string | null {
+  if (!ts) return null
+  const d = new Date(ts * 1000)
+  const day = isEn()
+    ? ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()]
+    : ['일', '월', '화', '수', '목', '금', '토'][d.getDay()]
+  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  return `${d.getMonth() + 1}/${d.getDate()} (${day}) ${hm}`
+}
+// 초기화까지 남은 시간 — '2시간 10분 뒤', 하루를 넘기면 '7일 3시간 뒤'. 주간류 긴 창도
+// 절대 날짜('8/21 (금) 15:00')보다 "얼마나 남았나"가 유용하다는 실사용 피드백으로 전 창 통일.
+function fmtResetIn(ts?: number | null): string | null {
+  if (!ts) return null
+  const diff = ts * 1000 - Date.now()
+  if (diff <= 0) return t('곧', 'soon')
+  const m = Math.max(1, Math.round(diff / 60000))
+  if (m < 60) return t(`${m}분 뒤`, `in ${m}m`)
+  const h = Math.floor(m / 60)
+  const mm = m % 60
+  if (h < 24) return mm ? t(`${h}시간 ${mm}분 뒤`, `in ${h}h ${mm}m`) : t(`${h}시간 뒤`, `in ${h}h`)
+  const d = Math.floor(h / 24)
+  const hh = h % 24
+  return hh ? t(`${d}일 ${hh}시간 뒤`, `in ${d}d ${hh}h`) : t(`${d}일 뒤`, `in ${d}d`)
+}
+
+// 벽시계(unix 초)를 `stepMs`마다 다시 읽는 훅 — 「n분 뒤」·「초기화됨」처럼 시간이 지나면
+// 저절로 바뀌어야 하는 표기를 마운트 시각에 얼려 두지 않기 위해.
+function useNowSec(stepMs = 30_000): number {
+  const [now, setNow] = useState(nowSec)
+  useEffect(() => {
+    const id = setInterval(() => setNow(nowSec()), stepMs)
+    return () => clearInterval(id)
+  }, [stepMs])
+  return now
+}
+
+// 한도 게이지 한 행 — 라벨 · 잔여 바 · "n% 남음" · 초기화까지 남은 시간. 맨숫자는 방향(남은량/
+// 소모량)을 못 말해줘 "남음"을 숫자마다 붙인다(컨텍스트 팝오버와 같은 표기). 잔량이
+// 낮으면(잔량 톤) 바·숫자가 색으로 도드라진다.
+// 시간 칸은 창 길이와 무관하게 남은 시간('7일 3시간 뒤') — 절대 시각은 호버 툴팁.
+// 초기화 시각을 모르는 항목(구 캐시 등)도 빈 칸을 그려 열 정렬을 유지한다.
+// ★2026-09-05 — `rolled`(리셋 시각을 지난 값): 퍼센트는 지난 창의 것이라 「0% 남음 · 곧」로
+// 그리면 거짓이다(Anthropic이 초기화해 줬는데 화면은 옛 값 — 제보). 바는 가득, 글자는
+// 「초기화됨」, 시간 칸은 「새 값 확인 중」 — 값이 오면(accounts.ts가 그 순간 다시 묻는다)
+// 보통 행으로 돌아온다.
+function LimRow({
+  label,
+  left,
+  resetsAt,
+  rolled
+}: {
+  label: string
+  left: number
+  resetsAt?: number | null
+  rolled?: boolean
+}): React.ReactElement {
+  if (rolled) {
+    return (
+      <div
+        className="lim rolled"
+        title={t(
+          '초기화 시각이 지났어요 — 이 숫자는 지난 창의 값이라 새 값을 다시 조회하고 있어요',
+          'The reset time has passed — this number is from the previous window, so a fresh value is being fetched'
+        )}
+      >
+        <span className="ll">{label}</span>
+        <div className="g2">
+          <i style={{ width: '100%' }} />
+        </div>
+        <span className="lv">
+          <b>{t('초기화됨', 'Reset')}</b>
+        </span>
+        <span className="lr">{t('새 값 확인 중', 'Checking…')}</span>
+      </div>
+    )
+  }
+  const tone = remainTone(left)
+  return (
+    <div className={'lim' + (tone ? ' ' + tone : '')}>
+      <span className="ll">{label}</span>
+      <div className="g2">
+        <i style={{ width: left + '%' }} />
+      </div>
+      <span className="lv">
+        <b>{left}%</b> {t('남음', 'left')}
+      </span>
+      <span className="lr" title={fmtResetAt(resetsAt) ?? undefined}>
+        {fmtResetIn(resetsAt)}
+      </span>
+    </div>
+  )
+}
+
+// OpenAI 계정 카드의 잔여 한도 미니 게이지 — rateLimits의 윈도(5시간·주간 등)를
+// Anthropic 카드와 같은 게이지 문법(잔여 % = 100 − 사용률)으로.
+// 창 라벨은 메인이 한국어('n시간'·'주간'·'n일'·'한도')로 만든다 — 표시 지점에서만 영어로 변환.
+function cxWindowLabel(label: string): string {
+  if (!isEn()) return label
+  const h = /^(\d+)시간$/.exec(label)
+  if (h) return `${h[1]}h`
+  if (label === '주간') return 'Weekly'
+  const d = /^(\d+)일$/.exec(label)
+  if (d) return `${d[1]}d`
+  if (label === '한도') return 'Limit'
+  return label
+}
+function CodexLimits({ u }: { u?: CodexAccountUsage }): React.ReactElement | null {
+  if (!u || u.windows.length === 0) return null
+  return (
+    <div className="limits">
+      {u.windows.map((w) => (
+        <LimRow key={w.label} label={cxWindowLabel(w.label)} left={100 - w.usedPct} resetsAt={w.resetsAt} />
+      ))}
+    </div>
+  )
+}
+
+// 계정 카드의 잔여 한도 미니 게이지 — 앱 전체 관례(잔여 % = 100 − 사용률). 조회 못 한
+// 항목은 조용히 빠진다(저장 토큰 만료 등 — 실행하면 CLI가 리프레시한다).
+// 행 순서는 컨텍스트 팝오버와 동일: 5시간 → Fable → 주간.
+/**
+ * 계정 한 줄의 한도 게이지.
+ *
+ * ★R28 ACCT §1 — **실패를 「데이터 없음」으로 뭉개지 않는다.**
+ *
+ * R1까지 이 컴포넌트는 값이 없으면 `null`을 돌려줬다. 그래서 429 한 번, 네트워크 한 번에
+ * 그 자리가 그냥 **빈 칸**이 됐고, 사용자에게는 "안 된다"와 "그 계정엔 그런 한도가 없다"가
+ * 구별되지 않았다(사용자 보고의 그 증상). 이제 셋을 나눠 말한다:
+ *
+ *  - 조회 중(`loading`이고 값이 없다) → 스피너
+ *  - 물어보지 못했다(`unavailable`) → 「조회 실패 · 다시 시도」
+ *  - 낡은 값(`stale`) → 숫자는 그대로 그리고 표식만 얹는다(값이 있으면 그게 마지막 실측이다)
+ */
+function AccountLimits({
+  u,
+  loading,
+  onRetry
+}: {
+  u?: AccountUsage
+  loading?: boolean
+  onRetry?: () => void
+}): React.ReactElement | null {
+  // 30초마다 시계를 다시 읽는다 — 카드가 떠 있는 동안 리셋 시각이 지나면 「n분 뒤」가
+  // 「곧」에 머물지 않고 「초기화됨」으로 넘어가야 한다(재조회는 accounts.ts의 타이머가 낸다).
+  const now = useNowSec()
+  const rows: { label: string; left: number; resetsAt?: number | null; rolled: boolean }[] = []
+  if (u?.fiveHourPct != null)
+    rows.push({ label: t('5시간', '5h'), left: 100 - u.fiveHourPct, resetsAt: u.fiveHourResetsAt, rolled: windowRolled(u.fiveHourResetsAt, now) })
+  if (u?.fablePct != null)
+    rows.push({ label: 'Fable', left: 100 - u.fablePct, resetsAt: u.fableResetsAt, rolled: windowRolled(u.fableResetsAt, now) })
+  if (u?.weeklyPct != null)
+    rows.push({ label: t('주간', 'Weekly'), left: 100 - u.weeklyPct, resetsAt: u.weeklyResetsAt, rolled: windowRolled(u.weeklyResetsAt, now) })
+  if (!rows.length) {
+    if (loading) {
+      return (
+        <div className="limits lim-state">
+          <span className="set-spin" /> {t('한도 조회 중…', 'Checking limits…')}
+        </div>
+      )
+    }
+    if (!u || u.unavailable) {
+      return (
+        <div className="limits lim-state">
+          <span className="lim-fail">{t('한도를 못 불러왔어요', 'Couldn’t load limits')}</span>
+          {onRetry && (
+            <button className="set-chipbtn" onClick={onRetry}>
+              {t('다시 시도', 'Retry')}
+            </button>
+          )}
+        </div>
+      )
+    }
+    return null // 값은 왔는데 창이 하나도 없다 = 그 플랜엔 표시할 한도가 없다
+  }
+  return (
+    <div className="limits">
+      {rows.map((r) => (
+        <LimRow key={r.label} label={r.label} left={r.left} resetsAt={r.resetsAt} rolled={r.rolled} />
+      ))}
+      {/* 「마지막으로 확인한 값」 stale 캡션은 뺐다(2026-09-01 사용자) — 게이지가 항상
+          마지막 조회값인 건 당연해서 줄 하나의 값어치가 없다 */}
+    </div>
+  )
+}
+
+// ── Engine (PoC 문법) — 엔진 CLI 버전 관리 카드. Claude Code와 Codex CLI가 같은
+// api 표면(state/listAvailable/install/…)을 받아 완전히 같은 UI로 관리된다.
+type EngineApi = (typeof window.api)['engine']
+
+// ── Claude Code 출력 스타일 — CLI 내장 스타일(2.1.237 실측) + '기본' ─────────────
+// 스타일명은 CLI 고유명이라 영문 그대로, 설명은 CLI의 공식 설명을 옮긴 것. '기본'은
+// 아무것도 주입하지 않아 사용자의 ~/.claude 설정(있다면)이 그대로 적용된다. 값은
+// ui-prefs('claude.outputStyle')에 저장되고 main(claude/engine.ts)이 실행 스폰마다 읽어
+// --settings의 outputStyle로 넣는다 — 다음 메시지부터 적용.
+// 라벨/설명은 ko/en 필드 + 렌더 시 isEn() 분기 — 모듈 스코프 t() 금지(언어 전환이 못 따라옴)
+const CLAUDE_STYLE_KEY = 'claude.outputStyle'
+const CLAUDE_STYLES: { id: string; label: string; ko: string; en: string }[] = [
+  { id: 'default', label: '', ko: '클로드 코드 기본 스타일이에요', en: "Claude Code's default style" },
+  {
+    id: 'Concise',
+    label: 'Concise',
+    ko: '결과부터 짧게 답해요 — 서론·과정 내레이션은 건너뛰어요',
+    en: 'Responds tersely, leading with results and skipping preamble and narration'
+  },
+  {
+    id: 'Explanatory',
+    label: 'Explanatory',
+    ko: '구현 선택과 코드베이스 패턴을 설명하며 진행해요',
+    en: 'Explains its implementation choices and codebase patterns'
+  },
+  {
+    id: 'Learning',
+    label: 'Learning',
+    ko: '잠깐씩 멈춰 작은 코드를 직접 써 보게 해요 — 실습용',
+    en: 'Pauses and asks you to write small pieces of code for hands-on practice'
+  },
+  {
+    id: 'Proactive',
+    label: 'Proactive',
+    ko: '계획·확인보다 즉시 실행을 우선해요',
+    en: 'Executes immediately, minimizes interruptions, and prefers action over planning'
+  }
+]
+
+function ClaudeStyleCard(): React.ReactElement {
+  const [style, setStyle] = useState<string>(() => getPref<string>(CLAUDE_STYLE_KEY, 'default'))
+  const pick = (id: string): void => {
+    setStyle(id)
+    setPref(CLAUDE_STYLE_KEY, id)
+  }
+  const cur = CLAUDE_STYLES.find((s) => s.id === style) ?? CLAUDE_STYLES[0]
+  return (
+    <div className="sc2 tgl" style={{ flexWrap: 'wrap', rowGap: 9 }}>
+      <div style={{ minWidth: 200, flex: '1 1 0' }}>
+        <div className="em">{t('출력 스타일', 'Output style')}</div>
+        <div className="meta">
+          {isEn() ? cur.en : cur.ko} · {t('다음 메시지부터 적용돼요', 'Applies from the next message')}
+        </div>
+      </div>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }} role="radiogroup" aria-label={t('출력 스타일', 'Output style')}>
+        {CLAUDE_STYLES.map((s) => (
+          // 설명 툴팁은 앱 커스텀(has-tip/data-tip) — 네이티브 title은 윈도우 기본 툴팁이 떠서 이질적
+          <button
+            key={s.id}
+            className={'set-chipbtn has-tip tip-wrap' + (style === s.id ? ' on' : '')}
+            role="radio"
+            aria-checked={style === s.id}
+            data-tip={isEn() ? s.en : s.ko}
+            onClick={() => pick(s.id)}
+          >
+            {s.label || t('기본', 'Default')}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function EngineView(): React.ReactElement {
+  const environments = useEngineEnvironments()
+  // 두 엔진 공통 자동 업데이트 — null=아직 조회 전(토글 비활성), 낙관 갱신 후 서버 값으로 확정
+  const [auto, setAuto] = useState<boolean | null>(null)
+  useEffect(() => {
+    window.api.engineAutoUpdate().then(setAuto).catch(() => {})
+  }, [])
+  const toggleAuto = (): void => {
+    if (auto == null) return
+    const next = !auto
+    setAuto(next)
+    window.api.engineAutoUpdate(next).then(setAuto).catch(() => {})
+  }
+  return (
+    <>
+      <div className="set-h1">Engine</div>
+      <div className="set-h1-sub">
+        {t(
+          '엔진마다 앱에서 관리하는 CLI 또는 기존 시스템 환경을 선택할 수 있어요.',
+          'Choose an app-managed CLI or your existing system environment for each engine.'
+        )}
+      </div>
+      <div className="set-sec">Anthropic</div>
+      <EngineEnvironmentCard engine="claude" />
+      {environments?.claude.mode !== 'system' && <EngineCard name="Claude Code" tile={<LogoClaude size={20} />} fallback={t('번들', 'bundled')} api={window.api.engine} />}
+      {/* 출력 스타일 — Claude Code 실행의 응답 결(Concise 등). Codex엔 대응 개념이 없어 여기만 */}
+      {environments?.claude.mode !== 'system' && <ClaudeStyleCard />}
+      <div className="set-sec">OpenAI</div>
+      <EngineEnvironmentCard engine="codex" />
+      {environments?.codex.mode !== 'system' && <EngineCard name="Codex CLI" tile={<LogoOpenAI size={20} />} fallback={t('전역 설치', 'global install')} api={window.api.codexEngine} />}
+      <CodexContextCard />
+      <div className="set-sec">{t('공통', 'Common')}</div>
+      <div className="sc2 tgl" style={{ marginTop: 0 }}>
+        <div>
+          <div className="em">{t('자동 업데이트', 'Auto-update')}</div>
+          <div className="meta">{t('앱 관리 환경으로 실행하는 엔진에만 적용돼요', 'Applies only to engines using the app-managed environment')}</div>
+        </div>
+        <span className="sp" />
+        <button className={'sw2' + (auto ? ' on' : '')} aria-label={t('자동 업데이트', 'Auto-update')} disabled={auto == null} onClick={toggleAuto} />
+      </div>
+      <div className="set-note2">
+        {t('설치 위치', 'Install location')}: <code>~/.agentcodegui3/engines</code> · <code>~/.agentcodegui3/codex-engines</code>
+      </div>
+    </>
+  )
+}
+
+function EngineCard({
+  name,
+  tile,
+  fallback,
+  api
+}: {
+  name: string
+  tile: React.ReactNode // 공식 로고 (LogoClaude/LogoOpenAI) — 두 엔진 모두 중립 타일(색감 통일)
+  fallback: string // 설치·고정본이 없을 때 실제로 도는 것 — '번들'(claude) / '전역 설치'(codex)
+  api: EngineApi
+}): React.ReactElement {
+  const [state, setState] = useState<EngineVersionState | null>(null)
+  const [available, setAvailable] = useState<EngineVersionEntry[] | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [listError, setListError] = useState<string | null>(null)
+  const [busy, setBusy] = useState<string | null>(null) // version currently installing
+  const [dialog, setDialog] = useState<{
+    title: string
+    message: string
+    tone?: 'danger' | 'warn' | 'ok' // ok = 결과 알림 (체크 아이콘, 확인만)
+    confirm?: { label: string; action: () => void }
+  } | null>(null)
+  const [cleaning, setCleaning] = useState(false) // 이전 버전 정리 진행 중
+  const [install, setInstall] = useState<{
+    version: string
+    log: string[]
+    status: 'running' | 'done' | 'error'
+    error?: string
+  } | null>(null)
+  const [open, setOpen] = useState(false)
+  const pickRef = useRef<HTMLDivElement>(null)
+  const logRef = useRef<HTMLDivElement>(null)
+
+  const refreshState = (): void => {
+    api.state().then(setState).catch(() => {})
+  }
+  const refreshList = (): void => {
+    setLoading(true)
+    setListError(null)
+    api
+      .listAvailable()
+      .then((r) => {
+        setAvailable(r.versions)
+        // ★CRIT R1 — **사유를 값으로 읽는다.** 3.0은 실패를 던지지 않고
+        // `{latest:null, versions:[], error}`로 내리는데(`ccg-engine/src/versions.rs:57`),
+        // 여기가 `r.versions`만 읽어 `listError`가 영영 `null`이었다. 그래서 npm(Node.js)이
+        // 없는 컴퓨터에서 **목록 0개 + 오류 문구 0줄**이 됐다(R28 T1T2 확인 크리틱 R2 §5.2
+        // 실측: 2.6.2는 같은 판에서 274개를 그린다). 값이 왔으면 사유는 안 띄운다 —
+        // 부분 실패(한쪽 채널만 죽음)에서 목록을 지우는 쪽이 더 나쁘다.
+        setListError(r.versions.length === 0 ? (r.error ?? null) : null)
+      })
+      .catch((e: unknown) => setListError(String((e as Error)?.message ?? e)))
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => {
+    refreshState()
+    refreshList()
+    return api.onInstallProgress((p) => {
+      if (p.line) setInstall((c) => (c ? { ...c, log: [...c.log, p.line as string] } : c))
+    })
+  }, [])
+
+  // keep the log scrolled to the latest line
+  useEffect(() => {
+    const el = logRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [install?.log])
+
+  // close the dropdown on a click outside the picker / Escape.
+  // capture phase so the settings modal's stopPropagation doesn't swallow it.
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: MouseEvent): void => {
+      if (pickRef.current && !pickRef.current.contains(e.target as Node)) setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    window.addEventListener('mousedown', onDown, true)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('mousedown', onDown, true)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  const apply = async (version: string, installed: boolean): Promise<void> => {
+    if (installed) {
+      // already installed → just switch (quick); surface failures as a small dialog
+      try {
+        await api.setActive(version)
+      } catch (e) {
+        setDialog({ title: t('전환 실패', 'Switch failed'), message: String((e as Error)?.message ?? e) })
+      }
+      refreshState()
+      return
+    }
+    setBusy(version)
+    setInstall({ version, log: [t('설치를 준비하는 중…', 'Preparing the install…')], status: 'running' })
+    try {
+      const r = await api.install(version)
+      if (r.ok) {
+        await api.setActive(version) // 설치하면 바로 그 버전을 사용
+        setInstall((c) => (c ? { ...c, status: 'done' } : c))
+      } else {
+        setInstall((c) =>
+          c
+            ? {
+                ...c,
+                status: 'error',
+                error: r.error ?? t('알 수 없는 오류로 설치에 실패했습니다.', 'The install failed with an unknown error.')
+              }
+            : c
+        )
+      }
+    } catch (e) {
+      setInstall((c) => (c ? { ...c, status: 'error', error: String((e as Error)?.message ?? e) } : c))
+    } finally {
+      setBusy(null)
+      refreshState()
+    }
+  }
+
+  const doRemove = async (version: string): Promise<void> => {
+    try {
+      await api.uninstall(version)
+    } catch (e) {
+      setDialog({ title: t('삭제 실패', 'Delete failed'), message: String((e as Error)?.message ?? e) })
+      return
+    }
+    refreshState()
+  }
+  const askDelete = (version: string): void => {
+    setOpen(false)
+    setDialog({
+      title: t('버전 삭제', 'Delete version'),
+      message: t(
+        `${version} 버전을 삭제할까요? ~/.agentcodegui 에서 제거됩니다.`,
+        `Delete version ${version}? It will be removed from ~/.agentcodegui.`
+      ),
+      confirm: { label: t('삭제', 'Delete'), action: () => void doRemove(version) }
+    })
+  }
+
+  // "current" = the version installed & selected in ~/.agentcodegui (null until one is installed)
+  const current = state?.active ?? null
+
+  // 이전 버전 일괄 정리 — 최신 설치본(installed[0], 내림차순 정렬)만 남긴다
+  const newest = state?.installed[0] ?? null
+  const oldCount = Math.max(0, (state?.installed.length ?? 0) - 1)
+  const doCleanup = async (): Promise<void> => {
+    setCleaning(true)
+    try {
+      const r = await api.cleanup()
+      setDialog({
+        title: t('정리 완료', 'Cleanup complete'),
+        tone: 'ok',
+        message:
+          t(
+            `이전 버전 ${r.removed.length}개를 삭제했습니다`,
+            `Deleted ${r.removed.length} older version${r.removed.length === 1 ? '' : 's'}`
+          ) +
+          (r.freedBytes > 0 ? t(` (${fmtBytes(r.freedBytes)} 확보)`, ` (${fmtBytes(r.freedBytes)} freed)`) : '') +
+          '.' +
+          (r.activeSwitched && r.kept
+            ? t(` 사용 버전이 ${r.kept}(으)로 전환되었습니다.`, ` The version in use switched to ${r.kept}.`)
+            : '')
+      })
+    } catch (e) {
+      setDialog({ title: t('정리 실패', 'Cleanup failed'), message: String((e as Error)?.message ?? e) })
+    } finally {
+      setCleaning(false)
+      refreshState()
+    }
+  }
+  const askCleanup = (): void => {
+    if (!newest || oldCount === 0) return
+    // 사용 중인 버전이 최신이 아니면 그것도 삭제 대상 — 전환된다는 걸 미리 알린다
+    const activeIsOld = !!current && current !== newest
+    setDialog({
+      title: t('이전 버전 정리', 'Clean up old versions'),
+      message:
+        t(
+          `최신 ${newest} 버전만 남기고 이전 버전 ${oldCount}개를 삭제할까요? `,
+          `Keep only the latest ${newest} and delete ${oldCount} older version${oldCount === 1 ? '' : 's'}? `
+        ) +
+        t(`~/.agentcodegui/engines 에서 제거됩니다.`, `They will be removed from ~/.agentcodegui/engines.`) +
+        (activeIsOld
+          ? t(
+              ` 사용 중인 ${current}도 삭제 대상이라, 정리 후 ${newest}(으)로 전환됩니다.`,
+              ` ${current} is in use but also gets deleted, so it will switch to ${newest} afterwards.`
+            )
+          : ''),
+      confirm: { label: t('삭제', 'Delete'), action: () => void doCleanup() }
+    })
+  }
+
+  const onPick = (v: EngineVersionEntry): void => {
+    setOpen(false)
+    if (v.version === current) return
+    const installed = state?.installed.includes(v.version) ?? false
+    // older than the version in use → ask before applying
+    if (current && cmpVer(v.version, current) < 0) {
+      // already installed → just switch, not reinstall
+      const verb = installed ? t('사용', 'Use') : t('설치', 'Install')
+      setDialog({
+        title: t('과거 버전 선택', 'Older version'),
+        message: t(
+          `현재 사용 중인 ${current}보다 낮은 ${v.version} 버전입니다. 그래도 ${verb}할까요?`,
+          `${v.version} is older than ${current}, the version in use. ${installed ? 'Use' : 'Install'} it anyway?`
+        ),
+        tone: 'warn',
+        confirm: { label: verb, action: () => void apply(v.version, installed) }
+      })
+      return
+    }
+    void apply(v.version, installed)
+  }
+
+  // registry list + any installed versions not on it (newest first)
+  const rows: EngineVersionEntry[] = (() => {
+    const base = (available ?? []).slice(0, 30)
+    const seen = new Set(base.map((e) => e.version))
+    const extra = (state?.installed ?? [])
+      .filter((v) => !seen.has(v))
+      .map((v) => ({ version: v, date: null, latest: false }))
+    return [...extra, ...base]
+  })()
+
+  // 카드 상단 배지 — 지금 도는 버전(고정본 > 번들/전역 폴백)이 레지스트리 최신과 같은가
+  const latest = (available ?? []).find((v) => v.latest)?.version ?? null
+  const shownVer = current ?? (state?.bundled && state.bundled !== 'unknown' ? state.bundled : null)
+  const upToDate = latest != null && shownVer != null && cmpVer(shownVer, latest) >= 0
+  return (
+    <>
+      <div className="sc2 row2 eng">
+        <div className="set-tile">{tile}</div>
+        <div>
+          <div className="em">
+            {name}
+            {latest &&
+              shownVer &&
+              (upToDate ? (
+                <span className="set-badge">{t('최신', 'Latest')}</span>
+              ) : (
+                <span className="set-badge warn">{t(`v${latest} 있음`, `v${latest} available`)}</span>
+              ))}
+          </div>
+          <div className="meta">
+            {busy
+              ? t('설치 중…', 'Installing…')
+              : shownVer
+                ? `v${shownVer}${current ? '' : ` (${fallback})`} · CLI`
+                : t('미설치 — 버전을 골라 설치하세요', 'Not installed — pick a version to install')}
+          </div>
+        </div>
+        <span className="sp" />
+        <div className="vpick" ref={pickRef}>
+              <button
+                className={'vpick-btn' + (open ? ' open' : '')}
+                onClick={() => setOpen((o) => !o)}
+                disabled={!!busy}
+              >
+                <span className="vpick-cur">
+                  {busy ? t('설치 중…', 'Installing…') : current ?? t('버전 선택', 'Select version')}
+                </span>
+                <IconChevDown className="vpick-chev" size={15} />
+              </button>
+
+              {open && (
+                <div className="vpick-menu">
+                  <div className="vpick-head">
+                    <span>{t('버전 선택', 'Select version')}</span>
+                    <button
+                      className="vpick-refresh"
+                      onClick={refreshList}
+                      disabled={loading}
+                      aria-label={t('새로고침', 'Refresh')}
+                    >
+                      <IconRefresh size={13} />
+                    </button>
+                  </div>
+                  <div className="vpick-list scroll">
+                    {loading && rows.length === 0 ? (
+                      <div className="vpick-msg">
+                        <span className="set-spin" /> {t('불러오는 중…', 'Loading…')}
+                      </div>
+                    ) : listError && rows.length === 0 ? (
+                      // ★CRIT R1 — 제목 아래 **사유 한 줄**. 「목록을 불러오지 못했습니다」만
+                      // 있으면 npm이 없는 컴퓨터의 사용자는 무엇을 해야 할지 영영 모른다.
+                      <div className="vpick-msg err">
+                        <div>{t('목록을 불러오지 못했습니다', 'Could not load the list')}</div>
+                        <div className="vpick-why">{listError}</div>
+                      </div>
+                    ) : (
+                      rows.map((v) => {
+                        const installed = state?.installed.includes(v.version) ?? false
+                        const isCur = v.version === current
+                        return (
+                          <button
+                            key={v.version}
+                            className={'vpick-opt' + (isCur ? ' on' : '')}
+                            onClick={() => onPick(v)}
+                          >
+                            <span className="vpo-v">{v.version}</span>
+                            {v.latest && <span className="vtag latest">{t('최신', 'Latest')}</span>}
+                            {/* 정식(latest)보다 높은 프리뷰(next 채널) — 자동 업데이트가 안 가는 게 정상임을 배지로 */}
+                            {v.preview && <span className="vtag next">{t('프리뷰', 'Preview')}</span>}
+                            {isCur && <span className="vtag cur">{t('현재', 'Current')}</span>}
+                            {installed && !isCur && <span className="vtag inst">{t('설치됨', 'Installed')}</span>}
+                            <span className="vpo-right">
+                              <span className="vpo-act">
+                                {isCur ? t('사용 중', 'In use') : installed ? t('사용', 'Use') : t('설치', 'Install')}
+                              </span>
+                              {installed && !isCur && (
+                                <span
+                                  className="vpo-del"
+                                  role="button"
+                                  tabIndex={-1}
+                                  aria-label={t('삭제', 'Delete')}
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    askDelete(v.version)
+                                  }}
+                                >
+                                  <IconTrash size={13} />
+                                </span>
+                              )}
+                            </span>
+                          </button>
+                        )
+                      })
+                    )}
+                  </div>
+                </div>
+              )}
+        </div>
+      </div>
+
+      {oldCount > 0 && (
+        <div className="sc2 row2">
+          <div>
+            <div className="em">{t('이전 버전 정리', 'Clean up old versions')}</div>
+            <div className="meta">
+              {t(
+                `최신 ${newest}만 남기고 이전 버전 ${oldCount}개를 삭제해요`,
+                `Keeps the latest ${newest} and deletes ${oldCount} older version${oldCount === 1 ? '' : 's'}`
+              )}
+            </div>
+          </div>
+          <span className="sp" />
+          <button className="set-chipbtn" disabled={cleaning || !!busy} onClick={askCleanup}>
+            {cleaning ? t('정리 중…', 'Cleaning up…') : t('정리', 'Clean up')}
+          </button>
+        </div>
+      )}
+
+      {install && (
+        <div
+          className="set-dialog-overlay"
+          onMouseDown={() => {
+            if (install.status !== 'running') setInstall(null)
+          }}
+        >
+          <div className="install-card" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="ic-head">
+              <span className={'ic-hic ' + install.status}>
+                {install.status === 'running' ? (
+                  <span className="set-spin" />
+                ) : install.status === 'done' ? (
+                  <IconCheck size={16} />
+                ) : (
+                  <IconAlert size={16} />
+                )}
+              </span>
+              <span className="ic-title">
+                {install.status === 'running'
+                  ? t('버전 설치 중', 'Installing version')
+                  : install.status === 'done'
+                    ? t('설치 완료', 'Install complete')
+                    : t('설치 실패', 'Install failed')}
+              </span>
+              <span className="ic-ver">{install.version}</span>
+            </div>
+            <div className="ic-log scroll" ref={logRef}>
+              {install.log.map((l, i) => (
+                <div className="ic-ln" key={i}>
+                  {l}
+                </div>
+              ))}
+              {install.status === 'error' && install.error && <div className="ic-ln err">{install.error}</div>}
+            </div>
+            <div className="ic-foot">
+              <span className={'ic-status ' + install.status}>
+                {install.status === 'running'
+                  ? t('설치하는 중…', 'Installing…')
+                  : install.status === 'done'
+                    ? t('설치가 완료되었습니다', 'The install finished')
+                    : t('설치에 실패했습니다', 'The install failed')}
+              </span>
+              {install.status === 'error' && (
+                <button
+                  className="sd-cancel"
+                  onClick={() => {
+                    const v = install.version
+                    setInstall(null)
+                    void apply(v, false)
+                  }}
+                >
+                  {t('다시 시도', 'Retry')}
+                </button>
+              )}
+              <button className="sd-go" onClick={() => setInstall(null)} disabled={install.status === 'running'}>
+                {t('확인', 'OK')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {dialog && (
+        <div className="set-dialog-overlay" onMouseDown={() => setDialog(null)}>
+          <div className="set-dialog" onMouseDown={(e) => e.stopPropagation()}>
+            <div className={'sd-ic' + (dialog.tone === 'warn' ? ' warn' : dialog.tone === 'ok' ? ' ok' : '')}>
+              {dialog.tone === 'ok' ? <IconCheck size={22} /> : <IconAlert size={22} />}
+            </div>
+            <div className="sd-title">{dialog.title}</div>
+            <div className="sd-msg">{dialog.message}</div>
+            <div className="sd-btns">
+              <button className="sd-cancel" onClick={() => setDialog(null)}>
+                {dialog.confirm ? t('취소', 'Cancel') : t('닫기', 'Close')}
+              </button>
+              {dialog.confirm && (
+                <button
+                  className={'sd-go' + (dialog.tone === 'warn' ? '' : ' danger')}
+                  onClick={() => {
+                    const a = dialog.confirm!.action
+                    setDialog(null)
+                    a()
+                  }}
+                >
+                  {dialog.confirm.label}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
+
+// USD 표시 — 소액(토큰 과금)은 셋째 자리까지, 그 외 둘째 자리까지
+function fmtUsd(v: number): string {
+  return '$' + (v > 0 && v < 1 ? v.toFixed(3) : v.toFixed(2))
+}
+// 정리로 확보한 디스크 용량 — 엔진 폴더는 수십 MB~GB 단위라 KB 아래는 뭉갠다
+function fmtBytes(n: number): string {
+  if (n >= 1024 ** 3) return (n / 1024 ** 3).toFixed(1) + ' GB'
+  if (n >= 1024 ** 2) return Math.round(n / 1024 ** 2) + ' MB'
+  return Math.max(1, Math.round(n / 1024)) + ' KB'
+}
+function ApiView() {
+  const [st, setSt] = useState<ApiConfigStatus | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    window.api.apiConfig.get().then(setSt).catch(() => {})
+  }, [])
+
+  // 키·예산 조작 한 벌 — Anthropic·OpenAI 카드(ProviderApiCard)가 provider만 달리해 공유
+  const saveKey = async (provider: 'anthropic' | 'openai', key: string): Promise<boolean> => {
+    if (!key.trim()) return false
+    setBusy(true)
+    try {
+      setSt(await window.api.apiConfig.setKey(key.trim(), provider))
+      return true
+    } catch {
+      return false
+    } finally {
+      setBusy(false)
+    }
+  }
+  const removeKey = async (provider: 'anthropic' | 'openai'): Promise<void> => {
+    setBusy(true)
+    try {
+      setSt(await window.api.apiConfig.clearKey(provider))
+    } catch {
+      /* ignore */
+    } finally {
+      setBusy(false)
+    }
+  }
+  // 예산은 Anthropic 전용 — Codex는 실행 비용을 보고하지 않아 차감이 불가능하다
+  const saveBudget = async (usd: number | null): Promise<void> => {
+    try {
+      setSt(await window.api.apiConfig.setBudget(usd))
+    } catch {
+      /* ignore */
+    }
+  }
+  // 초기화(0원) — 예산을 지우고 누적 사용액도 0으로 (재충전 후 새 기준)
+  const doResetBudget = async (): Promise<void> => {
+    try {
+      setSt(await window.api.apiConfig.resetBudget())
+    } catch {
+      /* ignore */
+    }
+  }
+
+  return (
+    <>
+      <div className="set-h1">API</div>
+      <div className="set-h1-sub">
+        {isEn() ? (
+          <>
+            Register an API key and the composer’s <strong>API toggle</strong> switches run billing between your
+            subscription (OAuth) and API credits. In API mode, Anthropic runs bill to the Anthropic key and OpenAI
+            (Codex) runs bill to the OpenAI key.
+          </>
+        ) : (
+          <>
+            API 키를 등록하면 채팅 컴포저의 <strong>API 토글</strong>로 실행 과금을 구독(OAuth) ↔ API 크레딧 사이에서
+            전환할 수 있습니다. API 모드에선 Anthropic 실행은 Anthropic 키로, OpenAI(Codex) 실행은 OpenAI 키로 과금돼요.
+          </>
+        )}
+      </div>
+
+      <div className="set-sec">Anthropic</div>
+      <ProviderApiCard
+        provider="anthropic"
+        st={st}
+        busy={busy}
+        onSaveKey={(k) => saveKey('anthropic', k)}
+        onClearKey={() => void removeKey('anthropic')}
+        onSaveBudget={saveBudget}
+        onResetBudget={doResetBudget}
+      />
+      <div className="set-note2">
+        {isEn() ? (
+          <>
+            In API mode, <strong>Claude Code engine</strong> runs bill to this key. Get one at platform.claude.com —
+            it is encrypted (DPAPI), never leaves this computer, and is handed only to the engine process at run
+            time. There is no balance API, so the cost reported per run (<code>total_cost_usd</code>) is added up and
+            subtracted from your budget — after topping up, hit <strong>Reset</strong> (budget and spend back to
+            zero) and enter a new budget.
+          </>
+        ) : (
+          <>
+            API 모드에서 <strong>Claude Code 엔진</strong> 실행이 이 키로 과금돼요. 키는 platform.claude.com에서 발급 —
+            암호화(DPAPI)돼 이 컴퓨터에만 저장되고, 실행할 때 엔진 프로세스에만 전달돼요. 잔액 조회 API가 없어 실행마다
+            보고되는 비용(<code>total_cost_usd</code>)을 누적해 예산에서 차감합니다 — 재충전했으면{' '}
+            <strong>초기화</strong>(예산·누적 0원) 후 새 예산을 입력하세요.
+          </>
+        )}
+      </div>
+
+      <div className="set-sec">OpenAI</div>
+      <ProviderApiCard
+        provider="openai"
+        st={st}
+        busy={busy}
+        onSaveKey={(k) => saveKey('openai', k)}
+        onClearKey={() => void removeKey('openai')}
+      />
+      <div className="set-note2">
+        {isEn() ? (
+          <>
+            In API mode, <strong>Codex engine</strong> runs bill to this key. Get one at platform.openai.com — stored
+            encrypted the same way. Codex doesn’t report run costs, so the app can’t track spend — check
+            platform.openai.com for that.
+          </>
+        ) : (
+          <>
+            API 모드에서 <strong>Codex 엔진</strong> 실행이 이 키로 과금돼요. 키는 platform.openai.com에서 발급 — 같은
+            방식으로 암호화돼 저장돼요. Codex는 실행 비용을 보고하지 않아 앱에서 사용액을 추적할 수 없어요 —
+            platform.openai.com에서 확인해 주세요.
+          </>
+        )}
+      </div>
+
+    </>
+  )
+}
+
+// 엔진별 API 카드 한 장 — PoC 문법: 키 줄(배지·변경·삭제) + 마스킹 모노 필 + 예산 줄 +
+// 얇은 잔여 게이지. 키는 등록 전/변경 중엔 입력으로, 예산은 연필을 눌러 인라인 편집.
+// 예산 UI는 Anthropic 전용 — Codex는 비용을 보고하지 않아 예산 개념 자체를 두지 않는다.
+function ProviderApiCard({
+  provider,
+  st,
+  busy,
+  onSaveKey,
+  onClearKey,
+  onSaveBudget,
+  onResetBudget
+}: {
+  provider: 'anthropic' | 'openai'
+  st: ApiConfigStatus | null
+  busy: boolean
+  onSaveKey: (key: string) => Promise<boolean>
+  onClearKey: () => void
+  onSaveBudget?: (usd: number | null) => Promise<void> // Anthropic 카드만 전달
+  onResetBudget?: () => Promise<void>
+}): React.ReactElement {
+  const oa = provider === 'openai'
+  const has = st == null ? null : oa ? st.hasOpenaiKey : st.hasKey
+  const tail = (oa ? st?.openaiKeyTail : st?.keyTail) ?? '????'
+  const budget = oa ? null : (st?.budgetUsd ?? null)
+  const spent = st?.spentUsd ?? 0
+
+  const [keyInput, setKeyInput] = useState('')
+  const [editKey, setEditKey] = useState(false) // 등록된 키의 '변경' 모드
+  const [budInput, setBudInput] = useState('')
+  const [editBud, setEditBud] = useState(false)
+
+  const saveKeyNow = async (): Promise<void> => {
+    if (await onSaveKey(keyInput)) {
+      setKeyInput('')
+      setEditKey(false)
+    }
+  }
+  const startBud = (): void => {
+    setBudInput(budget != null ? String(budget) : '')
+    setEditBud(true)
+  }
+  const saveBudNow = async (): Promise<void> => {
+    const n = parseFloat(budInput)
+    await onSaveBudget?.(isFinite(n) && n > 0 ? n : null)
+    setEditBud(false)
+  }
+  const resetBudNow = async (): Promise<void> => {
+    await onResetBudget?.()
+    setBudInput('')
+    setEditBud(false)
+  }
+
+  const remain = budget != null ? budget - spent : null
+  const remainPct = remain != null && budget ? Math.max(0, Math.min(100, (remain / budget) * 100)) : null
+  const canReset = budget != null || spent > 0
+
+  return (
+    <div className="sc2 api">
+      <div className="aphead">
+        <span className="apn">{t('API 키', 'API key')}</span>
+        {has != null &&
+          (has ? (
+            <span className="set-badge">{t('등록됨', 'Registered')}</span>
+          ) : (
+            <span className="set-badge off">{t('미등록', 'Not set')}</span>
+          ))}
+        <span className="sp" />
+        {has && !editKey && (
+          <>
+            <button
+              className="set-chipbtn"
+              disabled={busy}
+              onClick={() => {
+                setKeyInput('')
+                setEditKey(true)
+              }}
+            >
+              {t('변경', 'Change')}
+            </button>
+            <button className="set-chipbtn danger" disabled={busy} onClick={onClearKey}>
+              {t('삭제', 'Delete')}
+            </button>
+          </>
+        )}
+      </div>
+
+      {has && !editKey ? (
+        <div className="apkey">{(oa ? 'sk-' : 'sk-ant-') + '••••••••' + tail}</div>
+      ) : (
+        <div className="apform">
+          <input
+            className="set-input"
+            type="password"
+            placeholder={oa ? 'sk-proj-…' : 'sk-ant-api03-…'}
+            value={keyInput}
+            spellCheck={false}
+            autoFocus={editKey}
+            onChange={(e) => setKeyInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void saveKeyNow()
+              if (e.key === 'Escape' && editKey) {
+                setEditKey(false)
+                setKeyInput('')
+              }
+            }}
+          />
+          <button className="set-chipbtn" disabled={busy || !keyInput.trim()} onClick={() => void saveKeyNow()}>
+            {t('저장', 'Save')}
+          </button>
+          {editKey && (
+            <button
+              className="set-chipbtn"
+              onClick={() => {
+                setEditKey(false)
+                setKeyInput('')
+              }}
+            >
+              {t('취소', 'Cancel')}
+            </button>
+          )}
+        </div>
+      )}
+
+      {!oa && (
+        <div className="apbud">
+          {editBud ? (
+            <>
+              <input
+                className="set-input num"
+                type="number"
+                min={0}
+                step={1}
+                placeholder={t('예: 20', 'e.g. 20')}
+                value={budInput}
+                autoFocus
+                onChange={(e) => setBudInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void saveBudNow()
+                  if (e.key === 'Escape') setEditBud(false)
+                }}
+              />
+              <button className="set-chipbtn" onClick={() => void saveBudNow()}>
+                {t('저장', 'Save')}
+              </button>
+              <button className="set-chipbtn" disabled={!canReset} onClick={() => void resetBudNow()}>
+                {t('초기화', 'Reset')}
+              </button>
+              <span className="sp" />
+              <button className="set-chipbtn" onClick={() => setEditBud(false)}>
+                {t('취소', 'Cancel')}
+              </button>
+            </>
+          ) : budget != null ? (
+            <>
+              <span>
+                {t('누적 ', 'Spent ')}
+                <b>{fmtUsd(spent)}</b>
+                {t(' / 예산 ', ' / budget ')}
+                {fmtUsd(budget)}
+              </span>
+              <button className="apedit" aria-label={t('예산 수정', 'Edit budget')} onClick={startBud}>
+                <IconPencil size={11} />
+              </button>
+              <span className="sp" />
+              {remain != null &&
+                (remain <= 0 ? (
+                  <span className="over">{t('예산 초과', 'Over budget')}</span>
+                ) : (
+                  <span>{t(`남음 ${Math.round(remainPct ?? 0)}%`, `${Math.round(remainPct ?? 0)}% left`)}</span>
+                ))}
+            </>
+          ) : (
+            <>
+              <span>{t('예산 없음 — 정해두면 남은 예산이 표시돼요', 'No budget — set one to track what’s left')}</span>
+              <span className="sp" />
+              <button className="set-chipbtn" onClick={startBud}>
+                {t('예산 설정', 'Set budget')}
+              </button>
+            </>
+          )}
+        </div>
+      )}
+      {!oa && budget != null && <div className="g2 big">{<i style={{ width: (remainPct ?? 0) + '%' }} />}</div>}
+    </div>
+  )
+}
+
+// 라벨이 언어를 따라가야 해서 상수가 아닌 함수 — 렌더 때 t()가 평가된다
+function scopeTabs(): { id: 'all' | SkillScope; label: string }[] {
+  return [
+    { id: 'all', label: t('전체', 'All') },
+    { id: 'global', label: t('전역', 'Global') },
+    { id: 'local', label: t('로컬', 'Local') }
+  ]
+}
+
+function SkillView({ cwd }: { cwd: string }) {
+  const [skills, setSkills] = useState<SkillInfo[] | null>(null)
+  const [scope, setScope] = useState<'all' | SkillScope>('all')
+  const [busy, setBusy] = useState<string | null>(null) // skill name currently toggling
+
+  const refresh = (): void => {
+    window.api.skill
+      .list(cwd)
+      .then(setSkills)
+      .catch(() => setSkills([]))
+  }
+  useEffect(refresh, [cwd])
+
+  const toggle = async (s: SkillInfo): Promise<void> => {
+    const next = !s.enabled
+    setBusy(s.name)
+    // optimistic — a name can appear in both scopes, so flip every matching row
+    setSkills((cur) => cur?.map((x) => (x.name === s.name ? { ...x, enabled: next } : x)) ?? cur)
+    try {
+      await window.api.skill.setEnabled(s.name, next)
+    } catch {
+      refresh() // revert to the persisted truth on failure
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const counts = {
+    all: skills?.length ?? 0,
+    plugin: skills?.filter((s) => s.scope === 'plugin').length ?? 0,
+    global: skills?.filter((s) => s.scope === 'global').length ?? 0,
+    local: skills?.filter((s) => s.scope === 'local').length ?? 0
+  }
+  const rows = (skills ?? []).filter((s) => scope === 'all' || s.scope === scope)
+
+  return (
+    <>
+      <div className="set-h1">Skill</div>
+      <div className="set-h1-sub">
+        {t(
+          '에이전트가 쓸 수 있는 Skill을 범위별로 보고, 여기서 바로 켜고 끌 수 있습니다.',
+          'See the Skills the agent can use by scope, and turn them on or off right here.'
+        )}
+      </div>
+
+      <div className="set-sec">{t('스킬', 'Skills')}</div>
+      <div className="set-tabs">
+        {/* tab — 지역변수 t는 i18n t()를 가리므로 이름을 피한다 */}
+        {scopeTabs().map((tab) => (
+          <button
+            key={tab.id}
+            className={'set-tab' + (scope === tab.id ? ' on' : '')}
+            onClick={() => setScope(tab.id)}
+          >
+            {tab.label}
+            <span className="n">{counts[tab.id]}</span>
+          </button>
+        ))}
+        <button className="set-iconbtn" onClick={refresh} aria-label={t('새로고침', 'Refresh')}>
+          <IconRefresh size={13} />
+        </button>
+      </div>
+
+      {skills == null ? (
+        <div className="sc2 hint">
+          <span className="set-spin" /> {t('불러오는 중…', 'Loading…')}
+        </div>
+      ) : rows.length === 0 ? (
+        <div className="sc2 hint">
+          {scope === 'local'
+            ? cwd
+              ? t('이 프로젝트의 .claude/skills 에 Skill이 없습니다.', 'No Skills in this project’s .claude/skills.')
+              : t(
+                  '연결된 프로젝트가 없어 로컬 Skill을 찾을 수 없습니다.',
+                  'No project is open, so local Skills can’t be found.'
+                )
+            : scope === 'global'
+              ? t('~/.claude/skills 에 Skill이 없습니다.', 'No Skills in ~/.claude/skills.')
+              : t('설치된 Skill이 없습니다.', 'No Skills installed.')}
+        </div>
+      ) : (
+        rows.map((s) => (
+          <div className={'sc2 row2' + (s.enabled ? '' : ' off')} key={s.scope + ':' + s.name}>
+            <div className="set-tile">/</div>
+            <div className="rmain has-tip tip-wrap" data-tip={s.description || t('설명이 없습니다.', 'No description.')}>
+              <div className="em">
+                {s.name}
+                <span className="set-badge off">
+                  {s.scope === 'global' ? t('전역', 'Global') : t('로컬', 'Local')}
+                </span>
+              </div>
+              <div className="meta">{s.description || t('설명이 없습니다.', 'No description.')}</div>
+            </div>
+            <button
+              className={'sw2' + (s.enabled ? ' on' : '')}
+              role="switch"
+              aria-checked={s.enabled}
+              aria-label={t(
+                s.name + (s.enabled ? ' 끄기' : ' 켜기'),
+                (s.enabled ? 'Turn off ' : 'Turn on ') + s.name
+              )}
+              disabled={busy === s.name}
+              onClick={() => void toggle(s)}
+            />
+          </div>
+        ))
+      )}
+
+      <div className="set-note2">
+        {isEn() ? (
+          <>
+            Global: <code>~/.claude/skills</code> · Local: <code>&lt;project&gt;/.claude/skills</code> · Turning one
+            off keeps the agent from using that Skill on later runs.
+          </>
+        ) : (
+          <>
+            전역: <code>~/.claude/skills</code> · 로컬: <code>&lt;프로젝트&gt;/.claude/skills</code> · 끄면 이후 실행부터
+            에이전트가 그 Skill을 사용하지 않습니다.
+          </>
+        )}
+      </div>
+    </>
+  )
+}
+
+// ── MCP — 앱 등록 서버(모든 대화·계정 공통) + 플러그인 + 프로젝트 + 터미널(가져오기) ──
+// 앱은 계정별 격리 config로 돌아 터미널 ~/.claude.json의 서버도, /mcp 로 받은 로그인 토큰도
+// 보이지 않았다. 여기서 해결: 앱 레지스트리(SDK mcpServers 주입) + 앱 안 OAuth(브라우저) +
+// 터미널 설정·토큰 가져오기. 키가 필요한 서버는 설정 → Keys의 ${KEY}로 잇는다.
+
+// IPC로 넘어온 예외 메시지에서 Electron 접두("Error invoking remote method …: Error: ")를 벗긴다
+function ipcErr(e: unknown): string {
+  const m = String((e as Error)?.message ?? e)
+  return m.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '')
+}
+
+function originLabel(o: McpOrigin): string {
+  switch (o) {
+    case 'app':
+      return t('앱', 'App')
+    case 'plugin':
+      return t('플러그인', 'Plugin')
+    case 'project':
+      return t('프로젝트', 'Project')
+    case 'user':
+      return t('터미널 전역', 'Terminal global')
+    case 'local':
+      return t('터미널 프로젝트', 'Terminal project')
+  }
+}
+
+// 액세스 토큰 만료 표기 — 만료돼도 리프레시 토큰이 있으면 CLI가 스스로 갱신하니 '자동 갱신'
+function fmtOAuthExpiry(expiresAt: number | null, hasRefresh: boolean): string {
+  if (expiresAt == null) return hasRefresh ? t('자동 갱신', 'auto-refresh') : ''
+  const left = expiresAt - Date.now()
+  if (left <= 0) return hasRefresh ? t('만료 · 자동 갱신', 'expired · auto-refresh') : t('만료됨', 'expired')
+  const h = Math.floor(left / 3600000)
+  const m = Math.floor((left % 3600000) / 60000)
+  return t(h > 0 ? `${h}시간 ${m}분 남음` : `${m}분 남음`, h > 0 ? `${h}h ${m}m left` : `${m}m left`)
+}
+
+// 폼 ↔ 스펙 변환 — 인자는 셸처럼 공백 분리(따옴표 묶음 지원), env/헤더는 줄 단위 KEY=VALUE / Name: Value
+function splitArgs(s: string): string[] {
+  const out: string[] = []
+  let cur = ''
+  let q: string | null = null
+  let quoted = false
+  for (const ch of s) {
+    if (q) {
+      if (ch === q) q = null
+      else cur += ch
+      continue
+    }
+    if (ch === '"' || ch === "'") {
+      q = ch
+      quoted = true
+      continue
+    }
+    if (/\s/.test(ch)) {
+      if (cur || quoted) out.push(cur)
+      cur = ''
+      quoted = false
+      continue
+    }
+    cur += ch
+  }
+  if (cur || quoted) out.push(cur)
+  return out
+}
+function joinArgs(a: string[] | undefined): string {
+  return (a ?? []).map((x) => (/\s/.test(x) || x === '' ? `"${x}"` : x)).join(' ')
+}
+function parseKv(text: string, sep: '=' | ':'): Record<string, string> | undefined {
+  const out: Record<string, string> = {}
+  for (const line of text.split(/\r?\n/)) {
+    const l = line.trim()
+    if (!l || l.startsWith('#')) continue
+    const i = l.indexOf(sep)
+    if (i <= 0) continue
+    out[l.slice(0, i).trim()] = l.slice(i + 1).trim()
+  }
+  return Object.keys(out).length ? out : undefined
+}
+function kvLines(m: Record<string, string> | undefined, sep: string): string {
+  return Object.entries(m ?? {})
+    .map(([k, v]) => `${k}${sep}${v}`)
+    .join('\n')
+}
+
+// 카드 타일 이니셜 — PoC 문법(context7 → C7): plugin: 접두는 벗기고 영숫자 앞 두 글자
+function mcpTile(name: string): string {
+  const base = name.replace(/^plugin:[^:]+:/, '')
+  return base.replace(/[^a-z0-9]/gi, '').slice(0, 2).toUpperCase() || '?'
+}
+
+// 앱 등록 서버 추가/편집 폼 — 종류 칩(stdio/http/sse)에 따라 명령·인자·env 또는 URL·헤더
+function McpServerForm({
+  init,
+  onSave,
+  onCancel
+}: {
+  init: { prevName?: string; name: string; spec: McpServerSpec }
+  onSave: (name: string, spec: McpServerSpec, prevName?: string) => Promise<void>
+  onCancel: () => void
+}): React.ReactElement {
+  const stdio = init.spec.type === 'stdio' ? init.spec : null
+  const web = init.spec.type !== 'stdio' ? init.spec : null
+  const [name, setName] = useState(init.name)
+  const [type, setType] = useState<McpServerSpec['type']>(init.spec.type)
+  const [command, setCommand] = useState(stdio?.command ?? '')
+  const [args, setArgs] = useState(joinArgs(stdio?.args))
+  const [env, setEnv] = useState(kvLines(stdio?.env, '='))
+  const [url, setUrl] = useState(web?.url ?? '')
+  const [headers, setHeaders] = useState(kvLines(web?.headers, ': '))
+  const [err, setErr] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const build = (): McpServerSpec =>
+    type === 'stdio'
+      ? { type: 'stdio', command: command.trim(), ...(splitArgs(args).length ? { args: splitArgs(args) } : {}), ...(parseKv(env, '=') ? { env: parseKv(env, '=') } : {}) }
+      : { type, url: url.trim(), ...(parseKv(headers, ':') ? { headers: parseKv(headers, ':') } : {}) }
+  const save = async (): Promise<void> => {
+    setBusy(true)
+    setErr(null)
+    try {
+      await onSave(name.trim(), build(), init.prevName)
+    } catch (e) {
+      setErr(ipcErr(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  const canSave = !!name.trim() && (type === 'stdio' ? !!command.trim() : !!url.trim())
+
+  return (
+    <div className="sc2 form">
+      <div className="aphead">
+        <span className="apn">{init.prevName ? t('서버 편집', 'Edit server') : t('서버 추가', 'Add server')}</span>
+        <span className="sp" />
+        <div className="set-chips">
+          {(['stdio', 'http', 'sse'] as const).map((k) => (
+            <button key={k} className={'set-chipbtn' + (type === k ? ' on' : '')} onClick={() => setType(k)}>
+              {k}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="set-field">
+        <label>{t('이름 (도구 이름 mcp__<이름>__… 에 쓰임)', 'Name (used in tool names mcp__<name>__…)')}</label>
+        <input className="set-input mono" value={name} placeholder="blender" spellCheck={false} autoFocus={!init.prevName} onChange={(e) => setName(e.target.value)} />
+      </div>
+      {type === 'stdio' ? (
+        <>
+          <div className="set-field">
+            <label>{t('명령', 'Command')}</label>
+            <input className="set-input mono" value={command} placeholder="uvx" spellCheck={false} onChange={(e) => setCommand(e.target.value)} />
+          </div>
+          <div className="set-field">
+            <label>{t('인자 (공백 구분, 따옴표로 묶기 가능)', 'Arguments (space-separated, quotes allowed)')}</label>
+            <input className="set-input mono" value={args} placeholder="blender-mcp" spellCheck={false} onChange={(e) => setArgs(e.target.value)} />
+          </div>
+          <div className="set-field">
+            <label>{t('환경변수 (줄마다 KEY=VALUE — 값에 ${KEY_NAME} 으로 Keys 보관함 참조)', 'Environment (one KEY=VALUE per line — ${KEY_NAME} references the Keys vault)')}</label>
+            <textarea className="set-input ta" value={env} placeholder={'API_KEY=${MY_API_KEY}'} spellCheck={false} onChange={(e) => setEnv(e.target.value)} />
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="set-field">
+            <label>URL</label>
+            <input className="set-input mono" value={url} placeholder="https://example.com/mcp" spellCheck={false} onChange={(e) => setUrl(e.target.value)} />
+          </div>
+          <div className="set-field">
+            <label>{t('헤더 (줄마다 Name: Value — 값에 ${KEY_NAME} 으로 Keys 보관함 참조)', 'Headers (one Name: Value per line — ${KEY_NAME} references the Keys vault)')}</label>
+            <textarea className="set-input ta" value={headers} placeholder={'Authorization: Bearer ${MY_API_KEY}'} spellCheck={false} onChange={(e) => setHeaders(e.target.value)} />
+          </div>
+        </>
+      )}
+      {err && <div className="set-msg err">{err}</div>}
+      <div className="set-acts">
+        <button className="set-chipbtn on" disabled={busy || !canSave} onClick={() => void save()}>
+          {t('저장', 'Save')}
+        </button>
+        <button className="set-chipbtn" disabled={busy} onClick={onCancel}>
+          {t('취소', 'Cancel')}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function McpView({ cwd }: { cwd: string }) {
+  const [servers, setServers] = useState<McpServerInfo[] | null>(null)
+  const [prefs, setPrefs] = useState<McpPrefs | null>(null)
+  const [busy, setBusy] = useState<string | null>(null) // 토글 중인 서버
+  const [form, setForm] = useState<{ prevName?: string; name: string; spec: McpServerSpec } | null>(null)
+  const [cands, setCands] = useState<McpImportCandidate[] | null>(null) // 가져오기 패널
+  const [oauth, setOauth] = useState<{ name: string; url?: string } | null>(null) // 진행 중 OAuth
+  const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
+
+  // try/catch — dev HMR로 렌더러만 새 코드가 된 사이(preload/main은 재시작 전)엔 새 브리지
+  // 메서드가 없다. 그 창에서 탭이 통째로 죽지 않게 옛 목록이라도 보여준다.
+  const refresh = (): void => {
+    try {
+      window.api.mcp
+        .list(cwd)
+        .then(setServers)
+        .catch(() => setServers([]))
+      window.api.mcp
+        .getPrefs()
+        .then(setPrefs)
+        .catch(() => {})
+    } catch {
+      setServers([])
+    }
+  }
+  useEffect(refresh, [cwd])
+  // OAuth 진행 이벤트 — 폴백 링크·완료·오류. 완료면 목록을 다시 읽어 '연결됨' 배지로.
+  useEffect(() => {
+    try {
+      return window.api.mcp.onOAuthEvent((ev) => {
+        if (ev.phase === 'url') {
+          setOauth({ name: ev.name, url: ev.url })
+          return
+        }
+        setOauth(null)
+        if (ev.phase === 'done') {
+          setMsg({ kind: 'ok', text: t(`${ev.name} 연결됐어요 — 다음 메시지부터 모든 대화에서 쓰여요.`, `${ev.name} connected — available in every chat from the next message.`) })
+          refresh()
+        } else if (ev.phase === 'error') setMsg({ kind: 'err', text: ev.error ?? 'error' })
+      })
+    } catch {
+      return undefined
+    }
+  }, [cwd])
+
+  const toggle = async (s: McpServerInfo): Promise<void> => {
+    const next = !s.enabled
+    setBusy(s.name)
+    setServers((cur) => cur?.map((x) => (x.name === s.name ? { ...x, enabled: next } : x)) ?? cur)
+    try {
+      await window.api.mcp.setEnabled(s.name, next)
+    } catch {
+      refresh()
+    } finally {
+      setBusy(null)
+    }
+  }
+  const connect = async (s: McpServerInfo): Promise<void> => {
+    setMsg(null)
+    setOauth({ name: s.name })
+    try {
+      const r = await window.api.mcp.oauthConnect(s.name, cwd)
+      if (!r.ok && r.error && r.error !== 'cancelled') setMsg({ kind: 'err', text: r.error })
+    } catch (e) {
+      setMsg({ kind: 'err', text: ipcErr(e) })
+    } finally {
+      setOauth(null)
+      refresh()
+    }
+  }
+  const disconnect = async (s: McpServerInfo): Promise<void> => {
+    await window.api.mcp.oauthDisconnect(s.name, cwd).catch(() => {})
+    refresh()
+  }
+  const remove = async (s: McpServerInfo): Promise<void> => {
+    await window.api.mcp.remove(s.name).catch(() => {})
+    refresh()
+  }
+  const saveForm = async (name: string, spec: McpServerSpec, prevName?: string): Promise<void> => {
+    await window.api.mcp.upsert(name, spec, prevName) // 검증 실패는 폼이 잡아 보여준다
+    setForm(null)
+    setMsg({ kind: 'ok', text: t(`${name} 저장됨 — 다음 메시지부터 모든 대화에 붙어요.`, `${name} saved — attached to every chat from the next message.`) })
+    refresh()
+  }
+  const openImport = async (): Promise<void> => {
+    setMsg(null)
+    setCands(await window.api.mcp.importCandidates(cwd).catch(() => []))
+  }
+  const importItems = async (items: McpImportCandidate[]): Promise<void> => {
+    if (!items.length) return
+    await window.api.mcp.import(items.map((c) => ({ name: c.name, spec: c.spec }))).catch((e) => setMsg({ kind: 'err', text: ipcErr(e) }))
+    setCands((cur) => cur?.map((c) => (items.includes(c) ? { ...c, exists: true } : c)) ?? cur)
+    refresh()
+  }
+  const importTokens = async (): Promise<void> => {
+    try {
+      const n = await window.api.mcp.oauthImportGlobal()
+      setMsg({ kind: 'ok', text: t(`터미널의 MCP 로그인 토큰을 가져왔어요 — 연결 ${n}개.`, `Imported MCP sign-in tokens from the terminal — ${n} connected.`) })
+    } catch (e) {
+      setMsg({ kind: 'err', text: ipcErr(e) })
+    }
+    refresh()
+  }
+  const setAllowProject = async (v: boolean): Promise<void> => {
+    setPrefs((p) => (p ? { ...p, allowProjectMcp: v } : p))
+    setPrefs(await window.api.mcp.setPrefs({ allowProjectMcp: v }).catch(() => prefs ?? { allowProjectMcp: v }))
+    refresh()
+  }
+
+  const rowsOf = (...o: McpOrigin[]): McpServerInfo[] => (servers ?? []).filter((s) => o.includes(s.origin))
+  const appRows = rowsOf('app')
+  const pluginRows = rowsOf('plugin')
+  const projRows = rowsOf('project')
+  const termRows = rowsOf('user', 'local')
+
+  const Row = (s: McpServerInfo): React.ReactElement => {
+    const inFlight = oauth?.name === s.name
+    return (
+      <div className={'sc2 row2 mcp' + (s.enabled ? '' : ' off') + (s.applied ? '' : ' na')} key={s.origin + ':' + s.name}>
+        <div className="set-tile">{mcpTile(s.name)}</div>
+        <div className="rmain">
+          <div className="em">
+            <span className="emt">{s.name}</span>
+            {s.transport !== 'unknown' && <span className="set-badge off">{s.transport}</span>}
+            {s.oauth &&
+              (s.oauth.connected ? (
+                <span className="set-badge has-tip" data-tip={fmtOAuthExpiry(s.oauth.expiresAt, s.oauth.hasRefresh)}>
+                  {t('연결됨', 'Connected')}
+                </span>
+              ) : (
+                <span className="set-badge warn">{t('로그인 필요', 'Sign-in needed')}</span>
+              ))}
+            {!s.applied && (
+              <span className="set-badge warn has-tip tip-wrap" data-tip={t('앱은 계정별 격리 config로 실행돼 터미널 ~/.claude.json 서버를 읽지 않아요. 앱으로 가져오면 모든 대화에서 쓰여요.', 'The app runs with an isolated config per account and does not read terminal ~/.claude.json servers. Import it to use in every chat.')}>
+                {t('앱 실행 미적용', 'Not applied in app')}
+              </span>
+            )}
+          </div>
+          <div className="meta mono has-tip tip-wrap" data-tip={s.source ?? s.detail ?? ''}>
+            {s.detail || t('연결 정보가 없습니다.', 'No connection details.')}
+          </div>
+          {inFlight && (
+            <div className="meta mcp-prog">
+              <span className="set-spin" />
+              {t('브라우저에서 승인 중…', 'Waiting for approval in the browser…')}
+              {oauth?.url && (
+                <a href={oauth.url} target="_blank" rel="noreferrer">
+                  {t('안 열렸으면 이 링크', 'Not open? Use this link')}
+                </a>
+              )}
+              <button className="set-chipbtn" onClick={() => void window.api.mcp.oauthCancel()}>
+                {t('취소', 'Cancel')}
+              </button>
+            </div>
+          )}
+        </div>
+        <div className="mcp-acts">
+          {s.oauth &&
+            !inFlight &&
+            (s.oauth.connected ? (
+              <button className="set-chipbtn" onClick={() => void disconnect(s)}>
+                {t('연결 해제', 'Disconnect')}
+              </button>
+            ) : (
+              <button className="set-chipbtn on" disabled={!!oauth} onClick={() => void connect(s)}>
+                {t('연결', 'Connect')}
+              </button>
+            ))}
+          {s.origin === 'app' && (
+            <>
+              <button className="set-chipbtn" onClick={() => s.spec && setForm({ prevName: s.name, name: s.name, spec: s.spec })}>
+                {t('편집', 'Edit')}
+              </button>
+              <button className="set-chipbtn danger" onClick={() => void remove(s)}>
+                {t('삭제', 'Delete')}
+              </button>
+            </>
+          )}
+          {(s.origin === 'user' || s.origin === 'local') && s.spec && (
+            <button className="set-chipbtn on" onClick={() => void importItems([{ name: s.name, origin: s.origin, source: s.source ?? '', spec: s.spec!, exists: false }])}>
+              {t('앱으로 가져오기', 'Import to app')}
+            </button>
+          )}
+        </div>
+        {s.applied && (
+          <button
+            className={'sw2' + (s.enabled ? ' on' : '')}
+            role="switch"
+            aria-checked={s.enabled}
+            aria-label={t(s.name + (s.enabled ? ' 끄기' : ' 켜기'), (s.enabled ? 'Turn off ' : 'Turn on ') + s.name)}
+            disabled={busy === s.name}
+            onClick={() => void toggle(s)}
+          />
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <>
+      <div className="set-h1">MCP</div>
+      <div className="set-h1-sub">
+        {isEn() ? (
+          <>
+            Servers registered here are attached to <strong>every chat and every account</strong>. Sign in to http
+            servers (Comfy Cloud etc.) right here — once — and API keys come from <strong>Keys</strong> via{' '}
+            <code>${'{KEY_NAME}'}</code>.
+          </>
+        ) : (
+          <>
+            여기 등록한 서버는 <strong>모든 대화·모든 계정</strong>에 붙습니다. http 서버(Comfy Cloud 등) 로그인도 여기서{' '}
+            한 번만 — API 키가 필요하면 <strong>Keys</strong>에 넣고 <code>${'{KEY_NAME}'}</code>으로 참조하세요.
+          </>
+        )}
+      </div>
+
+      <div className="set-sec">
+        {t('앱 서버', 'App servers')}
+        <button className="set-chipbtn" onClick={() => setForm({ name: '', spec: { type: 'stdio', command: '' } })} disabled={!!form}>
+          <IconPlus size={11} /> {t('서버 추가', 'Add server')}
+        </button>
+        <button className="set-chipbtn" onClick={() => void openImport()}>
+          <IconDownload size={11} /> {t('터미널에서 가져오기', 'Import from terminal')}
+        </button>
+        <button className="set-iconbtn" onClick={refresh} aria-label={t('새로고침', 'Refresh')} style={{ marginLeft: 0 }}>
+          <IconRefresh size={13} />
+        </button>
+      </div>
+      {msg && <div className={'set-msg' + (msg.kind === 'err' ? ' err' : '')}>{msg.text}</div>}
+      {form && <McpServerForm init={form} onSave={saveForm} onCancel={() => setForm(null)} />}
+      {cands && (
+        <div className="sc2 form">
+          <div className="aphead">
+            <span className="apn">{t('터미널 Claude Code 설정에서 가져오기', 'Import from terminal Claude Code config')}</span>
+            <span className="sp" />
+            <button className="set-chipbtn" disabled={!cands.some((c) => !c.exists)} onClick={() => void importItems(cands.filter((c) => !c.exists))}>
+              {t('전부 가져오기', 'Import all')}
+            </button>
+            <button className="set-chipbtn" onClick={() => void importTokens()}>
+              {t('로그인 토큰도 가져오기', 'Import sign-in tokens')}
+            </button>
+            <button className="set-chipbtn" onClick={() => setCands(null)}>
+              {t('닫기', 'Close')}
+            </button>
+          </div>
+          {cands.length === 0 ? (
+            <div className="meta">{t('~/.claude.json 과 .mcp.json 에 서버가 없어요.', 'No servers in ~/.claude.json or .mcp.json.')}</div>
+          ) : (
+            cands.map((c, i) => (
+              <div className="mcp-cand" key={i}>
+                <div className="rmain">
+                  <div className="em">
+                    <span className="emt">{c.name}</span>
+                    <span className="set-badge off">{originLabel(c.origin)}</span>
+                    {c.exists && <span className="set-badge off">{t('이미 등록됨', 'Already added')}</span>}
+                  </div>
+                  <div className="meta mono has-tip tip-wrap" data-tip={c.source}>
+                    {c.spec.type === 'stdio' ? `${c.spec.command} ${joinArgs(c.spec.args)}`.trim() : c.spec.url}
+                  </div>
+                </div>
+                <button className={'set-chipbtn' + (c.exists ? '' : ' on')} onClick={() => void importItems([c])}>
+                  {c.exists ? t('다시 가져오기', 'Re-import') : t('가져오기', 'Import')}
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+      {servers == null ? (
+        <div className="sc2 hint">
+          <span className="set-spin" /> {t('불러오는 중…', 'Loading…')}
+        </div>
+      ) : appRows.length === 0 ? (
+        !form && (
+          <div className="sc2 hint">
+            {t('아직 등록한 서버가 없어요 — 서버 추가 또는 터미널에서 가져오기.', 'No servers registered yet — add one or import from the terminal.')}
+          </div>
+        )
+      ) : (
+        appRows.map(Row)
+      )}
+
+      {pluginRows.length > 0 && (
+        <>
+          <div className="set-sec">{t('플러그인', 'Plugins')}</div>
+          {pluginRows.map(Row)}
+        </>
+      )}
+
+      <div className="set-sec">{t('이 프로젝트 (.mcp.json)', 'This project (.mcp.json)')}</div>
+      <div className="sc2 row2">
+        <div className="rmain">
+          <div className="em">{t('프로젝트 .mcp.json 서버 자동 허용', 'Allow project .mcp.json servers automatically')}</div>
+          <div className="meta">
+            {t(
+              '켜면 열려 있는 폴더(와 상위)의 .mcp.json 서버를 묻지 않고 붙입니다. 끄면 앱 실행에선 로드되지 않아요.',
+              'On: servers from the open folder’s (and parents’) .mcp.json attach without asking. Off: they are not loaded in app runs.'
+            )}
+          </div>
+        </div>
+        <button
+          className={'sw2' + (prefs?.allowProjectMcp ? ' on' : '')}
+          role="switch"
+          aria-checked={!!prefs?.allowProjectMcp}
+          disabled={!prefs}
+          onClick={() => void setAllowProject(!prefs?.allowProjectMcp)}
+        />
+      </div>
+      {projRows.length === 0 ? (
+        <div className="sc2 hint">
+          {cwd ? t('이 프로젝트에 .mcp.json 서버가 없어요.', 'No .mcp.json servers in this project.') : t('열린 프로젝트가 없어요.', 'No project is open.')}
+        </div>
+      ) : (
+        projRows.map(Row)
+      )}
+
+      {termRows.length > 0 && (
+        <>
+          <div className="set-sec">{t('터미널 설정 (앱 실행 미적용)', 'Terminal config (not applied in app)')}</div>
+          {termRows.map(Row)}
+        </>
+      )}
+
+      <div className="set-note2">
+        {isEn() ? (
+          <>
+            App servers are injected into every run via the SDK (<code>mcpServers</code>) and merged with plugin and
+            project servers. <strong>Connect</strong> runs the OAuth sign-in in your browser and stores the token in
+            the app (encrypted) — shared by every account, refreshed automatically by the engine. Turning a server
+            off blocks it on later runs. Changes apply from the next message.
+          </>
+        ) : (
+          <>
+            앱 서버는 SDK(<code>mcpServers</code>)로 매 실행에 주입돼 플러그인·프로젝트 서버와 합쳐집니다.{' '}
+            <strong>연결</strong>은 브라우저 OAuth 로그인 — 토큰은 앱에 암호화 저장돼 모든 계정이 공유하고 엔진이
+            자동 갱신해요. 끄면 이후 실행부터 그 서버를 쓰지 않습니다. 변경은 다음 메시지부터 반영돼요.
+          </>
+        )}
+      </div>
+    </>
+  )
+}
+
+// ── Keys — API 키·시크릿 보관함. 값은 메인에만(DPAPI) — 목록엔 끝 4자리뿐. ──
+// 쓰임 ① env 항목은 모든 엔진 실행의 환경변수(스킬·스크립트·stdio MCP 서버가 바로 읽음)
+//      ② MCP 서버 설정의 ${NAME} 참조(헤더·env·인자·URL) — 실행 직전 메인이 치환
+function KeysView() {
+  const [items, setItems] = useState<SecretInfo[] | null>(null)
+  const [name, setName] = useState('')
+  const [value, setValue] = useState('')
+  const [note, setNote] = useState('')
+  const [editing, setEditing] = useState<string | null>(null) // 값을 바꾸는 중인 항목 이름
+  const [err, setErr] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const nameRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    try {
+      window.api.secrets
+        .list()
+        .then(setItems)
+        .catch(() => setItems([]))
+    } catch {
+      setItems([]) // dev HMR 전환기(preload 재시작 전) — 브리지 없음
+    }
+  }, [])
+
+  const reset = (): void => {
+    setName('')
+    setValue('')
+    setNote('')
+    setEditing(null)
+    setErr(null)
+  }
+  const save = async (): Promise<void> => {
+    setBusy(true)
+    setErr(null)
+    try {
+      setItems(await window.api.secrets.set(name.trim(), value, { note }))
+      reset()
+    } catch (e) {
+      setErr(ipcErr(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  const startEdit = (s: SecretInfo): void => {
+    setEditing(s.name)
+    setName(s.name)
+    setValue('')
+    setNote(s.note)
+    setErr(null)
+    nameRef.current?.scrollIntoView({ block: 'nearest' })
+  }
+  const remove = async (s: SecretInfo): Promise<void> => {
+    setItems(await window.api.secrets.remove(s.name).catch(() => items ?? []))
+    if (editing === s.name) reset()
+  }
+  const toggleEnv = async (s: SecretInfo): Promise<void> => {
+    setItems((cur) => cur?.map((x) => (x.name === s.name ? { ...x, env: !s.env } : x)) ?? cur)
+    setItems(await window.api.secrets.setEnv(s.name, !s.env).catch(() => items ?? []))
+  }
+  const canSave = !!name.trim() && !!value.trim()
+
+  return (
+    <>
+      <div className="set-h1">Keys</div>
+      <div className="set-h1-sub">
+        {isEn() ? (
+          <>
+            A vault for API keys that MCP servers and skills need. Save a key once and it is available in{' '}
+            <strong>every chat and every account</strong> — as an environment variable of every run, and as{' '}
+            <code>${'{NAME}'}</code> inside MCP server settings.
+          </>
+        ) : (
+          <>
+            MCP 서버·스킬이 요구하는 API 키 보관함. 한 번 넣어두면 <strong>모든 대화·모든 계정</strong>에서 쓰여요 —
+            실행의 환경변수로, 그리고 MCP 서버 설정 안의 <code>${'{NAME}'}</code> 참조로.
+          </>
+        )}
+      </div>
+
+      <div className="set-sec">{editing ? t('값 변경', 'Change value') : t('키 추가', 'Add key')}</div>
+      <div className="sc2 form">
+        <div className="set-field">
+          <label>{t('이름 (환경변수 규칙 — 예: HIGGSFIELD_API_KEY)', 'Name (env-var rules — e.g. HIGGSFIELD_API_KEY)')}</label>
+          <input
+            ref={nameRef}
+            className="set-input mono"
+            value={name}
+            placeholder="MY_API_KEY"
+            spellCheck={false}
+            disabled={!!editing}
+            onChange={(e) => setName(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '_'))}
+          />
+        </div>
+        <div className="set-field">
+          <label>{t('값', 'Value')}</label>
+          <input
+            className="set-input mono"
+            type="password"
+            value={value}
+            placeholder={editing ? t('새 값', 'New value') : 'sk-…'}
+            spellCheck={false}
+            autoFocus={!!editing}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && canSave) void save()
+              if (e.key === 'Escape') reset()
+            }}
+          />
+        </div>
+        <div className="set-field">
+          <label>{t('메모 (선택)', 'Note (optional)')}</label>
+          <input className="set-input" value={note} placeholder={t('어디에 쓰는 키인지', 'What this key is for')} onChange={(e) => setNote(e.target.value)} />
+        </div>
+        {err && <div className="set-msg err">{err}</div>}
+        <div className="set-acts">
+          <button className="set-chipbtn on" disabled={busy || !canSave} onClick={() => void save()}>
+            {t('저장', 'Save')}
+          </button>
+          {(editing || name || value || note) && (
+            <button className="set-chipbtn" disabled={busy} onClick={reset}>
+              {t('취소', 'Cancel')}
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="set-sec">{t('보관 중', 'Stored')}</div>
+      {items == null ? (
+        <div className="sc2 hint">
+          <span className="set-spin" /> {t('불러오는 중…', 'Loading…')}
+        </div>
+      ) : items.length === 0 ? (
+        <div className="sc2 hint">{t('저장된 키가 없어요.', 'No keys saved yet.')}</div>
+      ) : (
+        items.map((s) => (
+          <div className={'sc2 row2' + (s.env ? '' : ' off')} key={s.name}>
+            <div className="set-tile">
+              <IconKey size={16} />
+            </div>
+            <div className="rmain">
+              <div className="em">
+                <span className="emt mono">{s.name}</span>
+                {s.envLocked ? (
+                  <span className="set-badge warn has-tip tip-wrap" data-tip={t('실행 자체를 바꾸는 예약 이름이라 환경변수로는 주입하지 않아요 — ${NAME} 참조로만 쓰여요.', 'Reserved name that would change how runs bill/authenticate — not injected as env, only usable via ${NAME}.')}>
+                    {t('참조 전용', 'Reference only')}
+                  </span>
+                ) : s.env ? (
+                  <span className="set-badge">{t('환경변수 주입', 'Injected as env')}</span>
+                ) : (
+                  <span className="set-badge off">{t('참조만', 'Reference only')}</span>
+                )}
+              </div>
+              <div className="meta mono">
+                {'••••' + s.tail}
+                {s.note ? ' · ' + s.note : ''}
+              </div>
+            </div>
+            <div className="mcp-acts">
+              <button className="set-chipbtn" onClick={() => startEdit(s)}>
+                {t('값 변경', 'Change')}
+              </button>
+              <button className="set-chipbtn danger" onClick={() => void remove(s)}>
+                {t('삭제', 'Delete')}
+              </button>
+            </div>
+            <button
+              className={'sw2' + (s.env ? ' on' : '')}
+              role="switch"
+              aria-checked={s.env}
+              aria-label={t(s.name + (s.env ? ' 환경변수 주입 끄기' : ' 환경변수 주입 켜기'), (s.env ? 'Stop injecting ' : 'Inject ') + s.name + ' as env')}
+              disabled={s.envLocked}
+              onClick={() => void toggleEnv(s)}
+            />
+          </div>
+        ))
+      )}
+
+      <div className="set-note2">
+        {isEn() ? (
+          <>
+            Values are encrypted in the app’s key vault, never shown again, and never
+            sent to the UI. The env toggle adds the key to every Claude Code / Codex run’s environment. In MCP server
+            settings, write <code>${'{NAME}'}</code> (or <code>${'{NAME:-default}'}</code>) in env, headers, args or
+            URL — the app substitutes it right before spawning. Changes apply from the next message.
+          </>
+        ) : (
+          <>
+            값은 앱 보관함에 암호화해서 저장하며 다시 표시하거나 화면으로 전달하지 않아요.
+            토글을 켜면 모든 Claude Code / Codex 실행의 환경변수에 실립니다. MCP 서버 설정의 env·헤더·인자·URL에{' '}
+            <code>${'{NAME}'}</code>(또는 <code>${'{NAME:-기본값}'}</code>)을 쓰면 실행 직전에 치환돼요. 변경은 다음
+            메시지부터 반영됩니다.
+          </>
+        )}
+      </div>
+    </>
+  )
+}
+
+// a representative filename per server id → the same FileBadge the rest of the app
+// uses, so the languages are recognizable at a glance
+const LSP_BADGE: Record<string, string> = { ts: 'a.ts', py: 'a.py', cs: 'a.cs', cpp: 'a.cpp', verse: 'a.verse' }
+
+// the install/remove progress card (엔진 설치와 같은 카드 모달) — one op at a time
+interface LspCard {
+  id: string // server id the op belongs to (routes progress events)
+  op: '설치' | '삭제' | '준비'
+  label: string
+  log: string[]
+  status: 'running' | 'done' | 'error'
+  error?: string
+  percent: number | null
+}
+// op은 로직 값이라 한국어 그대로 두고(카드 분기가 이 값을 쓴다) 표기만 언어를 탄다
+function opNoun(op: LspCard['op']): string {
+  return t(op, op === '설치' ? 'Install' : op === '삭제' ? 'Removal' : 'Setup')
+}
+function opVerbing(op: LspCard['op']): string {
+  return t(op, op === '설치' ? 'Installing' : op === '삭제' ? 'Removing' : 'Preparing')
+}
+
+function LspView() {
+  const [servers, setServers] = useState<LspServerInfo[] | null>(null)
+  const [pct, setPct] = useState<Record<string, number | null>>({})
+  const [confirm, setConfirm] = useState<LspServerInfo | null>(null)
+  const [card, setCard] = useState<LspCard | null>(null)
+  // Verse 공식 문서 호버 언어 — 'ko'(기본, 한국어 번역) / 'en'(원문). 메인은 ui-prefs 저장 IPC에서 이 값을 읽어 호버 번역을 켜고 끈다.
+  const [verseKo, setVerseKo] = useState<boolean>(() => getPref<string>('verseDocLang', 'ko') !== 'en')
+  // Verse 행 펼침 — 클릭하면 '공식 문서 한국어' 등 Verse 전용 옵션이 행 아래로 펼쳐진다.
+  const [verseOpen, setVerseOpen] = useState(false)
+  // UE C++ 공식 주석 호버 언어 — 'ko'(기본) / 'en'. C/C++ 행을 펼치면 토글이 보인다.
+  const [ueKo, setUeKo] = useState<boolean>(() => getPref<string>('ueDocLang', 'ko') !== 'en')
+  const [cppOpen, setCppOpen] = useState(false)
+
+  const refresh = (): void => {
+    window.api.lsp
+      .servers()
+      .then(setServers)
+      .catch(() => setServers([]))
+  }
+  useEffect(() => {
+    refresh()
+    return window.api.lsp.onInstallProgress((p) => {
+      setPct((c) => ({ ...c, [p.server]: p.done ? null : p.percent }))
+      // stream download lines + percent into the open card (only the matching op's)
+      setCard((c) =>
+        c && c.id === p.server && c.status === 'running'
+          ? { ...c, log: p.line ? [...c.log.slice(-799), p.line] : c.log, percent: p.percent ?? c.percent }
+          : c
+      )
+      if (p.done) refresh()
+    })
+  }, [])
+
+  const doInstall = (s: LspServerInfo): void => {
+    setCard({
+      id: s.id,
+      op: '설치',
+      label: s.langs,
+      log: [t('설치를 준비하는 중…', 'Preparing the install…')],
+      status: 'running',
+      percent: null
+    })
+    // optimistic: the row flips to 설치 중 right away; progress events drive the %
+    setServers((cur) => cur?.map((x) => (x.id === s.id ? { ...x, state: 'installing' } : x)) ?? cur)
+    window.api.lsp
+      .installServer(s.id)
+      .then((r) =>
+        setCard((c) =>
+          c && c.id === s.id
+            ? r.ok
+              ? {
+                  ...c,
+                  status: 'done',
+                  percent: 100,
+                  log: [
+                    ...c.log,
+                    t(
+                      '설치가 끝났어요. 파일을 열면 바로 심볼 탐색이 켜집니다.',
+                      'Install finished. Open a file and symbol navigation turns on right away.'
+                    )
+                  ]
+                }
+              : { ...c, status: 'error', error: r.error || t('설치에 실패했습니다.', 'The install failed.') }
+            : c
+        )
+      )
+      .catch(() =>
+        setCard((c) =>
+          c && c.id === s.id ? { ...c, status: 'error', error: t('설치에 실패했습니다.', 'The install failed.') } : c
+        )
+      )
+      .finally(refresh)
+  }
+  const doRemove = (s: LspServerInfo): void => {
+    setCard({
+      id: s.id,
+      op: '삭제',
+      label: s.langs,
+      log: [
+        t('실행 중인 분석 서버를 중지하는 중…', 'Stopping the running language server…'),
+        t('설치된 파일을 삭제하는 중…', 'Deleting the installed files…')
+      ],
+      status: 'running',
+      percent: null
+    })
+    window.api.lsp
+      .uninstallServer(s.id)
+      .then((r) =>
+        setCard((c) =>
+          c && c.id === s.id
+            ? r.ok
+              ? {
+                  ...c,
+                  status: 'done',
+                  log: [
+                    ...c.log,
+                    t(
+                      '삭제가 끝났어요. 필요하면 언제든 다시 설치할 수 있어요.',
+                      'Removed. You can install it again whenever you need it.'
+                    )
+                  ]
+                }
+              : { ...c, status: 'error', error: r.error || t('삭제하지 못했어요.', 'Could not remove it.') }
+            : c
+        )
+      )
+      .catch(() =>
+        setCard((c) =>
+          c && c.id === s.id ? { ...c, status: 'error', error: t('삭제하지 못했어요.', 'Could not remove it.') } : c
+        )
+      )
+      .finally(refresh)
+  }
+  // Verse(external): the user picks their Verse.vsix / verse-lsp.exe; we extract+prepare it.
+  //
+  // ★R28f SHIPBLOCK R2 — 이 버튼이 **말없이 끝나던** 자리다(확인 크리틱 「요구 3의 뒷절반」).
+  // `pickVerseServer()`의 `null`에는 뜻이 둘 있었다: 「사용자가 대화상자를 취소했다」(조용한
+  // 게 맞다)와 「셸에 그 채널이 없다」(말해야 한다). 심의 안전값이 후자를 전자로 번역했고,
+  // 그래서 `if (!p) return`이 아무 흔적 없이 삼켰다 — 이 라운드가 닫은 N1과 같은 모양이다.
+  // 이제 심이 「없다」를 reject로 올리고(`callPathOrNull`), 그 사유가 카드로 선다.
+  const doVersePick = async (): Promise<void> => {
+    let p: string | null
+    try {
+      p = await window.api.lsp.pickVerseServer()
+    } catch (e) {
+      setCard({
+        id: 'verse',
+        op: '준비',
+        label: 'Verse',
+        log: [],
+        status: 'error',
+        percent: null,
+        error:
+          (e as { detail?: string } | null)?.detail ??
+          t('요청이 실패했어요 — 잠시 뒤 다시 시도해 주세요.', 'The request failed — please try again shortly.')
+      })
+      return
+    }
+    if (!p) return // 사용자가 대화상자를 취소했다 — 이건 정상이고, 조용한 게 맞다
+    setCard({
+      id: 'verse',
+      op: '준비',
+      label: 'Verse',
+      log: [t(`선택: ${p}`, `Selected: ${p}`), t('verse-lsp.exe 준비 중…', 'Preparing verse-lsp.exe…')],
+      status: 'running',
+      percent: null
+    })
+    const r = await window.api.lsp
+      .setVersePath(p)
+      .catch(() => ({ ok: false as const, error: t('설정에 실패했습니다.', 'Setup failed.') }))
+    setCard((c) =>
+      c && c.id === 'verse'
+        ? r.ok
+          ? {
+              ...c,
+              status: 'done',
+              log: [
+                ...c.log,
+                t(
+                  '준비 완료. .verse 파일을 열면 정의 이동·호버·심볼이 켜집니다.',
+                  'Ready. Open a .verse file for go-to-definition, hover, and symbols.'
+                )
+              ]
+            }
+          : { ...c, status: 'error', error: r.error || t('설정에 실패했습니다.', 'Setup failed.') }
+        : c
+    )
+    refresh()
+  }
+  const doVerseClear = async (): Promise<void> => {
+    await window.api.lsp.clearVersePath().catch(() => {})
+    refresh()
+  }
+  const toggleVerseKo = (): void => {
+    setVerseKo((on) => {
+      const next = !on
+      setPref('verseDocLang', next ? 'ko' : 'en') // 메인이 다음 호버부터 적용
+      return next
+    })
+  }
+  const toggleUeKo = (): void => {
+    setUeKo((on) => {
+      const next = !on
+      setPref('ueDocLang', next ? 'ko' : 'en') // 메인이 다음 호버부터 적용
+      return next
+    })
+  }
+
+  return (
+    <>
+      <div className="set-h1">Code</div>
+      <div className="set-h1-sub">
+        {t(
+          '파일 뷰어의 심볼 탐색(호버 타입 정보 · Ctrl+클릭 정의 이동)을 언어별 분석 서버가 제공합니다.',
+          'Symbol navigation in the file viewer (hover types, Ctrl+click go-to-definition) comes from a language server per language.'
+        )}
+      </div>
+
+      <div className="set-sec">{t('언어 서버', 'Language servers')}</div>
+      {servers == null ? (
+        <div className="sc2 hint">
+          <span className="set-spin" /> {t('불러오는 중…', 'Loading…')}
+        </div>
+      ) : (
+        servers.map((s) => {
+          const installing = s.state === 'installing'
+          const p = pct[s.id]
+          // 펼치는 디스클로저 행: Verse(external)는 '공식 문서 한국어' 등 Verse 옵션을,
+          // C/C++는 'Unreal Engine 공식 문서 한국어' 옵션을 행 아래에 담는다.
+          const isVerse = s.kind === 'external'
+          const isCpp = s.id === 'cpp'
+          const disc = isVerse || isCpp
+          const open = isVerse ? verseOpen : cppOpen
+          const toggleOpen = isVerse ? () => setVerseOpen((o) => !o) : () => setCppOpen((o) => !o)
+          return (
+            <Fragment key={s.id}>
+              <div
+                className={'sc2 row2' + (disc ? ' disc' + (open ? ' open' : '') : '')}
+                role={disc ? 'button' : undefined}
+                aria-expanded={disc ? open : undefined}
+                onClick={disc ? toggleOpen : undefined}
+              >
+                {disc && (
+                  <span className="chev" aria-hidden>
+                    <IconChevRight size={15} />
+                  </span>
+                )}
+                <div className="set-tile">
+                  <FileBadge path={LSP_BADGE[s.id] ?? 'a.txt'} size={24} />
+                </div>
+                <div className="rmain">
+                  <div className="em">
+                    {s.langs}
+                    {s.state === 'bundled' && <span className="set-badge">{t('앱 내장', 'Bundled')}</span>}
+                    {s.kind !== 'external' && s.state === 'installed' && (
+                      <span className="set-badge">{t('설치됨', 'Installed')}</span>
+                    )}
+                    {s.kind === 'external' &&
+                      (s.state === 'installed' ? (
+                        <span className="set-badge">{t('지정됨', 'Set')}</span>
+                      ) : (
+                        <span className="set-badge off">{t('미지정', 'Not set')}</span>
+                      ))}
+                    {/* Verse의 요구사항·경로·문서 언어는 행을 펼치면 보인다 — 접힌 행은
+                        다른 서버들과 같은 2줄 높이를 유지한다 */}
+                    {/* ★HOSTI18N R2(크리틱 R1-D3) — 셸은 `requires`(ko)와 `requiresEn`(en)을
+                        **둘 다** 보내는데(`ccg-lsp/src/lib.rs:449-453`, 주석에 "표시 쪽이 고르게
+                        한다") 초판은 `{s.requires}`를 무조건 그렸다. 그래서 en 화면의 C# 행
+                        배지만 「.NET SDK 10+ 필요」로 한국어였다 — 계약면에 필드만 있고
+                        배선이 없던 자리다. en이 없는 서버는 ko로 떨어진다(2.6.2와 같다). */}
+                    {!isVerse && s.requires && (
+                      <span className="set-badge off">{t(s.requires, s.requiresEn || s.requires)}</span>
+                    )}
+                  </div>
+                  <div className="meta mono">{s.exts}</div>
+                </div>
+                {s.kind === 'download' &&
+                  (s.state === 'installed' ? (
+                    <button
+                      className="set-chipbtn danger"
+                      onClick={(e) => {
+                        e.stopPropagation() // C/C++ 디스클로저 행 토글에 안 걸리게
+                        setConfirm(s)
+                      }}
+                    >
+                      {t('삭제', 'Delete')}
+                    </button>
+                  ) : (
+                    <button
+                      className="set-chipbtn"
+                      disabled={installing}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        doInstall(s)
+                      }}
+                    >
+                      {installing
+                        ? t(`설치 중…${p != null ? ` ${p}%` : ''}`, `Installing…${p != null ? ` ${p}%` : ''}`)
+                        : t('설치', 'Install')}
+                    </button>
+                  ))}
+                {s.kind === 'external' &&
+                  (s.state === 'installed' ? (
+                    <button
+                      className="set-chipbtn danger"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        doVerseClear()
+                      }}
+                    >
+                      {t('삭제', 'Delete')}
+                    </button>
+                  ) : (
+                    <button
+                      className="set-chipbtn"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        doVersePick()
+                      }}
+                    >
+                      {t('설정', 'Set up')}
+                    </button>
+                  ))}
+              </div>
+              {/* Verse 펼침 — 연결 안내·지정 경로·문서 언어가 행 아래 들여쓴 카드로 이어진다 */}
+              {isVerse && verseOpen && (
+                <>
+                  <div className="sc2 sub">
+                    <div className="sn">{t('Epic verse-lsp 연결', 'Connect Epic verse-lsp')}</div>
+                    <div className="sd">
+                      {isEn() ? (
+                        <>
+                          Point this at the <code>Verse.vsix</code> (or <code>verse-lsp.exe</code>) from
+                          UEFN/Fortnite and go-to-definition, hover, and symbols turn on. Source and digest folders
+                          are found automatically from the project’s <code>.vproject</code>; until a path is set,
+                          only syntax highlighting works.
+                        </>
+                      ) : (
+                        <>
+                          UEFN/포트나이트의 <code>Verse.vsix</code>(또는 <code>verse-lsp.exe</code>) 경로를 지정하면 정의
+                          이동·호버·심볼이 켜집니다. 소스·디제스트 폴더는 프로젝트의 <code>.vproject</code>에서 자동으로
+                          찾고, 지정 전에는 구문 강조만 동작해요.
+                        </>
+                      )}
+                    </div>
+                    {s.path && (
+                      <div className="spath">
+                        <IconCheck size={12} />
+                        <code>{s.path}</code>
+                      </div>
+                    )}
+                  </div>
+                  <div className="sc2 sub row2">
+                    <div className="rmain">
+                      <div className="sn">{t('공식 문서를 한국어로 보기', 'Show official docs in Korean')}</div>
+                      <div className="sd">
+                        {isEn() ? (
+                          <>
+                            Shows <code>/Verse.org</code> · <code>/UnrealEngine.com</code> ·{' '}
+                            <code>/Fortnite.com</code> API doc comments in Korean on hover. Turn it off for the
+                            English originals. (Untranslated entries and your own comments stay as written.)
+                          </>
+                        ) : (
+                          <>
+                            <code>/Verse.org</code> · <code>/UnrealEngine.com</code> · <code>/Fortnite.com</code> API 주석
+                            설명을 호버에서 한국어로 보여줍니다. 끄면 영어 원문으로 표시합니다. (번역에 없는 항목이나 내 코드
+                            주석은 원문 그대로)
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    <button
+                      className={'sw2' + (verseKo ? ' on' : '')}
+                      role="switch"
+                      aria-checked={verseKo}
+                      aria-label={
+                        verseKo
+                          ? t('Verse 한국어 문서 끄기', 'Turn off Korean Verse docs')
+                          : t('Verse 한국어 문서 켜기', 'Turn on Korean Verse docs')
+                      }
+                      onClick={toggleVerseKo}
+                    />
+                  </div>
+                </>
+              )}
+              {/* C/C++ 펼침 — 언리얼 프로젝트의 엔진 공식 주석(clangd 호버) 한국어 번역 토글 */}
+              {isCpp && cppOpen && (
+                <div className="sc2 sub row2">
+                  <div className="rmain">
+                    <div className="sn">
+                      {t('Unreal Engine 공식 문서를 한국어로 보기', 'Show Unreal Engine official docs in Korean')}
+                    </div>
+                    <div className="sd">
+                      {isEn() ? (
+                        <>
+                          Shows the engine’s official comments that ride along with C++ hovers in an Unreal project
+                          (<code>.uproject</code>) — descriptions of core types like <code>AActor</code> and{' '}
+                          <code>TObjectPtr</code> — in Korean. Turn it off for the English originals. (Untranslated
+                          entries and your own comments stay as written.)
+                        </>
+                      ) : (
+                        <>
+                          언리얼 프로젝트(<code>.uproject</code>)의 C++ 호버에 실리는 엔진 공식 주석(<code>AActor</code>·
+                          <code>TObjectPtr</code> 같은 핵심 타입 설명)을 한국어로 보여줍니다. 끄면 영어 원문으로
+                          표시합니다. (번역에 없는 항목이나 내 코드 주석은 원문 그대로)
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    className={'sw2' + (ueKo ? ' on' : '')}
+                    role="switch"
+                    aria-checked={ueKo}
+                    aria-label={
+                      ueKo
+                        ? t('Unreal Engine 한국어 문서 끄기', 'Turn off Korean Unreal Engine docs')
+                        : t('Unreal Engine 한국어 문서 켜기', 'Turn on Korean Unreal Engine docs')
+                    }
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      toggleUeKo()
+                    }}
+                  />
+                </div>
+              )}
+            </Fragment>
+          )
+        })
+      )}
+
+      <div className="set-note2">
+        {isEn() ? (
+          <>
+            Bundled servers work right away; the C# and C++ servers download once into{' '}
+            <code>~/.agentcodegui/lsp</code>. Click the Verse row for its connection and doc-language options, or the
+            C · C++ row for the Unreal Engine doc-language option.
+          </>
+        ) : (
+          <>
+            내장 서버는 바로 사용할 수 있고, C#·C++ 서버는 최초 1회 내려받아 <code>~/.agentcodegui/lsp</code> 에
+            설치됩니다. Verse 연결·문서 언어 옵션은 Verse 행을, Unreal Engine 문서 언어 옵션은 C·C++ 행을 클릭하면
+            펼쳐집니다.
+          </>
+        )}
+      </div>
+
+      {confirm && (
+        <div className="set-dialog-overlay" onMouseDown={() => setConfirm(null)}>
+          <div className="set-dialog" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="sd-ic">
+              <IconAlert size={22} />
+            </div>
+            <div className="sd-title">{t('분석 서버 삭제', 'Delete language server')}</div>
+            <div className="sd-msg">
+              {t(
+                `${confirm.langs} 분석 서버를 삭제할까요? 필요하면 언제든 다시 설치할 수 있어요.`,
+                `Delete the ${confirm.langs} language server? You can install it again whenever you need it.`
+              )}
+            </div>
+            <div className="sd-btns">
+              <button className="sd-cancel" onClick={() => setConfirm(null)}>
+                {t('취소', 'Cancel')}
+              </button>
+              <button
+                className="sd-go danger"
+                onClick={() => {
+                  const s = confirm
+                  setConfirm(null)
+                  doRemove(s)
+                }}
+              >
+                {t('삭제', 'Delete')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {card && (
+        <div
+          className="set-dialog-overlay"
+          onMouseDown={() => {
+            if (card.status !== 'running') setCard(null)
+          }}
+        >
+          <div className="install-card" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="ic-head">
+              <span className={'ic-hic ' + card.status}>
+                {card.status === 'running' ? (
+                  <span className="set-spin" />
+                ) : card.status === 'done' ? (
+                  <IconCheck size={16} />
+                ) : (
+                  <IconAlert size={16} />
+                )}
+              </span>
+              <span className="ic-title">
+                {card.status === 'running'
+                  ? t(`분석 서버 ${card.op} 중`, `${opVerbing(card.op)} language server`)
+                  : card.status === 'done'
+                    ? t(`${card.op} 완료`, `${opNoun(card.op)} complete`)
+                    : t(`${card.op} 실패`, `${opNoun(card.op)} failed`)}
+              </span>
+              <span className="ic-ver">{card.label}</span>
+            </div>
+            <div className="ic-log scroll">
+              {card.log.map((l, i) => (
+                <div className="ic-ln" key={i}>
+                  {l}
+                </div>
+              ))}
+              {card.status === 'error' && card.error && <div className="ic-ln err">{card.error}</div>}
+            </div>
+            <div className="ic-foot">
+              <span className={'ic-status ' + card.status}>
+                {card.status === 'running'
+                  ? card.op === '설치'
+                    ? t(
+                        `내려받는 중…${card.percent != null ? ` ${card.percent}%` : ''}`,
+                        `Downloading…${card.percent != null ? ` ${card.percent}%` : ''}`
+                      )
+                    : card.op === '준비'
+                      ? t('준비하는 중…', 'Preparing…')
+                      : t('삭제하는 중…', 'Deleting…')
+                  : card.status === 'done'
+                    ? t(`${card.op}가 완료되었습니다`, `${opNoun(card.op)} finished`)
+                    : t(`${card.op}에 실패했습니다`, `${opNoun(card.op)} failed`)}
+              </span>
+              <button className="sd-go" onClick={() => setCard(null)} disabled={card.status === 'running'}>
+                {t('확인', 'OK')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
+
+// ── 탐색기 (숨길 폴더·파일 관리) ───────────────────────────────────
+// 파일 탐색기 트리에서 감출 이름을 전역으로 관리한다. 저장은 두 벌(폴더 목록·파일 목록)이지만
+// 화면은 세 섹션이다: Folders(폴더만) / Files(파일 이름) / Extensions(*.확장자 패턴) — 파일
+// 목록 안의 항목을 '모양'으로 갈라 보여줄 뿐, 매칭·저장은 그대로 파일 목록 하나를 쓴다.
+// 대소문자 무시·어느 깊이든 매칭되고, 저장 즉시 lib/hideDirs가 이벤트를 쏴 열려 있는 탐색기가
+// 트리를 다시 읽는다. 탐색기 트리 우클릭 '숨김 목록에 추가'도 같은 목록으로 들어온다.
+
+// '*.확장자' 꼴인가 — Extensions 섹션으로 분류하는 기준 (다른 글롭·일반 이름은 Files에 남는다)
+function isExtPattern(s: string): boolean {
+  return /^\*\.[^\\/*?]+$/.test(s)
+}
+
+// 우클릭 드래그 제스처 — 켜고 끄기 + 동작 목록 + 감도(시작 거리·획 길이).
+// 값은 prefs에 저장되고 MouseGestureLayer가 제스처 시작 시점마다 읽으므로 즉시 반영된다.
+// 동작 매핑은 각 화면에 고정(파일 뷰어 탐색 · 도구·서브에이전트 상세 ←/↑/↓/↓→ · Git 카드 닫기 · 설정창 ↑/↓/↓→ ·
+// 대화 스레드 ↑/↓/↑←/↑↓ · 추가 채팅 창은 →↑ 최대화·↓→ 닫기 · 멀티 패널은 →↑ 크게 보기,
+// 크게 보기 카드는 ↓→ 닫기) — 여기 목록과 함께 바꿔야 한다.
+// 이름·설명이 언어를 따라가야 해서 상수가 아닌 함수 — 렌더 때 t()가 평가된다
+function gestureList(): { pattern: string; name: string; desc: string }[] {
+  return [
+    {
+      pattern: 'L',
+      name: t('뒤로', 'Back'),
+      desc: t(
+        '이전 파일이나 도구 목록으로 돌아가요. 도구·서브에이전트 상세에서는 현재 카드를 닫아요',
+        'Returns to the previous file or tool list; closes the current tool or subagent detail to go back'
+      )
+    },
+    {
+      pattern: 'R',
+      name: t('다음 파일', 'Next file'),
+      desc: t('뒤로 갔던 길을 다시 앞으로 — 파일 뷰어', 'Forward again after going back — file viewer')
+    },
+    { pattern: 'U', name: t('맨 위로', 'To the top'), desc: t('본문·대화를 처음으로', 'Jump to the start of the content or thread') },
+    { pattern: 'D', name: t('맨 아래로', 'To the bottom'), desc: t('본문·대화를 끝으로', 'Jump to the end of the content or thread') },
+    {
+      pattern: 'UL',
+      name: t('추가 채팅 열기', 'Open extra chat'),
+      desc: t('독립 창으로 새 대화를 하나 더 — 대화 화면 어디서나', 'One more chat in its own window — anywhere in a thread')
+    },
+    {
+      pattern: 'UD',
+      name: t('대화 비우기', 'Clear the thread'),
+      desc: t('지금 보는 대화를 백지로 — /clear와 같아요', 'Wipes the thread you’re looking at — same as /clear')
+    },
+    {
+      pattern: 'RU',
+      name: t('최대화/크게 보기', 'Maximize / focus view'),
+      desc: t(
+        '추가 채팅 창은 최대화(다시 그으면 원래대로), 멀티 패널은 크게 보기',
+        'Maximizes an extra chat window (draw again to restore); opens the focus view for a multi panel'
+      )
+    },
+    {
+      pattern: 'DR',
+      name: t('창 닫기', 'Close window'),
+      desc: t(
+        '카드·추가 채팅 창·크게 보기를 닫아요 — 저장 안 한 변경이 있으면 물어봐요',
+        'Closes a card, an extra chat window, or the focus view — asks first if there are unsaved changes'
+      )
+    }
+  ]
+}
+
+function GestureView(): React.ReactElement {
+  const [enabled, setEnabled] = useState<boolean>(() => getPref('gesture.enabled', true))
+  const [start, setStart] = useState<number>(() => getPref('gesture.start', GESTURE_DEFAULTS.start))
+  const [stroke, setStroke] = useState<number>(() => getPref('gesture.stroke', GESTURE_DEFAULTS.stroke))
+  const toggle = (): void => {
+    const next = !enabled
+    setEnabled(next)
+    setPref('gesture.enabled', next)
+  }
+
+  return (
+    <>
+      <div className="set-h1">Gestures</div>
+      <div className="set-h1-sub">
+        {isEn() ? (
+          <>
+            In the file viewer, Bash logs, Git cards, and chat threads, <b>hold right-click and drag</b> to draw a
+            gesture. A short drag is just a normal right-click, so the usual context menus still work.
+          </>
+        ) : (
+          <>
+            파일 뷰어·Bash 로그·Git 카드와 대화 스레드에서 <b>우클릭을 누른 채 드래그</b>하면 제스처예요. 짧게 그으면
+            평범한 우클릭이라 기존 우클릭 메뉴는 그대로 동작해요.
+          </>
+        )}
+      </div>
+
+      <div className="sc2 tgl" style={{ marginTop: 20 }}>
+        <div>
+          <div className="em">{t('마우스 제스처', 'Mouse gestures')}</div>
+          <div className="meta">
+            {enabled
+              ? t('우클릭 드래그로 뷰어를 조작해요', 'Right-click drag drives the viewer')
+              : t('꺼짐 — 우클릭은 메뉴만 열어요', 'Off — right-click only opens menus')}
+          </div>
+        </div>
+        <span className="sp" />
+        <button
+          className={'sw2' + (enabled ? ' on' : '')}
+          role="switch"
+          aria-checked={enabled}
+          aria-label={enabled ? t('제스처 끄기', 'Turn off gestures') : t('제스처 켜기', 'Turn on gestures')}
+          onClick={toggle}
+        />
+      </div>
+
+      <div className={'dim2' + (enabled ? '' : ' off')}>
+        {/* 제스처 목록 — 획 모양 글리프는 인식 버블과 같은 컴포넌트라 실물과 늘 일치 */}
+        <div className="set-sec">{t('제스처', 'Gestures')}</div>
+        <div className="set-grid3">
+          {gestureList().map((g) => (
+            <div key={g.pattern} className="sc2 ges">
+              <div className="gtile">
+                <GestureGlyph pattern={g.pattern} size={22} />
+              </div>
+              <div>
+                <div className="em">{g.name}</div>
+                <div className="meta">{g.desc}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* 감도 — 시작 거리(제스처 vs 우클릭 판정)와 획 길이(방향 한 획 판정) */}
+        <div className="set-sec">{t('감도', 'Sensitivity')}</div>
+        <div className="sc2">
+          <PxSlider
+            label={t('시작 거리', 'Start distance')}
+            desc={t(
+              '이만큼 움직여야 제스처로 봐요 — 그 전에 떼면 평범한 우클릭',
+              'Move this far before it counts as a gesture — release earlier and it’s a plain right-click'
+            )}
+            min={8}
+            max={30}
+            def={GESTURE_DEFAULTS.start}
+            value={start}
+            onChange={(v) => {
+              setStart(v)
+              setPref('gesture.start', v)
+            }}
+          />
+          <PxSlider
+            label={t('획 길이', 'Stroke length')}
+            desc={t(
+              '방향 한 획으로 인정하는 최소 이동 — ↓→ 같은 꺾임 인식에 영향',
+              'Shortest move that counts as one stroke — affects corners like ↓→'
+            )}
+            min={12}
+            max={48}
+            def={GESTURE_DEFAULTS.stroke}
+            value={stroke}
+            onChange={(v) => {
+              setStroke(v)
+              setPref('gesture.stroke', v)
+            }}
+          />
+        </div>
+      </div>
+
+      <div className="set-note2">
+        {t(
+          '제스처 중에는 궤적과 인식된 동작이 화면에 표시돼요. 그리다 만 모양이 어떤 동작과도 안 맞으면 아무 일도 일어나지 않아요 — 메뉴도 안 열려요. 낮은 감도 값일수록 예민하게 반응해요.',
+          'While you draw, the trail and the matched action show on screen. A half-drawn shape that matches nothing does nothing at all — no menu either. Lower values react more eagerly.'
+        )}
+      </div>
+    </>
+  )
+}
+
+// 값 슬라이더 한 줄 — 현재 값 표시 + 기본값에서 벗어나면 되돌리기 칩 (단위 기본 px)
+function PxSlider({
+  label,
+  desc,
+  min,
+  max,
+  def,
+  value,
+  unit = 'px',
+  onChange
+}: {
+  label: string
+  desc: string
+  min: number
+  max: number
+  def: number
+  value: number
+  unit?: string
+  onChange: (v: number) => void
+}): React.ReactElement {
+  const pct = ((value - min) / (max - min)) * 100
+  return (
+    <div className="sld">
+      <div className="sld-head">
+        <span className="sld-l">{label}</span>
+        <span className="sld-d">{desc}</span>
+        {value !== def && (
+          <button className="sld-reset" onClick={() => onChange(def)}>
+            {t(`기본값 ${def}${unit}`, `Default ${def}${unit}`)}
+          </button>
+        )}
+        <span className="sld-v">
+          {value}
+          {unit}
+        </span>
+      </div>
+      <input
+        className="rng2"
+        type="range"
+        min={min}
+        max={max}
+        step={1}
+        value={value}
+        style={{ ['--fill' as never]: pct + '%' }}
+        onChange={(e) => onChange(Number(e.target.value))}
+      />
+    </div>
+  )
+}
+
+// ── 화면 (유리 — 아크릴 벽지 비침) ───────────────────────────────────
+// 슬라이더 0~100 하나가 창 뒤가 비치는 정도를 정한다. 값은 ui.glass로 저장되고 lib/glass가
+// :root 인라인 변수(--panel/--chat-bg)로 반영 — 50이 styles.css의 PoC 확정값(스타일시트 원본).
+// 추가 채팅 창은 저장 시 uiGlassChanged 브로드캐스트로 따라온다(드래그 중엔 이 창만 즉시).
+function DisplayView(): React.ReactElement {
+  const [glass, setGlass] = useState<number>(() => getPref(GLASS_PREF, GLASS_DEFAULT))
+  // 사이드바 자동 숨김 — 값을 바꾸면 이벤트로 메인 창이 즉시 다시 읽어 반영한다(applyGlass와 같은 결).
+  const [autohide, setAutohide] = useState<boolean>(() => getPref<boolean>(SIDEBAR_AUTOHIDE, AUTOHIDE_DEFAULT))
+  const [trigger, setTrigger] = useState<number>(() =>
+    getPref<number>(SIDEBAR_AUTOHIDE_TRIGGER, AUTOHIDE_TRIGGER_DEFAULT)
+  )
+  // 포커스 밖 알림(토스트) — 기본 켬. 저장되면 메인 프로세스가 uiPrefsSave에서 캐시를 갱신한다.
+  const [notify, setNotify] = useState<boolean>(() => getPref<boolean>('notify.toast', true))
+  const emitAutohide = (): void => {
+    window.dispatchEvent(new CustomEvent(SIDEBAR_AUTOHIDE_EVENT))
+  }
+  // 감지 폭 미리보기 — 슬라이더를 만지는 동안 메인 창 가장자리에 그 폭 띠를 띄운다.
+  const previewTrigger = (active: boolean, value: number): void => {
+    window.dispatchEvent(
+      new CustomEvent(SIDEBAR_AUTOHIDE_TRIGGER_PREVIEW_EVENT, { detail: { active, value } })
+    )
+  }
+  // 모달이 슬라이더 위에서 닫혀도 띠가 남지 않게 — 언마운트 시 미리보기 끔.
+  useEffect(() => () => previewTrigger(false, 0), [])
+  return (
+    <>
+      <div className="set-h1">Display</div>
+      <div className="set-h1-sub">
+        {t(
+          '창은 DWM 아크릴 유리 위에 얹혀 있어요. 뒤가 얼마나 비칠지 여기서 조절해요 — 본채팅·추가 채팅 창 모두에 함께 적용돼요.',
+          'The window sits on DWM acrylic glass. Set how much shows through here — it applies to the main window and every extra chat window.'
+        )}
+      </div>
+
+      <div className="set-sec">{t('유리', 'Glass')}</div>
+      <div className="sc2">
+        <PxSlider
+          label={t('벽지 비침', 'Wallpaper show-through')}
+          desc={t(
+            '0 = 완전 불투명 · 클수록 창 뒤가 잘 비쳐요 — 끌면 바로 보여요',
+            '0 = fully opaque · higher lets more of the desktop through — drag to preview live'
+          )}
+          min={0}
+          max={100}
+          def={GLASS_DEFAULT}
+          unit="%"
+          value={glass}
+          onChange={(v) => {
+            setGlass(v)
+            setPref(GLASS_PREF, v)
+            applyGlass(v)
+          }}
+        />
+      </div>
+
+      <div className="set-note2">
+        {t(
+          '아크릴 재질은 창이 활성일 때만 살아나요 — 비활성 창이 잠시 불투명해지는 건 Windows 사양이에요. 재질이 없는 Windows 10에서는 값과 무관하게 늘 불투명해요.',
+          'Acrylic is only alive while the window is focused — an unfocused window turning opaque is Windows behavior. On Windows 10, which has no such material, the window is always opaque regardless of this value.'
+        )}
+      </div>
+
+      <div className="set-sec" style={{ marginTop: 26 }}>
+        {t('사이드바', 'Sidebar')}
+      </div>
+      <div className="sc2 tgl">
+        <div>
+          <div className="em">{t('자동 숨김', 'Auto-hide')}</div>
+          <div className="meta">
+            {autohide
+              ? t(
+                  '평소엔 접어 두고, 왼쪽 가장자리에 마우스를 대면 슥 펼쳐져요 — 본채팅·멀티 모두',
+                  'Stays collapsed and slides out when the pointer reaches the left edge — main chat and multi alike'
+                )
+              : t('사이드바를 늘 펼쳐 둬요', 'Keeps the sidebar open at all times')}
+          </div>
+        </div>
+        <span className="sp" />
+        <button
+          className={'sw2' + (autohide ? ' on' : '')}
+          role="switch"
+          aria-checked={autohide}
+          aria-label={autohide ? t('자동 숨김 끄기', 'Turn off auto-hide') : t('자동 숨김 켜기', 'Turn on auto-hide')}
+          onClick={() => {
+            const next = !autohide
+            setAutohide(next)
+            setPref(SIDEBAR_AUTOHIDE, next)
+            emitAutohide()
+          }}
+        />
+      </div>
+      {autohide && (
+        <div
+          className="sc2"
+          style={{ marginTop: 10 }}
+          onPointerEnter={() => previewTrigger(true, trigger)}
+          onPointerLeave={() => previewTrigger(false, trigger)}
+        >
+          <PxSlider
+            label={t('감지 폭', 'Trigger width')}
+            desc={t(
+              '왼쪽 가장자리에서 이만큼 안쪽까지 마우스가 오면 펼쳐져요 — 만지면 창 가장자리에 범위가 보여요',
+              'The sidebar opens once the pointer comes this far in from the left edge — touch the slider to see the band on the window'
+            )}
+            min={AUTOHIDE_TRIGGER_MIN}
+            max={AUTOHIDE_TRIGGER_MAX}
+            def={AUTOHIDE_TRIGGER_DEFAULT}
+            unit="px"
+            value={trigger}
+            onChange={(v) => {
+              setTrigger(v)
+              setPref(SIDEBAR_AUTOHIDE_TRIGGER, v)
+              emitAutohide()
+              previewTrigger(true, v)
+            }}
+          />
+        </div>
+      )}
+
+      <div className="set-sec" style={{ marginTop: 26 }}>
+        {t('알림', 'Notifications')}
+      </div>
+      <div className="sc2 tgl">
+        <div>
+          <div className="em">{t('포커스 밖 알림', 'Out-of-focus alerts')}</div>
+          <div className="meta">
+            {notify
+              ? t(
+                  '다른 창을 보는 사이 답변이 오거나 AI가 기다리면, 마우스가 있는 모니터에 토스트로 알려요',
+                  'While you’re in another window, a reply or a waiting question pops a toast on the monitor your pointer is on'
+                )
+              : t('창이 포커스를 잃어도 알리지 않아요', 'Stays quiet even when the window loses focus')}
+          </div>
+        </div>
+        <span className="sp" />
+        <button
+          className={'sw2' + (notify ? ' on' : '')}
+          role="switch"
+          aria-checked={notify}
+          aria-label={
+            notify
+              ? t('포커스 밖 알림 끄기', 'Turn off out-of-focus alerts')
+              : t('포커스 밖 알림 켜기', 'Turn on out-of-focus alerts')
+          }
+          onClick={() => {
+            const next = !notify
+            setNotify(next)
+            setPref('notify.toast', next)
+          }}
+        />
+      </div>
+      <div className="set-note2">
+        {t(
+          '토스트는 클릭하면 해당 채팅으로 바로 이동하고, 닫기 전까지 남아 있어요 — 앱 창을 다시 보면 스스로 사라져요.',
+          'Click a toast to jump straight to that chat; it stays until dismissed and clears itself once you return to the app.'
+        )}
+      </div>
+    </>
+  )
+}
+
+// ── 언어 (UI 표시 언어 — 한국어/English) ───────────────────────────────
+// 고르는 즉시 이 창은 t() 재평가(루트 useLang 재렌더), 다른 창은 main의 uiLangChanged
+// 브로드캐스트로 따라온다. AI 답변 언어는 대화에서 쓰는 언어를 따르므로 여기와 무관.
+const LANG_OPTIONS: { id: UiLang; name: string; native: string; tile: string }[] = [
+  { id: 'ko', name: '한국어', native: 'Korean', tile: '한' },
+  { id: 'en', name: 'English', native: '영어', tile: 'A' }
+]
+function LanguageView(): React.ReactElement {
+  const [lang, setCur] = useState<UiLang>(() => getLang())
+  const pick = (l: UiLang): void => {
+    setCur(l)
+    setLang(l)
+  }
+  return (
+    <>
+      <div className="set-h1">Language</div>
+      <div className="set-h1-sub">
+        {t(
+          '앱 화면에 보이는 언어를 골라요 — 바꾸는 즉시 모든 창에 적용돼요.',
+          'Choose the language of the app interface — applied to every window instantly.'
+        )}
+      </div>
+      <div className="set-sec">{t('표시 언어', 'Display language')}</div>
+      {LANG_OPTIONS.map((o) => (
+        <div
+          key={o.id}
+          className={'sc2 row2 pick' + (lang === o.id ? ' on' : '')}
+          role="radio"
+          aria-checked={lang === o.id}
+          tabIndex={0}
+          onClick={() => pick(o.id)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') pick(o.id)
+          }}
+        >
+          <div className="set-tile">{o.tile}</div>
+          <div className="rmain">
+            <div className="em">
+              {o.name}
+              {lang === o.id && <span className="set-badge">{t('사용 중', 'In use')}</span>}
+            </div>
+            <div className="meta">{o.native}</div>
+          </div>
+          <span className={'pick-dot' + (lang === o.id ? ' on' : '')} aria-hidden="true" />
+        </div>
+      ))}
+      <div className="set-note2">
+        {t(
+          '패치노트를 포함해 앱이 보여주는 모든 문구가 따라와요. AI 답변의 언어는 설정과 무관하게 대화에서 쓰는 언어를 따라요.',
+          'Everything the app displays follows this choice, patch notes included. The AI replies in whatever language you write in, regardless of this setting.'
+        )}
+      </div>
+    </>
+  )
+}
+
+function ExplorerView(): React.ReactElement {
+  const [enabled, setEnabled] = useState<boolean>(() => getHideEnabled())
+  const [dirs, setDirs] = useState<string[]>(() => getHideDirs())
+  const [files, setFiles] = useState<string[]>(() => getHideFiles())
+  const toggle = (): void => {
+    const next = !enabled
+    setEnabled(next)
+    setHideEnabled(next)
+  }
+  // 파일 목록을 화면용으로 두 갈래로 — 커밋은 다른 갈래를 보존한 채 합쳐서 한 목록으로 저장
+  const plainFiles = files.filter((f) => !isExtPattern(f))
+  const extFiles = files.filter(isExtPattern)
+  const commitFiles = (l: string[]): void => {
+    setFiles(l)
+    setHideFiles(l) // 저장 + 탐색기에 알림
+  }
+
+  return (
+    <>
+      <div className="set-h1">Explorer</div>
+      <div className="set-h1-sub">
+        {isEn() ? (
+          <>
+            Manage the folders and files hidden in the file explorer tree. Tuck away build output like{' '}
+            <code>bin</code> and <code>obj</code>, plus files like <code>Thumbs.db</code> and{' '}
+            <code>*.uasset</code>, to keep your eyes on the source.
+          </>
+        ) : (
+          <>
+            파일 탐색기 트리에서 숨길 폴더·파일을 관리해요. <code>bin</code>·<code>obj</code> 같은 빌드·생성물 폴더와{' '}
+            <code>Thumbs.db</code>·<code>*.uasset</code> 같은 파일을 감춰 소스에 집중할 수 있어요.
+          </>
+        )}
+      </div>
+
+      {/* 위: 마스터 토글 하나 — 폴더·파일 목록에 함께 적용 */}
+      <div className="sc2 tgl" style={{ marginTop: 20 }}>
+        <div>
+          <div className="em">{t('빌드·생성물 숨기기', 'Hide build output')}</div>
+          <div className="meta">
+            {enabled
+              ? t('아래 목록의 폴더·파일을 탐색기에서 감춰요', 'Hides the folders and files listed below')
+              : t('모든 폴더·파일을 그대로 보여줘요', 'Shows every folder and file as is')}
+          </div>
+        </div>
+        <span className="sp" />
+        <button
+          className={'sw2' + (enabled ? ' on' : '')}
+          role="switch"
+          aria-checked={enabled}
+          aria-label={enabled ? t('숨김 끄기', 'Turn off hiding') : t('숨김 켜기', 'Turn on hiding')}
+          onClick={toggle}
+        />
+      </div>
+
+      {/* 아래: Folders / Files / Extensions 세 카드 — 같은 UI 한 벌(추가 + 찾기 + 칩 목록)을 공유 */}
+      <div className={'dim2' + (enabled ? '' : ' off')}>
+        <HideListSection
+          title="Folders"
+          sub={t('폴더 이름 — 같은 이름의 파일은 그대로', 'Folder names — files with the same name stay visible')}
+          placeholder={t('폴더 이름 추가 (예: Logs)', 'Add a folder name (e.g. Logs)')}
+          unit={t('폴더', 'folders')}
+          defaults={DEFAULT_HIDE_DIRS}
+          list={dirs}
+          onCommit={(l) => {
+            setDirs(l)
+            setHideDirs(l) // 저장 + 탐색기에 알림
+          }}
+        />
+        <HideListSection
+          title="Files"
+          sub={t('파일 이름 — 폴더는 그대로', 'File names — folders stay visible')}
+          placeholder={t('파일 이름 추가 (예: Thumbs.db)', 'Add a file name (e.g. Thumbs.db)')}
+          unit={t('파일', 'files')}
+          defaults={DEFAULT_HIDE_FILES}
+          list={plainFiles}
+          onCommit={(l) => commitFiles([...l, ...extFiles])}
+        />
+        <HideListSection
+          title="Extensions"
+          sub={t('*.확장자 — 그 확장자의 파일 전부', '*.ext — every file with that extension')}
+          placeholder={t('확장자 추가 (예: uasset)', 'Add an extension (e.g. uasset)')}
+          unit={t('확장자', 'extensions')}
+          defaults={[]}
+          list={extFiles}
+          onCommit={(l) => commitFiles([...plainFiles, ...l])}
+          // 'uasset'·'.uasset'·'*.uasset' 어느 꼴로 넣어도 저장 형태(*.확장자)로 정규화
+          normalize={(raw) => {
+            const s = raw.replace(/[\\/\s]/g, '').replace(/^\*?\./, '').replace(/[*?]/g, '')
+            return s ? '*.' + s : ''
+          }}
+        />
+      </div>
+
+      <div className="set-note2">
+        {isEn() ? (
+          <>
+            Names match <b>case-insensitively</b> at <b>any depth</b> in the tree — the Folders list hides{' '}
+            <b>folders only</b>, and the Files and Extensions lists hide <b>files only</b>. Hidden files still exist
+            and the agent can still reach them — this only tidies the view. You can also add entries by{' '}
+            <b>right-clicking a file or folder → Add to hidden list</b> in the explorer, and toggle hiding quickly
+            with the <IconFilter size={11} /> button in the explorer header.
+          </>
+        ) : (
+          <>
+            이름은 <b>대소문자 구분 없이</b>, 트리의 <b>어느 깊이에서든</b> 매칭돼요 — Folders 목록은 <b>폴더만</b>,
+            Files·Extensions 목록은 <b>파일만</b> 숨겨요. 숨겨도 파일은 남아 있고 에이전트는 접근할 수 있어요 — 보기만
+            정리하는 거예요. 탐색기에서 파일·폴더를 <b>우클릭 → 숨김 목록에 추가</b>로도 넣을 수 있고, 탐색기 헤더의{' '}
+            <IconFilter size={11} /> 버튼으로 빠르게 켜고 끌 수 있어요.
+          </>
+        )}
+      </div>
+    </>
+  )
+}
+
+// 숨김 목록 한 벌 — 카드 하나에 제목 줄(개수·기본값 복원), 추가 입력 + 목록 안 찾기
+// (프리셋이 수십 개라 스크롤보다 검색이 빠르다), 숨김 패턴 칩(클릭으로 제거).
+// Folders/Files/Extensions 세 카드가 이 컴포넌트를 공유한다.
+function HideListSection({
+  title,
+  sub,
+  placeholder,
+  unit,
+  defaults,
+  list,
+  onCommit,
+  normalize
+}: {
+  title: string
+  sub: string
+  placeholder: string
+  unit: string // 개수 표기 단위 — '폴더'·'파일'·'확장자'
+  defaults: string[]
+  list: string[]
+  onCommit: (l: string[]) => void
+  normalize?: (raw: string) => string // 섹션별 입력 정규화 — 기본은 경로 구분자 제거
+}): React.ReactElement {
+  const [input, setInput] = useState('')
+  const [query, setQuery] = useState('')
+
+  const add = (): void => {
+    // '이름'(또는 * ? 패턴)만 받는다 — 정규화 후 비면 무시, 이미 있으면(대소문자 무시) 무시
+    const name = (normalize ?? ((s: string) => s.replace(/[\\/]/g, '')))(input.trim())
+    if (!name) return
+    setInput('')
+    if (list.some((d) => d.toLowerCase() === name.toLowerCase())) return
+    onCommit([...list, name])
+  }
+  const isDefault = list.length === defaults.length && list.every((d, i) => d === defaults[i])
+  const q = query.trim().toLowerCase()
+  const shown = q ? list.filter((d) => d.toLowerCase().includes(q)) : list
+
+  return (
+    <div className="sc2">
+      <div className="exh">
+        <span className="t2">{title}</span>
+        <span className="d2">{sub}</span>
+        <span className="sp" />
+        <span className="cnt">
+          {q
+            ? t(`${shown.length}/${list.length}개 ${unit}`, `${shown.length}/${list.length} ${unit}`)
+            : t(`${list.length}개 ${unit}`, `${list.length} ${unit}`)}
+        </span>
+        {/* 기본값이 아예 없는 섹션(Extensions)에선 '복원'이 '모두 지우기'가 돼버려 안 보여준다 */}
+        {defaults.length > 0 && (
+          <button className="restore" disabled={isDefault} onClick={() => onCommit([...defaults])}>
+            {t('기본값 복원', 'Restore defaults')}
+          </button>
+        )}
+      </div>
+      <div className="exadd">
+        <input
+          className="ain"
+          placeholder={placeholder}
+          value={input}
+          spellCheck={false}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') add()
+          }}
+        />
+        <button className="set-chipbtn" disabled={!input.trim()} onClick={add}>
+          {t('추가', 'Add')}
+        </button>
+        <div className="exfind">
+          <IconSearch size={11} />
+          <input
+            placeholder={t(unit + ' 찾기', 'Find ' + unit)}
+            value={query}
+            spellCheck={false}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') setQuery('')
+            }}
+          />
+          {query && (
+            <button aria-label={t('찾기 지우기', 'Clear search')} onClick={() => setQuery('')}>
+              <IconX2 size={11} />
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="chips2 scroll">
+        {list.length === 0 ? (
+          <div className="exempty">
+            {t('숨길 목록이 비어 있어요 — 위에서 추가하세요', 'Nothing hidden yet — add an entry above')}
+          </div>
+        ) : shown.length === 0 ? (
+          <div className="exempty">
+            {t(`‘${query.trim()}’와 일치하는 항목이 없어요`, `Nothing matches ‘${query.trim()}’`)}
+          </div>
+        ) : (
+          shown.map((d) => (
+            <button
+              className="xchip"
+              key={d}
+              title={t(d + ' 제거', 'Remove ' + d)}
+              aria-label={t(d + ' 제거', 'Remove ' + d)}
+              onClick={() => onCommit(list.filter((x) => x !== d))}
+            >
+              {d}
+              <IconX2 size={9} />
+            </button>
+          ))
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── 앱 · 업데이트 (앱 버전 · 즉시 업데이트 · 패치노트) ───────────────────────
+// 사용자 요청(2026-09-04): ① 카드가 스스로 뜰 때까지 기다리거나 앱을 껐다 켜지 않고,
+//   여기서 「업데이트 확인하기」를 눌러 곧바로 확인→받기→설치(재시작)까지 가게. 셸의
+//   자동 흐름(updater.rs)과 **같은 상태·같은 설치 문**을 쓴다(app.checkForUpdate /
+//   app.installUpdate) — 이 화면은 그 진행을 보여 주고 준비되면 지금 설치를 부른다.
+//   ② 「패치노트 보기」로 지난 소식 카드를 언제든 다시 연다(PatchNotes가 듣는 창 이벤트).
+function AppView(): React.ReactElement {
+  const [ver, setVer] = useState('')
+  const [st, setSt] = useState<UpdateStatus | null>(null)
+  // '확인하기'를 눌렀다 — 결론(none/downloaded/error)이 날 때까지 도는 중 표시
+  const [checking, setChecking] = useState(false)
+
+  useEffect(() => {
+    window.api.app.getVersion().then(setVer).catch(() => {})
+    window.api.app.getUpdateStatus().then(setSt).catch(() => {})
+    return window.api.app.onUpdateEvent(setSt)
+  }, [])
+
+  const phase = st?.phase
+  const inFlight = phase === 'checking' || phase === 'available' || phase === 'downloading'
+  useEffect(() => {
+    if (phase && !inFlight) setChecking(false)
+  }, [phase, inFlight])
+
+  const ready = phase === 'downloaded'
+  const upToDate = phase === 'none'
+  const errored = phase === 'error' && st?.version != null
+  const busy = checking || inFlight
+  const newVer = st?.version ?? null
+
+  const onCheck = (): void => {
+    setChecking(true)
+    void window.api.openExternal('https://github.com/jams10/AgentCodeGUI')
+    setChecking(false)
+    // 개발 실행에선 셸이 업데이터를 통째로 끄므로(updater.rs `disabled`) 아무 이벤트도 안
+    // 온다 — 그 경우에도 '확인 중…'이 굳지 않게 스스로 접는다. 진짜 다운로드가 도는 중이면
+    // `inFlight`(phase 유래)가 `busy`를 계속 참으로 잡으므로 이 초기화가 진행을 끊지 않는다.
+    window.setTimeout(() => setChecking(false), 5000)
+  }
+
+  const statusLine = (): React.ReactElement | null => {
+    if (phase === 'checking') return <><span className="set-spin" /> {t('업데이트를 확인하는 중…', 'Checking for updates…')}</>
+    if (phase === 'available') return <><span className="set-spin" /> {t(`새 버전 v${newVer}을(를) 찾았어요 · 받기 시작`, `Found v${newVer} · starting download`)}</>
+    if (phase === 'downloading') return <><span className="set-spin" /> {t(`새 버전 v${newVer} 받는 중 — ${st?.percent ?? 0}%`, `Downloading v${newVer} — ${st?.percent ?? 0}%`)}</>
+    if (ready) return <span style={{ color: 'var(--green)' }}>{t(`새 버전 v${newVer} 준비 완료 — 지금 설치하면 앱이 다시 시작돼요`, `v${newVer} ready — installing now restarts the app`)}</span>
+    if (upToDate) return <span style={{ color: 'var(--green)' }}>{t('이미 최신 버전이에요', 'You’re on the latest version')}</span>
+    if (errored) return <span style={{ color: 'var(--red)' }}>{st?.error || t('업데이트에 실패했어요 · 잠시 후 다시 시도해요', 'Update failed · try again shortly')}</span>
+    return null
+  }
+
+  return (
+    <>
+      <div className="set-h1">{t('앱 · 업데이트', 'App · Update')}</div>
+      <div className="set-h1-sub">
+        {t(
+          '커스텀 기능을 포함한 포크 버전입니다. 업데이트는 원본 변경을 병합하고 검증한 커스텀 빌드로 적용합니다.',
+          'This fork includes custom integrations. Updates use a custom build after upstream changes are merged and verified.'
+        )}
+      </div>
+
+      <div className="set-sec">{t('버전', 'Version')}</div>
+      <div className="sc2 row2">
+        <div className="set-tile"><IconInfo size={18} /></div>
+        <div className="rmain">
+          <div className="em">
+            AgentCodeGUI
+            {ver && <span className="set-badge">v{ver} · Custom</span>}
+          </div>
+          <div className="meta">{statusLine() ?? t('설치된 앱 버전이에요.', 'The installed app version.')}</div>
+        </div>
+        <span className="sp" />
+        {ready ? (
+          <button
+            className="set-chipbtn go"
+            onClick={() => window.api.app.installUpdate()}
+          >
+            <IconDownload size={13} /> {t('지금 설치 · 재시작', 'Install now · Restart')}
+          </button>
+        ) : (
+          <button className="set-chipbtn" disabled={busy} onClick={onCheck}>
+            <IconRefresh size={13} /> {busy ? t('확인 중…', 'Checking…') : t('포크 저장소 열기', 'Open fork repository')}
+          </button>
+        )}
+      </div>
+
+      <div className="set-sec">{t('소식', 'News')}</div>
+      <div className="sc2 row2">
+        <div className="set-tile"><IconSparkles size={18} /></div>
+        <div className="rmain">
+          <div className="em">{t('업데이트 소식', "What's new")}</div>
+          <div className="meta">{t('이번 버전과 지난 버전들의 변경 사항을 봐요.', 'See what changed in this and previous versions.')}</div>
+        </div>
+        <span className="sp" />
+        <button
+          className="set-chipbtn"
+          onClick={() => window.dispatchEvent(new CustomEvent('ccg-open-patchnotes'))}
+        >
+          <IconSparkles size={13} /> {t('패치노트 보기', 'View patch notes')}
+        </button>
+      </div>
+
+      <div className="set-note2">
+        {t(
+          '받아둔 새 버전은 다음 실행에 다시 쓰여요. 설치는 눈에 보이는 이 버튼으로만 일어나요 — 종료할 때 몰래 설치하지 않아요.',
+          'A downloaded version is reused on the next launch. Installing only happens from this visible button — never silently on quit.'
+        )}
+      </div>
+    </>
+  )
+}
+
+export function SettingsModal({
+  cwd = '',
+  onClose,
+  initialView
+}: {
+  onClose: () => void
+  cwd?: string
+  initialView?: SettingsView // 특정 탭으로 바로 열기 (예: 컴포저 API 토글 → 'api')
+}) {
+  const [view, setView] = useState<View>(initialView ?? 'profile')
+  // 마우스 제스처(↑/↓ 본문 스크롤 · ↓→ 닫기) 대상 — 카드 루트를 state로 추적
+  const [cardEl, setCardEl] = useState<HTMLDivElement | null>(null)
+  // 레일 검색 — 라벨+keys(한국어 동의어)로 항목을 거르고, 빈 그룹은 라벨째 숨긴다
+  const [navQ, setNavQ] = useState('')
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  const q = navQ.trim().toLowerCase()
+  const groups = navGroups().map((g) => ({
+    ...g,
+    items: g.items.filter((it) => !q || (it.label + ' ' + it.keys).toLowerCase().includes(q))
+  })).filter((g) => g.items.length > 0)
+
+  return (
+    <div className="set-overlay" onMouseDown={onClose}>
+      <MouseGestureLayer
+        target={cardEl}
+        actions={[
+          ...scrollGestures(() => cardEl?.querySelector('.set-main')),
+          { pattern: 'DR', label: t('창 닫기', 'Close window'), run: onClose }
+        ]}
+      />
+      <div className="set-modal" ref={setCardEl} onMouseDown={(e) => e.stopPropagation()}>
+        <button className="smh-close set-x" onClick={onClose} aria-label={t('닫기', 'Close')}>
+          <IconClose size={16} />
+        </button>
+        <div className="set-body">
+          <nav className="set-nav scroll">
+            <div className="set-title">{t('설정', 'Settings')}</div>
+            <div className="set-search">
+              <IconSearch size={12} />
+              <input
+                value={navQ}
+                onChange={(e) => setNavQ(e.target.value)}
+                placeholder={t('설정 검색', 'Search settings')}
+              />
+            </div>
+            {groups.map((g) => (
+              <Fragment key={g.label}>
+                <div className="set-grp">{g.label}</div>
+                {g.items.map(({ id, label, Icon }) => (
+                  <button key={id} className={'set-ni' + (view === id ? ' on' : '')} onClick={() => setView(id)}>
+                    <Icon size={14} />
+                    {label}
+                  </button>
+                ))}
+              </Fragment>
+            ))}
+          </nav>
+          <main className="set-main scroll">
+            <div className="set-inner">
+              {view === 'profile' && <ProfileView />}
+              {view === 'account' && <AccountView />}
+              {view === 'version' && <EngineView />}
+              {view === 'api' && <ApiView />}
+              {view === 'external-tools' && <ExternalToolsSettingsView />}
+              {view === 'mcp' && <McpView cwd={cwd} />}
+              {view === 'keys' && <KeysView />}
+              {view === 'tripo' && <TripoSettings />}
+              {view === 'comfy' && <ComfySettings />}
+              {view === 'skill' && <SkillView cwd={cwd} />}
+              {view === 'display' && <DisplayView />}
+              {view === 'language' && <LanguageView />}
+              {view === 'translation' && <TranslationSettingsView />}
+              {view === 'lsp' && <LspView />}
+              {view === 'explorer' && <ExplorerView />}
+              {view === 'gesture' && <GestureView />}
+              {view === 'app' && <AppView />}
+            </div>
+          </main>
+        </div>
+      </div>
+    </div>
+  )
+}

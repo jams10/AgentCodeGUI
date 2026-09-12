@@ -1,0 +1,599 @@
+// 한도 자동 이어서(auto-continue) — 구독 사용 한도에 막혀 죽은 턴을 판별하고,
+// 리셋 시각에 맞춰 자동 재개하기 위한 순수 판정 로직. 클로드 코드 데스크톱의
+// "Auto-continue when the limit resets" 체크박스와 같은 동작을 우리 문법으로 옮긴 것.
+// 상태 머신(장전·발화·재검증)은 App.tsx가 소유하고, 여기는 부수효과 없는 판정만 둔다.
+// 검증: scripts/poc-limit-resume.mjs (실전 에러 문구 대본 + 창 조합 픽스처)
+// 3.0 이식: 2.6.2 원본은 상대 경로('../../../shared/protocol')였는데, app/으로 옮기면
+// 그 경로가 레포 밖을 가리킨다. 타입 전용 import라 번들은 통과하지만 타입 검사가 깨진다
+// → 앱 전체가 쓰는 별칭으로 통일. (docs/renderer-divergence.md에 기록)
+import type { UsageInfo } from '@shared/protocol'
+
+export interface LimitHit {
+  hit: boolean
+  resetsAt: number | null // unix 초 — 에러 원문 꼬리("…|1755150000")에서 파싱된 값
+}
+
+// 한도 소진 대기표 — 화면(본채팅·멀티 패널·추가 채팅)마다 대화 하나당 한 장.
+// 본채팅 것은 ui-prefs('limitResume.hold')에 영속돼 앱을 껐다 켜도 활성 채팅이면 이어진다.
+export interface LimitHold {
+  key: string // 소유 식별자 — 본채팅: chatId, 멀티 패널: 슬롯, 추가 채팅: '' (창당 대화 하나)
+  engine: 'claude' | 'codex'
+  account?: string // 실행 계정(이메일) — 재검증 usage 조회도 이 계정 기준
+  resetsAt: number | null // unix 초 — null이면 리셋 시각 미상(10분 프로브)
+  fable: boolean // 장전 당시 모델이 Fable — Fable 주간 창을 게이트로 볼지
+  lastPrompt: string // 세션이 아예 없을 때(첫 턴 사망) '이어서' 대신 원문 재전송
+  at: number // 장전 시각(ms) — 늦은 비동기 갱신 대조 + 복원 시 24시간 만료 판정
+  // 한도가 풀림 — 그 채팅이 활성·로드되면 이어서 보낸다. 영속 안 함(★R28g BANNER —
+  // 예외 하나: `autoPaused`인 표는 `ready`째로 되살린다. 접힌 표는 아무것도 안 쏘고
+  // 버튼이 유일한 출구인데, `ready`가 없으면 그 버튼이 안 뜬다 — `sanitizeHold` 주석).
+  ready?: boolean
+  // ★3.0 — **조회 실패로 재검증을 못 한 횟수**(연속). 값을 얻은 재검증은 0으로 되돌린다.
+  // 재확인 간격(recheckDelayMs)과 눈감고 쏘는 재개의 재확인 상한(MAX_RECHECKS)이 이걸 센다.
+  probes?: number
+  /** ★R28c RCAP — **눈감고 쏜 재개의 횟수**(연속). 엔진 `LimitHold::attempts`
+   *  (`runtime.rs`의 `auto_resume_streak`)의 짝이다.
+   *
+   *  `probes`와 **세는 대상이 다르다**: probes 한 칸은 *재확인*(usage 조회 1회)이고
+   *  이것 한 칸은 *재발사*(CLI 턴 1회)다. 그래서 상한도 따로다(MAX_RECHECKS / MAX_AUTO_ATTEMPTS).
+   *
+   *  값을 **표에 얹는 이유**: 재개 턴이 같은 한도 에러로 또 죽으면 그 대기표는 걷히고
+   *  새 표가 선다. R28b까지 새 표는 늘 `probes:0`인 백지였고, 그래서 상한이 한 대기표
+   *  안에서만 살아 있었다 — 주기가 영원히 돌아 5시간 창 하나에 **27회**를 쐈다
+   *  (RVERD 확인 크리틱 R1 §3.1 실측). 계수를 물려받아야 그 주기가 끊긴다.
+   *
+   *  ★R28d WCAP — 다만 **일한 재개는 안 센다.** 물려받을지 말지는 아래
+   *  [`carriedAttempts`]가 가른다(창이 넘어갔나 · 그 턴이 일을 했나). */
+  attempts?: number
+  /** ★R28e WFIRE — **이 한도 에피소드에서 태운 자동 재개 턴의 총계**(엔진
+   *  `ChatRuntime::episode_fires`의 짝 · 상한은 `MAX_EPISODE_FIRES`).
+   *
+   *  `attempts`와 **지우는 자리가 다른 것이 요점이다**: 저쪽(연속 헛발질)은 구분자
+   *  ①(창이 넘어갔다)·②(그 턴이 일했다)가 0으로 되돌리지만 이 총계는 **아무 구분자도
+   *  못 지운다.** 되돌아가는 자리는 사람 손이 닿은 곳(`setHold(null)` — 취소·직접 전송·
+   *  「이어가기」)과 한도가 아닌 착지 하나뿐이다.
+   *
+   *  왜 필요한가(WCAP 확인 크리틱 R2 §5.1 실측): 상한의 단위가 「연속 빈손」 하나뿐이라,
+   *  시각을 모르는 축에서는 재개 턴이 **글자 한 줄만 내면** 계수가 영영 0이 되어 12시간
+   *  **71발**이 나갔다(엔진 축 실측 · 렌더러도 같은 규칙이라 같은 답이었다). */
+  fires?: number
+  /** ★R28c RCAP — **자동 재발사를 접었다**(엔진 `LimitHold::auto_paused`의 짝).
+   *  표는 `ready`지만 소진 effect는 쏘지 않고, 배너의 「이어가기」가 유일한 출구다.
+   *
+   *  ★R28g BANNER — **영속한다**(`sanitizeHold`가 `ready`와 함께 되살린다). R28f까지는
+   *  "복원 뒤 재검증이 `attempts`로 다시 판정한다"였는데, 같은 문장을 적고 있던 엔진 축에서
+   *  그 재판정이 **일어나지 않는다**는 것이 실측됐다(확인 크리틱 R1 F1). 두 축의 규칙을
+   *  같게 두는 것이 이 파일의 존재 이유다. */
+  autoPaused?: boolean
+}
+
+// unix 초 꼬리 파싱 — 클로드 API의 한도 에러 원문 형식("Claude AI usage limit reached|1755150000")
+function parseEpoch(s: string): number | null {
+  const m = s.match(/\|(\d{10})(?:\D|$)/)
+  if (!m) return null
+  const v = Number(m[1])
+  return v > 1e9 && v < 1e10 ? v : null
+}
+
+/** 턴을 죽인 에러 문구가 "구독 사용 한도 소진"인지 판별한다. 컨텍스트·토큰·출력 길이
+ *  한도는 전혀 다른 사고라 제외하고, 일시 과부하(rate limited/overloaded 재시도류)도
+ *  CLI가 자체 재시도하므로 잡지 않는다 — 오탐으로 남의 에러를 조용히 재전송하는 쪽이
+ *  놓침(사용자가 직접 재전송)보다 훨씬 나쁘다. */
+export function classifyLimitError(text: string | null | undefined): LimitHit {
+  const s = String(text ?? '')
+  if (!s) return { hit: false, resetsAt: null }
+  // 명시적 "usage limit" — 다른 단어가 섞여 있어도 확정 (claude/codex 공통 문구)
+  if (/usage limit/i.test(s)) return { hit: true, resetsAt: parseEpoch(s) }
+  // 컨텍스트·토큰·출력 한도 계열은 전부 비한도 — 아래 관대한 패턴의 오탐 차단벽
+  if (/context|token|output|length/i.test(s)) return { hit: false, resetsAt: null }
+  const hit =
+    // REPL 배너형 "5-hour limit reached ∙ resets 3pm" / "Weekly limit reached …"
+    /(?:\d+[ -]hour|five[ -]hour|weekly|session|daily) limit reached/i.test(s) ||
+    // "You've hit your limit" / "you have reached your weekly limit" 계열
+    /(?:hit|reached) your [^.\n]{0,24}limit/i.test(s) ||
+    // 리셋 시각 꼬리가 붙은 limit reached 변형
+    /limit reached\|\d{9,}/i.test(s)
+  return { hit, resetsAt: hit ? parseEpoch(s) : null }
+}
+
+/** usage 조회 결과에서 "지금 실행을 막고 있는" 창들의 해제 시각을 고른다.
+ *  여러 창이 동시 소진이면 전부 풀려야 실행되므로 가장 늦은 시각. Fable 주간 창은
+ *  Fable 모델 실행일 때만 게이트다(다른 모델은 그 창 소진과 무관하게 돈다).
+ *  null = 막는 창 없음(이미 풀렸거나 API 반영 지연). */
+export function blockedResetsAt(u: UsageInfo | null | undefined, modelIsFable: boolean, nowSec: number): number | null {
+  if (!u) return null
+  const wins = [u.fiveHour, u.weekly, ...(modelIsFable ? [u.weeklyFable] : [])]
+  let latest: number | null = null
+  for (const w of wins) {
+    if (!w || w.pct < 100 || w.resetsAt == null || w.resetsAt <= nowSec) continue
+    if (latest == null || w.resetsAt > latest) latest = w.resetsAt
+  }
+  return latest
+}
+
+/** Codex 판 blockedResetsAt — 계정 한도 창 목록(usedPct·resetsAt)에서 소진 창의
+ *  가장 늦은 해제 시각. 창 라벨 구분 없이 소진이면 게이트로 본다(플랜별 창 구성이 다르다). */
+export function codexBlockedResetsAt(
+  windows: { usedPct: number; resetsAt?: number | null }[] | null | undefined,
+  nowSec: number
+): number | null {
+  let latest: number | null = null
+  for (const w of windows ?? []) {
+    if (w.usedPct < 100 || w.resetsAt == null || w.resetsAt <= nowSec) continue
+    if (latest == null || w.resetsAt > latest) latest = w.resetsAt
+  }
+  return latest
+}
+
+// 리셋 시각 미상일 때의 재확인 간격 — usage 조회로 "풀렸나"만 보므로 부담이 작다
+export const PROBE_MS = 10 * 60_000
+// 리셋 시각 뒤 여유 — 서버 쪽 창 전환 반영 지연을 흡수 (일찍 쏘면 또 막혀 에러만 쌓인다)
+export const RESET_GRACE_MS = 90_000
+
+/** 재개 타이머 지연(ms) — 리셋 시각 + 여유, 최소 15초. 시각 미상이면 프로브 간격. */
+export function resumeDelayMs(resetsAt: number | null, nowMs: number): number {
+  if (resetsAt == null) return PROBE_MS
+  return Math.max(15_000, resetsAt * 1000 - nowMs + RESET_GRACE_MS)
+}
+
+/* ── ★3.0 — 「조회 실패 = 풀림」 오판을 없애는 조각들 ──────────────────────────
+ *
+ * 최종 파리티 R1 확인 크리틱 실패1: `usage:get`이 실패하면 창 넷이 전부 `null`인 값이
+ * 오는데, 위 `blockedResetsAt`은 그 값을 **「막는 창 없음」**(= 풀렸다)으로 읽는다
+ * (`!w` continue). 즉 조회가 죽어 있는 동안 2단 재검증은 안전장치가 아니라 **눈감고
+ * 쏘는 재전송기**였다. 실측: `CCG_NO_NET=1` + 살아 있는 계정 → `blockedResetsAt`=null
+ * → `ready=true`(자동 전송). 대조군(주간 100% 실값)은 1787752800으로 유지.
+ *
+ * 판정을 셋으로 나눈다 — **막혔다 / 풀렸다 / 못 물어봤다.** 셋째는 둘 중 어느 쪽도
+ * 아니므로 대기표를 **유지**하고 다시 묻는다. 이 파일에 두는 이유는 원래 규약과 같다:
+ * 판정은 순수 함수, React 배선은 useLimitResume.ts (검증: scripts/poc-limit-resume.mjs).
+ */
+
+/** usage 조회가 **실패**했는가(= 「풀렸다」를 말할 근거가 없다).
+ *
+ *  ① 셸이 표식을 주면 그걸 믿는다(`ipc/parity/usage.rs` `unavailable_usage`).
+ *  ② 표식이 없는 판(2.6.2 본체·옛 심)에서는 **창이 하나도 없다**가 같은 뜻이다 —
+ *     실계정의 정상 응답에는 최소한 5시간·주간 창이 실려 온다. 근거가 0인 값으로
+ *     "풀렸다"고 단정하는 것이 바로 이 사고였다. */
+export function usageUnavailable(u: UsageInfo | null | undefined): boolean {
+  if (!u) return true
+  if (u.unavailable) return true
+  return !u.fiveHour && !u.weekly && !u.weeklyFable && !u.extraCredit
+}
+
+/** Codex 판 — 그 계정의 창 목록이 아예 없다(조회 실패·계정 못 찾음)면 근거가 0이다. */
+export function codexUsageUnavailable(windows: { usedPct: number }[] | null | undefined): boolean {
+  return !windows || windows.length === 0
+}
+
+/** **재확인**의 상한. 조회가 계속 실패해도 이 횟수를 넘기면 한 번 쏴 본다(2.6.2 동작).
+ *
+ *  ★R28c RCAP — R28b까지 이 상수의 이름은 `MAX_AUTO_ATTEMPTS`였다. 엔진
+ *  (`crates/ccg-engine/src/limit.rs`)과 이름도 값도 같은데 **세는 대상만 달랐다**:
+ *  엔진의 그것은 *재발사*(CLI 턴 1회)를 세고 이것은 *재확인*(usage 조회 1회)을 센다.
+ *  값이 같아 더 헷갈렸다(RVERD 확인 크리틱 R1 §3.1). 세는 것의 이름으로 바꾸고,
+ *  엔진과 같은 뜻의 상한은 아래 `MAX_AUTO_ATTEMPTS`가 새로 든다.
+ *
+ *  ★R28b RVERD — **시각 미상 표도 이 상한을 받는다**(아래 `resumeVerdict` 참고).
+ *  R1까지 여기 적혀 있던 "근거가 하나도 없으면 영영 안 쏜다"는 규칙은, 조회가 죽어 있는
+ *  판에서 그 대기표를 **출구 없는 방**에 가뒀다. */
+export const MAX_RECHECKS = 2
+
+/** ★R28c RCAP — **눈감고 쏘는 재개(재발사)의 상한.** `crates/ccg-engine/src/limit.rs`의
+ *  `MAX_AUTO_ATTEMPTS`와 같은 값·같은 뜻이다: 자동으로 이어서 보낸 턴이 이 횟수만큼
+ *  같은 한도 에러로 죽으면 **그것이 곧 "아직 안 풀렸다"는 신선한 증거**이므로 자동을
+ *  접고 사용자에게 넘긴다(`ready` + `autoPaused` → 배너의 「이어가기」).
+ *
+ *  왜 필요한가(RVERD 확인 크리틱 R1 §3.1 실측): R28b는 상한을 **한 대기표 안에만** 뒀다.
+ *  쏜 턴이 또 죽으면 새 대기표가 백지(`probes:0`)로 다시 서기 때문에 주기가 영원히 돌아,
+ *  채널이 죽어 있는 판에서 5시간 창 하나에 **27회**를 눈감고 쐈다(11·22·32…290분).
+ *  계수를 표에 물려(`LimitHold.attempts`) 대기표 사이를 건너게 해야 그 주기가 끊긴다. */
+export const MAX_AUTO_ATTEMPTS = 2
+
+/** ★R28e WFIRE — **한 한도 에피소드가 태울 수 있는 자동 재개 턴의 총량.**
+ *  엔진 `crates/ccg-engine/src/limit.rs`의 `MAX_EPISODE_FIRES`와 같은 값·같은 뜻이다.
+ *
+ *  `MAX_AUTO_ATTEMPTS`가 세는 것은 **연속** 헛발질이고 이것은 **총계**다. 그래서
+ *  구분자 ①·②가 이 값을 못 지운다 — 되돌아가는 자리는 사람 손(`setHold(null)`)과
+ *  한도가 아닌 착지뿐이다(`useLimitResume`).
+ *
+ *  왜(WCAP 확인 크리틱 R2 §5.1): 「연속 빈손 N」 하나로는 시각 미상 축에서 상한이
+ *  **글자 한 줄에** 지워졌다 — 12시간 71발 · `attempts` 0 · 안 접힘, 그리고 계수가 0이라
+ *  지수 백오프(10→20→40분)도 같이 죽어 10분 간격이 밤새 유지됐다.
+ *
+ *  12인 근거: 밤샘 연속 주행은 **창 하나에 한 발**이라 12발이면 60시간(이틀 반)이고,
+ *  반대로 10분마다 도는 헛돌이는 2시간 안에 예산을 다 쓴다. 그 사이를 가르는 것이
+ *  아래 `MIN_WORK_MS`이고, 둘은 함께 서야 한다.
+ *
+ *  ★R28f WFIRE — **불변식의 유효 범위를 정확히 적는다.** R28e가 적어 둔 「진짜 일한
+ *  밤샘 연속은 안 잘린다」는 **끝이 있는 문장**이다(WFIRE 확인 크리틱 R1 §4.2 실측:
+ *  5시간 창 · 4.5시간 작업 대본이 120시간에서가 아니라 **12발 ≈ 60시간**에 접힌다).
+ *  참인 문장은 **「약 60시간까지는 안 잘린다」**이고, 유지 조건은 하룻밤(12시간 = 7발)이
+ *  **한 발도 안 깎이는 것**이다(`poc-limit-resume.mjs` J절 ②가 그 7발을 잠근다).
+ *  그 너머는 접히되 배너 버튼이 열려 있다 — 사람이 한마디만 해도 예산이 새로 열린다. */
+export const MAX_EPISODE_FIRES = 12
+
+/** ★R28e WFIRE — **「그 턴이 일했다」로 인정하는 최소 턴 수명(ms).**
+ *  엔진 `crates/ccg-engine/src/limit.rs`의 `MIN_WORK`와 같은 값이다.
+ *
+ *  R28d WCAP이 원래 쓰려던 문장은 *"30초 만에 같은 벽에 부딪혔는지 5시간을 꽉 채워 일하고
+ *  다음 창에서 막혔는지"* 인데, R4까지 그 문장은 **시각을 아는 축(구분자 ①)에서만**
+ *  지켜졌다. 시각 미상 축에서는 「무엇을 냈나」만 보느라 *한 줄 내고 즉사한 턴*이
+ *  *다섯 시간을 태운 턴*과 같은 답을 받았다(= 71발). 이제 산출은 **수명과 함께** 본다.
+ *
+ *  5분인 이유: 시각 미상 대기의 기본 간격이 10분(`PROBE_MS`)이다. 문전박대는 초 단위로
+ *  돌아오고 창을 태운 턴은 분·시간 단위다 — 그 사이에서 가장 관대한 쪽으로 잡았다.
+ *  너무 크게 잡았을 때의 착지는 안전하다(`ready` + 「이어가기」 버튼, 누르면 계수·예산이
+ *  함께 0). 너무 작게 잡으면 그것이 곧 12시간 71발이다. */
+export const MIN_WORK_MS = 5 * 60_000
+
+/** 조회 실패 뒤 첫 재확인 간격. 배로 늘어 `PROBE_MS`에서 멎는다(네트워크 순간 단절이
+ *  5시간 대기를 10분 더 늘리지 않게 짧게 시작한다). */
+export const RECHECK_MS = 15_000
+
+export function recheckDelayMs(probes: number): number {
+  return Math.min(RECHECK_MS * 2 ** Math.max(0, probes - 1), PROBE_MS)
+}
+
+/** 2단 재검증의 착지 — 이 세 갈래가 전부다. */
+export type ResumeVerdict =
+  // 풀렸다(또는 상한을 넘긴 마지막 시도) — 소진 effect가 보낸다.
+  // ★R28c RCAP — `paused`면 **보내지 않는다**: 표는 `ready`로 두되 배너의 「이어가기」가
+  // 유일한 출구다(엔진 `auto_paused`의 짝). 켜지는 자리는 아래 `resumeVerdict` ③.
+  | { kind: 'ready'; paused?: true }
+  | { kind: 'hold'; resetsAt: number | null; probes: number } // 유지 — 타이머를 다시 건다
+
+/** 재검증 결과 → 착지. `still`은 blockedResetsAt/codexBlockedResetsAt의 값(막는 창의
+ *  해제 시각), `unavailable`은 위 판정. **순서가 규약이다**: 막혔다는 신선한 증거가
+ *  있으면 그게 먼저고, 그다음이 "못 물어봤다"이며, 풀렸다는 맨 마지막이다. */
+export function resumeVerdict(hold: LimitHold, still: number | null, unavailable: boolean, nowSec: number): ResumeVerdict {
+  // ① 아직 막혀 있다는 신선한 증거 — 그 시각으로 재장전하고 실패 계수는 지운다.
+  if (still != null) return { kind: 'hold', resetsAt: still, probes: 0 }
+  // ② 못 물어봤다 — 유지하고 다시 묻는다(여기가 크리틱 실패1의 자리다).
+  //
+  // ★R28b RVERD — 사다리의 마지막 한 칸이 엔진과 달랐다(CRIT 확인 크리틱 R1 §4.1 실측:
+  // 시각 미상 표에 조회 실패를 20번 먹여도 `ready` 도달 0/20). 원인은 `!past` 한 조각이다:
+  // `past`는 **시각을 알 때만** 참이 될 수 있으므로 `resetsAt == null`인 표에서는 `!past`가
+  // 영원히 참이고, 그러면 상한(`probes <= MAX`)은 한 번도 판정에 닿지 못한다. 그 표는
+  // 재확인만 무한 반복하고 「이어가기」도 자동 재개도 오지 않는다 — codex 한도 문구에는
+  // `…|epoch` 꼬리가 없어서 멀티 패널·팝아웃의 codex 대기표가 정확히 그 상태였다.
+  //
+  // 엔진은 같은 구멍을 이미 닫았다(`runtime.rs:3240` — `probes < MAX_BLIND_PROBES ||
+  // (known && !past)`). 여기도 **같은 뜻**으로 맞춘다: 시각을 아는 표는 그 시각 전까지
+  // 얼마든지 기다리되(상한 무시), **시각을 모르는 표는 상한을 받는다.** 시각을 모르는 것은
+  // "기다릴 근거가 없다"는 뜻이지 "영원히 기다리라"가 아니다.
+  if (unavailable) {
+    const probes = (hold.probes ?? 0) + 1
+    const known = hold.resetsAt != null
+    const past = known && hold.resetsAt! <= nowSec
+    if (probes <= MAX_RECHECKS || (known && !past)) return { kind: 'hold', resetsAt: hold.resetsAt, probes }
+  }
+  // ③ 풀렸다(또는 상한을 넘긴 눈감은 마지막 시도).
+  //
+  // ★R28c RCAP — **그 "마지막 시도"에도 상한이 있다.** 자동으로 이어서 보낸 턴이 이미
+  // `MAX_AUTO_ATTEMPTS`번 같은 한도 에러로 죽었다면, 그것이 이 자리에서 얻을 수 있는
+  // 가장 신선한 증거다(조회보다 신선하다 — 실제로 CLI를 태워 본 결과다). 그래서 표는
+  // `ready`로 켜되 **자동 발사는 접고** 사용자의 손에 넘긴다. 엔진이 같은 자리에서 하는
+  // 것과 글자 그대로 같다(`runtime.rs`: `attempts >= MAX_AUTO_ATTEMPTS` → `auto_paused`).
+  //
+  // 조회가 "풀렸다"고 말해도 접는 이유: 그 말은 이미 두 번 틀렸다(두 번의 재발사가 같은
+  // 한도로 죽었다). 세 번째를 자동으로 태우는 대신 버튼 하나를 준다 — 사용자가 누른
+  // 이어가기는 계수를 0으로 되돌리므로(`useLimitResume`) 막다른 방이 되지 않는다.
+  //
+  // ★R28e WFIRE — **두 번째 문: 에피소드 총 발사 예산.** 위 한 줄은 「연속」을 세므로
+  // 구분자 ①·②가 0으로 되돌리는 순간 사라진다. 시각 미상 축에서 12시간 71발이 나오던
+  // 이유가 정확히 그것이다(§5.1). 이 줄이 보는 총계는 아무 구분자도 못 지운다 —
+  // 되돌아가는 자리는 사람 손과 「한도가 아닌 착지」뿐이다(`useLimitResume`).
+  // 엔진도 같은 자리에서 같은 둘을 본다(`runtime.rs::check_hold`의 `over || budget_out`).
+  if ((hold.attempts ?? 0) >= MAX_AUTO_ATTEMPTS || (hold.fires ?? 0) >= MAX_EPISODE_FIRES)
+    return { kind: 'ready', paused: true }
+  return { kind: 'ready' }
+}
+
+/** ★R28c RCAP — **렌더러가 든 대기표를 눌러서 이어갈 수 있는가**(배너의 「이어가기」).
+ *
+ *  엔진 축의 짝은 `resumeOwner.ts`의 `canPressResume`이고 규칙도 같다: `ready`인데
+ *  **아무도 안 쏘는** 표에만 버튼을 준다. 렌더러에서 그 조건은 `autoPaused` 하나다 —
+ *  그 밖의 `ready`는 소진 effect가 같은 커밋에서 삼켜 전송으로 바꾸므로, 버튼을 두면
+ *  누를 게 없는 버튼(침묵 no-op · M-LOGIC P7)이 된다. */
+export function canPressContinue(hold: LimitHold | null | undefined): boolean {
+  return !!hold?.ready && !!hold.autoPaused
+}
+
+/** ★R28f WFIRE — **접힌 표가 「예산 착지」인가**(연속 헛발질이 아니라).
+ *
+ *  두 착지는 화면에서 같은 모양(`ready` + 접힘 + 버튼)인데 **사실이 정반대**다:
+ *   * 연속 헛발질(`attempts >= MAX_AUTO_ATTEMPTS`) — 자동으로 보낸 턴이 문전박대만 당했다.
+ *   * 예산 착지(`fires >= MAX_EPISODE_FIRES`) — 그 턴들은 `MIN_WORK_MS`를 넘겨 **일했다**
+ *     (그러라고 만든 문턱이다). 그런데도 한도가 안 끝나서 에피소드 예산을 다 썼다.
+ *
+ *  R28e는 둘 다 「자동으로 이어서 보낸 턴이 계속 한도에 막혔어요」로 말했고, 뒤쪽
+ *  사용자에게 그 문장은 **사실이 아니다** — R28d가 밤샘 축에서 고친 것과 같은 종류의
+ *  거짓이다(R28e 확인 크리틱 R1 §4.3). 엔진은 스레드 공지로는 이미 둘을 갈라 말하고
+ *  있었으므로(`runtime.rs::check_hold`의 `over` / `budget_out`) 화면 위 한 줄만 뭉갰다.
+ *
+ *  **두 축이 이 함수 하나를 본다**(`Chat.tsx` `LimitHoldBar`):
+ *   * 엔진 관장 표 — `chat:status`의 `hold.paused`/`hold.fires`(`engine/lite.rs`).
+ *   * 렌더러가 든 표 — `LimitHold.autoPaused`/`.fires`.
+ *  값의 출처만 다르고 뜻은 글자 그대로 같다. `paused`를 안 싣는 옛 셸에서는 언제나
+ *  거짓 = R28e의 문장 그대로(침묵도 회귀도 아니다). */
+export function budgetLanding(paused?: boolean, fires?: number): boolean {
+  return !!paused && (fires ?? 0) >= MAX_EPISODE_FIRES
+}
+
+/* ── ★R28d WCAP — 상한이 「헛발질」과 「제대로 일한 재개」를 가른다 ──────────────
+ *
+ * RCAP 확인 크리틱 R1 §4.1의 최대 격차: `attempts`는 **한도로 죽은 착지마다** 올랐고,
+ * 그 턴이 30초 만에 같은 벽에 부딪혔는지 5시간을 꽉 채워 일하고 다음 창에서 막혔는지를
+ * 아무도 안 봤다. 그래서 현실 시나리오(22시 한도 → 03시 재개 성공 → 08시 새 한도 → …)
+ * 에서 밤샘 연속 주행이 **창 두 개**에서 잘리고, 그때 배너가 하는 말(「자동으로 이어서
+ * 보낸 턴이 계속 한도에 막혔어요」)은 그 사용자에게 사실이 아니다 — 그 턴들은 막힌
+ * 게 아니라 일했다.
+ *
+ * 구분자 둘을 받는다(엔진 `runtime.rs::arm_hold`가 글자 그대로 같은 둘을 본다):
+ *  ① 새 한도 문구의 리셋 시각이 **직전에 쏜 표보다 뒤** = 창이 진짜로 넘어갔다.
+ *  ② 그 턴이 어시스턴트 출력이나 도구 호출을 **하나라도** 냈다 = 헛발질이 아니다.
+ *     한도로 문전박대당한 턴에는 오류 말풍선 하나뿐이다.
+ *
+ * **둘의 관계는 OR가 아니라 우선순위다** — 이 자리에서 스스로 판 함정 하나 때문이다.
+ * 시각을 양쪽 다 아는 판에서 ①이 「안 넘어갔다」고 말하는데 ②가 「일했다」로 뒤집으면,
+ * *토큰 한 줄을 내고 같은 벽에 다시 부딪히는* 판(서버가 이미 지난 epoch을 계속 되돌려
+ * 주는 판)에서 계수가 영원히 0이 되고 **RCAP이 막은 무한 재발사가 그대로 돌아온다**
+ * (엔진은 그 판에서 리셋+90초 = 15초 간격으로 계속 쏜다). 그리고 시각을 둘 다 아는
+ * 판에서 ①의 답은 이미 완전하다: 새 벽이 직전 벽보다 뒤가 **아니면** 그 재개는 그 벽을
+ * 못 넘은 것이고, 진짜로 넘었다면 새 창의 리셋은 반드시 더 뒤다. 그래서:
+ *
+ *   시각을 둘 다 안다  → **시계가 판정한다**(①). 일한 흔적은 안 본다.
+ *   한쪽이라도 미상    → **일한 흔적이 판정한다**(②). codex 배너형 문구처럼 읽을 꼬리가
+ *                        없는 축에서 ①은 영영 침묵하므로, 그 축을 ②가 든다.
+ *
+ * 상한·버튼·계승 구조는 RCAP 그대로다. 리셋 조건만 더한다.
+ *
+ * ★R2 — ②의 **문턱**이 두 축에서 달랐다(WCAP 확인 크리틱 R1 §3.2). 엔진은 프레임 축이라
+ * `ping`·`message_start`·`thinking_delta` 한 장이면 「일했다」로 읽었고, 시각 미상 축에서는
+ * ②가 유일 판정자라 그 한 장이 상한을 통째로 지웠다 — 같은 12시간 대본에 **엔진 71발 /
+ * 렌더러 2발**. 엔진 쪽을 이 파일의 문턱(= 화면에 **남는** 것만)으로 좁혀 한 벌로 맞췄다.
+ * 그러니 아래 `turnDidWork`는 이제 **두 축의 정의 그 자체**다 — 여기를 넓히면 엔진도 같이
+ * 넓어져야 하고, 안 그러면 71 대 2가 되돌아온다.
+ *
+ * ★R3 — R2는 「**무엇을** 산출로 세는가」만 맞추고 「**어느 턴의 것으로** 세는가」를 안
+ * 맞췄다(WCAP 확인 크리틱 R2 §3.3). 이 함수의 경계는 *마지막 사용자 말풍선*인데 엔진의
+ * 것은 *프레임이 도착한 엔진 턴*이었다 — 도구가 그 경계를 넘으면(앞 턴에서 열린 도구의
+ * 결과가 재개 턴에 도착) 정반대 답이 나와 같은 71 대 2가 되살아났다. 엔진을 이 경계로
+ * 좁혀 맞췄다(`runtime.rs`의 `Frame::User`: **이 턴 안에서 연** 도구의 결과만 센다).
+ *
+ * ★R4 — R3까지 두 축의 공통 문장은 「**이 턴이 연** 비어 있지 않은 도구 그룹」이었는데,
+ * 그 문장의 답이 **누가 턴을 열었느냐에 따라 뒤집혔다**(WCAP 확인 크리틱 R3 §4.3).
+ * 렌더러에서 「이 턴」을 정하는 것은 스토어의 `openGroupId`이고, 그 값을 비우는 자리가
+ * `begin`·`assistant-*`·`verdict(blocked)`·`interrupt`뿐이라 **`user-echo`가 빠져 있었다**
+ * — 엔진이 스스로 연 재개 턴(한도 자동 재개가 정확히 그 경로다)이 텍스트 없이 도구만
+ * 열면 스토어가 그 도구를 **앞 턴 그룹**에 밀어 넣어, 아래 루프는 사용자 말풍선에서 멎고
+ * 거짓을 냈다(엔진은 참 = 71 대 2가 `tool_use` 문으로 한 번 더). 스토어 한 줄
+ * (`store/session.ts`의 `user-echo`가 `openGroupId: null`)로 닫았다. 이제 이 함수의 정의는
+ * **여는 방식과 무관**하고, 그 사실을 `scripts/poc-limit-resume.mjs` K절이 실제 리듀서로
+ * 잠근다(같은 이벤트 열을 `begin`/`user-echo` 두 벌로 먹여 답이 같은지 본다).
+ */
+
+/** ① 창이 진짜로 넘어갔는가 — 직전에 쏜 표의 리셋 시각 대 이번 한도 문구의 리셋 시각.
+ *  둘 중 하나라도 미상이면 **모른다**이고, 모르는 것은 넘어간 증거가 아니다(false).
+ *
+ *  다리가 둘인 이유:
+ *   * `next > fired` — 크리틱이 준 그대로. 같은 벽에 다시 부딪히면 꼬리의 epoch이 그대로다.
+ *   * `next > nowSec` — **새 벽이 아직 오지 않았다.** 이미 지난 시각을 되돌려 주는 문구
+ *     (서버가 소진된 창의 옛 epoch을 계속 echo 하는 판)를 「넘어갔다」로 읽지 않게 하는
+ *     다리다. 엔진에서는 이쪽이 하중을 다 진다 — `epoch_secs_to_runtime`이 **지난 epoch을
+ *     `now`로 접기** 때문에(`saturating_sub`) 런타임 축에서는 첫 다리가 그 판에서도 늘
+ *     참이 된다. 실측: 이 다리가 없던 초안에서 「토큰 한 줄 + 같은 벽」 판이 6시간에
+ *     **39발**을 쐈다(`crates/ccg-engine/tests/wcap_limit_streak.rs` ④의 유래). */
+export function windowRolled(firedResetsAt: number | null, nextResetsAt: number | null, nowSec: number): boolean {
+  return firedResetsAt != null && nextResetsAt != null && nextResetsAt > firedResetsAt && nextResetsAt > nowSec
+}
+
+/** `turnDidWork`가 읽는 최소 모양 — 스레드 항목(`store/session.ts` `ThreadItem`)의
+ *  구조적 부분집합이다. 판정을 순수하게 두려고 스토어 타입을 끌어오지 않는다. */
+export interface TurnItem {
+  id?: string
+  kind: string
+  role?: string
+  text?: string
+  error?: boolean
+  tools?: readonly unknown[]
+}
+
+/** 추론 말풍선의 고정 id(`store/session.ts`의 `THINKING_ID`).
+ *
+ *  ★R3 정정(WCAP 확인 크리틱 R2 §4.3) — R2는 이 상수를 「엔진과 글자를 맞추는 수정」이라고
+ *  적었는데 **실물에서는 무동작**이다. 스토어의 추론 항목은 `{ kind:'thinking', id, text }`
+ *  이고(`store/session.ts:36`) 아래 루프는 `kind`가 `'msg'`/`'toolgroup'`인 것만 보므로,
+ *  이 줄이 없어도 답은 같다. R2 보고서가 판별력의 증거로 든 「대조군 8발」의 픽스처
+ *  (`{ id:'thinking', kind:'msg' }`)는 **스토어가 결코 만들지 않는 모양**이었다.
+ *  줄을 남기는 이유는 하나뿐이다: 언젠가 추론이 `kind:'msg'`로 돌아와도(2.6.2의 옛 모양)
+ *  이름으로 한 번 더 막힌다. **판별력의 근거로 쓰지 마라.** */
+const THINKING_ID = 'thinking'
+
+/** ② 방금 착지한 턴이 **일을 했는가** — 마지막 사용자 말풍선 **뒤에** 어시스턴트 출력이나
+ *  도구 호출이 하나라도 있으면 참.
+ *
+ *  뒤에서부터 훑다가 사용자 말풍선을 만나면 거기가 이 턴의 시작이다(자동 재개도 사용자
+ *  말풍선을 하나 남긴다 — '사용 한도가 초기화됐어…'). 한도로 문전박대당한 턴은 그 뒤에
+ *  오류 말풍선 하나뿐이라 거짓이고, 5시간을 일한 턴은 참이다.
+ *
+ *  **오류 말풍선은 세지 않는다**: 한도 에러 자체가 어시스턴트 메시지로 들어오므로
+ *  (`store/session.ts`의 `rerr…`) 그걸 세면 모든 턴이 「일했다」가 된다. 도구 그룹도
+ *  **빈 그룹은 안 센다**(그룹은 도구가 오기 전에 먼저 열린다).
+ *
+ *  **도구는 「열린 자리」로 센다 — 결과가 아니라.** 스토어의 `tool-end`는 **있는 도구를
+ *  제자리에서 패치만** 하고 항목을 새로 붙이지 않는다(`store/session.ts`의 `tool-end`).
+ *  그래서 앞 턴에서 열린 도구의 결과가 재개 턴에 뒤늦게 와도 그 도구 그룹은 재개의 사용자
+ *  말풍선 **앞**에 남고, 뒤에서부터 훑는 이 루프는 사용자 말풍선에서 멎어 **거짓**을 낸다.
+ *  ★R28d WCAP **R3** — 엔진이 그 자리에서 갈라져 있었다(도착한 프레임 축으로 세느라 앞 턴
+ *  도구의 결과도 「일했다」로 읽었다 → 같은 12시간 대본에 **엔진 71발 / 렌더러 2발**,
+ *  WCAP 확인 크리틱 R2 §3.3). 엔진을 이 경계로 좁혀 맞췄다(`runtime.rs`의 `Frame::User`
+ *  처리부: **이 턴 안에서 연** 도구의 결과만 `mark_output()`). 즉 두 축의 공통 문장은
+ *  「이 턴이 연 비어 있지 않은 도구 그룹」이고, 「도구 결과」는 그 문장의 부분집합이다.
+ *
+ *  **추론 말풍선도 안 센다.** 스토어가 착지마다 `THINKING_ID`를 걷어내므로 이 자리에
+ *  원래는 없지만, 그 사실은 *다른 파일의 습관*이지 이 함수의 규칙이 아니었다 —
+ *  ★R28d WCAP R2에서 엔진이 정확히 그 틈으로 갈라졌다(`thinking_delta` 한 장에
+ *  「일했다」 → 12시간 71발). 이름으로 한 번 더 막아, 두 축이 **글자 그대로 같은 규칙**
+ *  하나를 들게 한다: 비어 있지 않은 어시스턴트 텍스트 · 비어 있지 않은 도구 그룹.
+ *  (다만 그 한 줄은 지금 스토어 모양에서는 무동작이다 — 위 `THINKING_ID` 주석.)
+ *
+ *  ★R28e WFIRE — **경계가 하나 더 생겼다: `mark`**(WCAP 확인 크리틱 R2 §5.3).
+ *  R4까지 「이 턴의 시작」은 *마지막 사용자 말풍선* 하나로만 정의됐는데, 엔진이 여는 턴에는
+ *  **말풍선이 아예 없는 판**이 있다(상주 정리턴 재개 · 통지 기상 턴 — `user-echo`가 안 나간다).
+ *  그러면 이 루프가 앞 턴까지 뒤로 새고, 앞 턴이 도구를 열어 뒀거나 글자를 남겼으면 답이
+ *  뒤집힌다(크리틱 실측: 엔진 = 헛발질·접힘 / 렌더러 = `true` — 이번엔 렌더러가 과다 재개).
+ *  `mark`는 스토어가 턴을 열 때 적어 두는 **그 순간의 스레드 꼬리 id**(`SessionState.turnMark`)다.
+ *  말풍선이 있는 판에서는 그 말풍선이 먼저 걸리므로 답이 안 바뀐다 — 순수하게 좁히기만 한다.
+ *  (`capThread`가 그 항목을 걷어냈으면 못 찾고 지나간다 = R4와 같은 답. 안전한 쪽 폴백이다.) */
+export function turnDidWork(items: readonly TurnItem[] | null | undefined, mark?: string | null): boolean {
+  const list = items ?? []
+  for (let i = list.length - 1; i >= 0; i--) {
+    const m = list[i]
+    if (mark && m.id === mark) return false
+    if (m.id === THINKING_ID) continue
+    if (m.kind === 'msg' && m.role === 'user') return false
+    if (m.kind === 'toolgroup' && (m.tools?.length ?? 0) > 0) return true
+    if (m.kind === 'msg' && m.role === 'assistant' && !m.error && (m.text ?? '').trim()) return true
+  }
+  return false
+}
+
+/** ★R28e WFIRE — 방금 착지한 턴에 대해 구분자 ②가 보는 **증거 한 벌**.
+ *
+ *  R4까지는 스레드 배열 하나였는데, 그 축이 두 자리에서 부족했다:
+ *   * `mark` — 「이 턴의 시작」이 사용자 말풍선에만 매달려 있었다(§5.3 · `turnDidWork` 주석).
+ *   * `ms` — 「무엇을 냈나」만 보고 **얼마나 살았나**를 안 봤다(§5.1 · 12시간 71발). */
+export interface TurnEvidence {
+  /** 그 대화의 스레드(스토어 `SessionState.messages`). */
+  items: readonly TurnItem[] | null | undefined
+  /** 턴을 연 순간의 스레드 꼬리 id(`SessionState.turnMark`) — 없으면 말풍선 경계만 쓴다. */
+  mark?: string | null
+  /** 그 턴이 산 시간(ms · `Date.now() - SessionState.turnAt`). `null` = 모른다. */
+  ms?: number | null
+}
+
+/** ★R28e WFIRE — **그 턴이 「일했다」로 인정받을 만큼 살았는가.**
+ *  모르면 인정하지 않는다 — 상한이 「모른다」로 지워지면 그건 상한이 아니다.
+ *  엔진 짝: `runtime.rs::arm_hold`의 `now - auto_resume_fired_at >= MIN_WORK`. */
+export function turnLivedLongEnough(ms: number | null | undefined): boolean {
+  return typeof ms === 'number' && ms >= MIN_WORK_MS
+}
+
+/** 새로 서는 대기표가 물려받을 **재발사 계수.** 엔진 `arm_hold`의 같은 네 줄이다.
+ *
+ *  `streak`는 표 바깥에 있는 연속 계수(훅의 `firesRef` · 엔진의 `auto_resume_streak`),
+ *  `firedResetsAt`은 **직전에 쏜 표**의 리셋 시각(훅의 `fireResetsRef` · 엔진의
+ *  `auto_resume_at`)이다. 위 절의 우선순위대로 "그 재개가 벽을 넘었나"를 가르고,
+ *  넘었으면 0으로 되돌린다(= 헛발질 연쇄가 아니었다).
+ *
+ *  ★R28e WFIRE — ②의 문장이 「산출을 냈다」에서 **「산출을 내며 충분히 살았다」**로 바뀐다.
+ *  엔진도 같은 자리에서 같은 두 조건을 `&&`로 본다. 이 줄만으로 못 막는 판(산출을 흘리며
+ *  천천히 죽는 턴)은 `resumeVerdict`의 에피소드 예산이 받는다 — 두 장치가 서로의 사각을 덮는다. */
+export function carriedAttempts(
+  streak: number,
+  firedResetsAt: number | null,
+  nextResetsAt: number | null,
+  turn: TurnEvidence,
+  nowSec: number
+): number {
+  if (!(streak > 0)) return 0
+  const cleared =
+    firedResetsAt != null && nextResetsAt != null
+      ? windowRolled(firedResetsAt, nextResetsAt, nowSec)
+      : turnDidWork(turn.items, turn.mark) && turnLivedLongEnough(turn.ms)
+  return cleared ? 0 : streak
+}
+
+/** 대기표 하나의 다음 발화까지 남은 시간(ms) — **타이머와 상태줄이 같은 함수를 본다.**
+ *  조회 실패로 재장전된 표(`probes`)는 리셋 시각이 이미 지나 있어 `resumeDelayMs`가
+ *  최소값(15초)만 돌려준다 — 그 값을 그대로 쓰면 배너가 "곧 이어감"이라고 말하면서
+ *  실제로는 재확인만 반복한다. 두 자리가 갈리지 않게 여기 하나로 모은다. */
+export function holdDelayMs(hold: LimitHold, nowMs: number): number {
+  if (hold.probes) return recheckDelayMs(hold.probes)
+  return resumeDelayMs(hold.resetsAt, nowMs)
+}
+
+/** ui-prefs에서 복원한 대기표 위생 — 형태가 어긋나거나 24시간 지난 표는 버린다
+ *  (며칠 전 대기표가 부팅하자마자 옛 채팅에 프롬프트를 쏘는 사고 방지). `ready`는
+ *  영속하지 않는다 — 복원 후 발화 경로가 재검증으로 다시 판정한다. **예외는 접힌 표
+ *  하나**다(아래 ★R28g).
+ *
+ *  ── ★R28f WFIRE — **이 함수에는 지금 살아 있는 호출자가 없다.** 정직하게 적는다.
+ *
+ *  R28e 보고서는 「예산이 재시작을 못 넘는 것은 엔진만의 문제이고 렌더러는 `sanitizeHold`가
+ *  복원한다」로 신고했는데, 확인 크리틱 R1 §4.1이 그 절반을 깼다. 실앱의 배선은 이렇다:
+ *
+ *   * `limitResume.hold` pref를 읽고 쓰는 곳은 **`App.tsx` 본채팅 하나**뿐이다.
+ *   * 그 훅은 **늘 `managed`**다 — `ccg_store::status::empty_lite`와 `engine/lite.rs`가
+ *     **조건 없이** `resumeOwner:"engine"`을 싣기 때문이다(실측: `engineOwnsResume`가
+ *     빈 행에도 산 행에도 `true`). `managed`면 `useLimitResume`이 `if (o.managed) return`
+ *     으로 장전 자체를 안 하므로 `limitResume.hold`는 늘 비고, 아래 복원 분기는 안 돈다.
+ *   * 렌더러가 실제로 표를 드는 표면(멀티 패널·추가 채팅 창·팝아웃)은 `managed`를 아예
+ *     안 넘기지만(= 살아 있다) **영속을 안 한다** — 설계상 런타임 전용이다(창을 닫으면
+ *     자동 재개 약속도 접힌다).
+ *
+ *  **왜 그래도 안 걷어냈나**(두 선택지를 다 재고 고른 것이다):
+ *   ① *도달 가능하게 만든다* → `resumeOwner`를 조건화하는 것인데, 그 필드는 **한 채팅에
+ *      재개 주체가 둘이 되는 것을 막으려고** 만든 선언이다(M-UX R2.9 · 재현 축: 한도로 죽은
+ *      턴 → 재시작 → 리셋 도달 → 전송이 한 번인가 두 번인가). 조건을 붙이는 순간 그 틈이
+ *      다시 열린다. 멀티 패널 쪽에 영속을 주는 길도 더 나쁘다 — 슬롯은 **자리 번호**라
+ *      복원 시 그 자리에 다른 대화가 앉아 있으면 남의 대화에 재개 프롬프트를 쏜다.
+ *   ② *죽은 분기를 걷어낸다* → 그러면 **파리티가 깨진다.** 같은 대본(예산 소진 → 저장 →
+ *      복원)을 두 축에 먹였을 때 엔진은 예산을 지키고 렌더러는 재충전하는, 정확히
+ *      R28e가 야단맞은 그 모양이 반대 방향으로 생긴다. 이 파일의 함수들은 **두 축의 공통
+ *      규칙 그 자체**이고(`turnDidWork` 주석), 규칙을 한쪽만 지우는 것은 규칙을 바꾸는 것이다.
+ *
+ *  그래서 남긴다. 대신 **「지금 도달 불가」라는 사실을 계기로 못 박는다** —
+ *  `scripts/poc-limit-resume.mjs` M절이 실번들의 `engineOwnsResume`에 `empty_lite` 행과
+ *  산 lite 행을 먹여 둘 다 `true`임을 재고, 실제 훅에 `managed:true`를 주면 장전이 0임을
+ *  잰다. `resumeOwner`가 언젠가 조건부가 되면 그 절이 빨강이 되고, 그때 이 주석을 보게 된다. */
+export function sanitizeHold(v: unknown, nowMs: number): LimitHold | null {
+  if (!v || typeof v !== 'object') return null
+  const h = v as Partial<LimitHold>
+  if (typeof h.key !== 'string' || !h.key) return null
+  if (typeof h.at !== 'number' || !(nowMs - h.at < 24 * 3600_000)) return null
+  return {
+    key: h.key,
+    engine: h.engine === 'codex' ? 'codex' : 'claude',
+    account: typeof h.account === 'string' && h.account ? h.account : undefined,
+    resetsAt: typeof h.resetsAt === 'number' ? h.resetsAt : null,
+    fable: !!h.fable,
+    lastPrompt: typeof h.lastPrompt === 'string' ? h.lastPrompt : '',
+    at: h.at,
+    // 조회 실패 계수는 살려서 복원한다 — 앱을 껐다 켜는 것으로 상한이 초기화되면
+    // "부팅할 때마다 눈감고 한 번 쏘는" 자리가 생긴다. 음수·NaN·거대값은 버린다.
+    ...(typeof h.probes === 'number' && h.probes >= 1 ? { probes: Math.min(Math.floor(h.probes), 99) } : {}),
+    // ★R28c RCAP — **재발사 계수도 같은 이유로 살린다.** 이쪽은 한 칸이 CLI 턴 1회라
+    // 더 비싸다: 재시작으로 0이 되면 "껐다 켤 때마다 두 번 더 쏘는" 자리가 된다.
+    // `autoPaused`는 복원하지 않는다 — `ready`와 같이 재검증이 이 값으로 다시 판정한다.
+    ...(typeof h.attempts === 'number' && h.attempts >= 1 ? { attempts: Math.min(Math.floor(h.attempts), 99) } : {}),
+    // ★R28e WFIRE — **에피소드 예산도 같은 이유로 살린다.** 이 값이 재시작으로 0이 되면
+    // 「껐다 켤 때마다 12발이 공짜」가 되어 예산이 예산이 아니게 된다.
+    // ★R28f WFIRE — 엔진 축에도 같은 칸이 생겼다(`ReloadHold.fires` ← `HoldLite.fires`
+    // ← `hub::persist_hold`). R28e 주석이 가리키던 「아직 없다」는 이제 사실이 아니다 —
+    // 두 축이 같은 규칙이고, 그 궤적 일치를 `poc-limit-resume.mjs` L절 ⑥과 엔진
+    // `tests/wcap_limit_streak.rs` ⑭가 **같은 대본**으로 잰다.
+    ...(typeof h.fires === 'number' && h.fires >= 1 ? { fires: Math.min(Math.floor(h.fires), 99) } : {}),
+    // ★R28g BANNER — **접힘은 그것을 낳은 사실과 함께 건넌다**(엔진 `ReloadHold::paused` ←
+    // `HoldLite::paused` ← `hub::persist_hold`의 짝).
+    //
+    // R28f까지 이 파일의 규칙은 「사실(`attempts`·`fires`)만 나르고 결론(`autoPaused`·`ready`)은
+    // 복원 뒤 재검증이 다시 낸다」였고, 엔진 주석도 같은 문장을 적고 있었다. 그런데 엔진
+    // 축에서 그 문장이 **거짓**이었다(R28f 확인 크리틱 R1 F1: `check_hold`의
+    // `filter(|h| !h.ready)`가 접힌 표를 재판정에서 뺀다) — 12발을 태운 표가 부팅 한 번에
+    // 「한도가 풀렸어요」로 되살아났다. 엔진이 접힘을 영속하는 쪽으로 닫혔으므로 **두 축의
+    // 규칙을 다시 같게** 맞춘다(`poc-limit-resume.mjs` N절이 같은 대본으로 궤적을 잰다).
+    //
+    // `ready`를 함께 켜는 이유: 접힌 표의 출구는 배너의 「이어가기」 하나인데
+    // (`canPressContinue = ready && autoPaused`), `ready`가 없으면 그 버튼이 안 뜨고 배너는
+    // 「약 N 뒤 자동으로 이어서 계속해요」라고 **또 다른 거짓 약속**을 한다(타이머 effect는
+    // `autoPaused`를 안 보고 도는데 소진 effect가 막아서 아무것도 안 나간다).
+    //
+    // 위험이 없는 이유는 접힘의 정의 그 자체다: 소진 effect의 첫 문이 `cur.autoPaused`에서
+    // 되돌아가고 타이머 effect도 `hold.ready`에서 멎는다 — **이 표는 사람이 누르기 전에는
+    // 한 글자도 안 보낸다.** 이 문단이 지키려는 사고("며칠 전 표가 부팅하자마자 쏜다")는
+    // 위 24시간 만료와 이 두 문이 함께 막는다.
+    ...(h.autoPaused === true ? { ready: true, autoPaused: true } : {})
+  }
+}

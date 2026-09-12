@@ -1,0 +1,1149 @@
+{
+  "app": "tauri-3.0.0",
+  "kind": "tauri",
+  "at": "2026-08-24T03:21:47.331Z",
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  },
+  "screens": [
+    {
+      "id": "boot-splash-native",
+      "label": "네이티브 시작 스플래시",
+      "area": "1. 부팅",
+      "ok": false,
+      "error": "data: 스플래시 타깃을 기동 20초 안에 잡지 못함"
+    },
+    {
+      "id": "boot-loading",
+      "label": "렌더러 로딩 화면",
+      "area": "1. 부팅",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 3100,
+      "found": 1
+    },
+    {
+      "id": "error-boundary",
+      "label": "에러 안전망 카드",
+      "area": "1. 부팅",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 12339,
+      "found": 1,
+      "dirtyAfterReset": [
+        ".eb-card"
+      ],
+      "reloadedAfter": true
+    },
+    {
+      "id": "chat-thread",
+      "label": "대화 스레드(코드 뷰)",
+      "area": "2. 본채팅",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 489,
+      "found": 1
+    },
+    {
+      "id": "chat-header",
+      "label": "채팅 헤더",
+      "area": "2. 본채팅",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 500,
+      "found": 1
+    },
+    {
+      "id": "composer",
+      "label": "컴포저(한 줄 고스트 필)",
+      "area": "2. 본채팅",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 502,
+      "found": 1
+    },
+    {
+      "id": "workbar",
+      "label": "작업 바(5칩)",
+      "area": "2. 본채팅",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 483,
+      "found": 5
+    },
+    {
+      "id": "chat-welcome",
+      "label": "웰컴(빈 채팅)",
+      "area": "2. 본채팅",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 1970,
+      "found": 1
+    },
+    {
+      "id": "chat-jump-bottom",
+      "label": "맨 아래로 점프 버튼",
+      "area": "2. 본채팅",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 1034,
+      "found": 1
+    },
+    {
+      "id": "chat-find",
+      "label": "대화에서 찾기 바",
+      "area": "2. 본채팅",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 1012,
+      "found": 1
+    },
+    {
+      "id": "chat-selection-bar",
+      "label": "선택 툴바(복사/더 자세히)",
+      "area": "2. 본채팅",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 844,
+      "found": 2
+    },
+    {
+      "id": "chat-gesture-overlay",
+      "label": "마우스 제스처 궤적·라벨",
+      "area": "2. 본채팅",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 1029,
+      "found": 1
+    },
+    {
+      "id": "chat-zoom-badge",
+      "label": "줌 배지",
+      "area": "2. 본채팅",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 2039,
+      "found": 1
+    },
+    {
+      "id": "chat-folder-pop",
+      "label": "작업 폴더 팝오버",
+      "area": "2. 본채팅",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 1362,
+      "found": 1
+    },
+    {
+      "id": "composer-two-line",
+      "label": "컴포저 2줄 승격",
+      "area": "2. 본채팅",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 787,
+      "found": 1
+    },
+    {
+      "id": "composer-picker-pop",
+      "label": "모델·모드·과금·계정 통합 팝오버",
+      "area": "2. 본채팅",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 968,
+      "found": 1
+    },
+    {
+      "id": "composer-slash-palette",
+      "label": "\"/\" 명령 팔레트(+스킬)",
+      "area": "2. 본채팅",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 978,
+      "found": 6
+    },
+    {
+      "id": "composer-mention-palette",
+      "label": "\"@\" 파일 멘션 팔레트",
+      "area": "2. 본채팅",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 971,
+      "found": 1
+    },
+    {
+      "id": "composer-drop-hint",
+      "label": "파일 드롭 힌트 오버레이",
+      "area": "2. 본채팅",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 508,
+      "found": 1
+    },
+    {
+      "id": "composer-attachments",
+      "label": "첨부 트레이(이미지 썸네일)",
+      "area": "2. 본채팅",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 788,
+      "found": 1
+    },
+    {
+      "id": "image-lightbox",
+      "label": "이미지 라이트박스",
+      "area": "2. 본채팅",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 1143,
+      "found": 1
+    },
+    {
+      "id": "image-lightbox-strip",
+      "label": "라이트박스 — 여러 장(썸네일 스트립)",
+      "area": "2. 본채팅",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 1499,
+      "found": 1
+    },
+    {
+      "id": "folder-switch-dialog",
+      "label": "작업 폴더 변경 확인 카드",
+      "area": "2. 본채팅",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 1426,
+      "found": 1
+    },
+    {
+      "id": "workbar-todo-pop",
+      "label": "할 일 팝오버",
+      "area": "2. 본채팅",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 924,
+      "found": 1
+    },
+    {
+      "id": "workbar-subagent-pop",
+      "label": "서브에이전트 팝오버",
+      "area": "2. 본채팅",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 937,
+      "found": 1
+    },
+    {
+      "id": "workbar-shell-pop",
+      "label": "백그라운드 셸 팝오버",
+      "area": "2. 본채팅",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 933,
+      "found": 1
+    },
+    {
+      "id": "workbar-file-pop",
+      "label": "변경된 파일 팝오버",
+      "area": "2. 본채팅",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 937,
+      "found": 1
+    },
+    {
+      "id": "workbar-context-pop",
+      "label": "컨텍스트·한도 팝오버",
+      "area": "2. 본채팅",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 946,
+      "found": 4
+    },
+    {
+      "id": "subagent-modal",
+      "label": "서브에이전트 상세 카드",
+      "area": "2. 본채팅",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 1461,
+      "found": 2
+    },
+    {
+      "id": "bgtask-modal",
+      "label": "백그라운드 셸 카드(중지)",
+      "area": "2. 본채팅",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 1467,
+      "found": 1
+    },
+    {
+      "id": "bash-log-modal",
+      "label": "Bash 출력 카드",
+      "area": "2. 본채팅",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 892,
+      "found": 1
+    },
+    {
+      "id": "cmd-result-card",
+      "label": "내장 명령 결과 카드(/init 등)",
+      "area": "2. 본채팅",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 918,
+      "found": 1
+    },
+    {
+      "id": "btw-dock",
+      "label": "/btw 질문 창 알약 도크",
+      "area": "2. 본채팅",
+      "surface": "main-window",
+      "ok": false,
+      "ms": 22833,
+      "error": "waitForNewWindow timeout: #session"
+    },
+    {
+      "id": "chat-working",
+      "label": "작업 인디케이터(마스코트+경과)",
+      "area": "2. 본채팅",
+      "surface": "main-window",
+      "ok": false,
+      "ms": 25552,
+      "error": "waitFor timeout: .thread .working-line (1)"
+    },
+    {
+      "id": "composer-queue",
+      "label": "예약 큐(작업 중 보낸 메시지)",
+      "area": "2. 본채팅",
+      "surface": "main-window",
+      "ok": false,
+      "ms": 13149,
+      "error": "waitFor timeout: .composer .sched .sched-list (1)"
+    },
+    {
+      "id": "permission-card",
+      "label": "도구 승인 요청 카드",
+      "area": "2. 본채팅",
+      "surface": "main-window",
+      "ok": false,
+      "ms": 92158,
+      "error": "waitFor timeout: .q-overlay .qcard .qopt-deny (1)"
+    },
+    {
+      "id": "limit-hold-bar",
+      "label": "한도 자동 이어서 대기표 바",
+      "area": "2. 본채팅",
+      "surface": "main-window",
+      "ok": false,
+      "ms": 40019,
+      "error": "assert 실패: .limit-hold-wrap .limit-hold (0/1)"
+    },
+    {
+      "id": "autohide-preview",
+      "label": "사이드바 감지 폭 미리보기 띠",
+      "area": "2. 본채팅",
+      "surface": "main-window",
+      "ok": false,
+      "ms": 1708,
+      "error": "setAutohide: 자동 숨김 토글 없음"
+    },
+    {
+      "id": "sidebar-autohide-edge",
+      "label": "사이드바 자동 숨김 — 접힘/가장자리 띠",
+      "area": "2. 본채팅",
+      "surface": "main-window",
+      "ok": false,
+      "ms": 1854,
+      "error": "setAutohide: 자동 숨김 토글 없음",
+      "resetError": "setAutohide: 자동 숨김 토글 없음"
+    },
+    {
+      "id": "sidebar",
+      "label": "채팅 사이드바(2.6.2=3섹션 / 3.0=채팅·배치 2섹션)",
+      "area": "3. 사이드바",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 495,
+      "found": 2
+    },
+    {
+      "id": "sidebar-empty",
+      "label": "섹션 빈 상태",
+      "area": "3. 사이드바",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 508,
+      "found": 1
+    },
+    {
+      "id": "sidebar-section-search",
+      "label": "섹션 검색 입력",
+      "area": "3. 사이드바",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 941,
+      "found": 1
+    },
+    {
+      "id": "sidebar-ctx-menu",
+      "label": "채팅 우클릭 메뉴",
+      "area": "3. 사이드바",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 997,
+      "found": 2
+    },
+    {
+      "id": "sidebar-rename-inline",
+      "label": "채팅 이름 인라인 편집",
+      "area": "3. 사이드바",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 1143,
+      "found": 1
+    },
+    {
+      "id": "sidebar-delete-confirm",
+      "label": "채팅 삭제 확인 카드",
+      "area": "3. 사이드바",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 1183,
+      "found": 1
+    },
+    {
+      "id": "sidebar-deleteall-confirm",
+      "label": "섹션 전체 삭제 확인 카드",
+      "area": "3. 사이드바",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 1017,
+      "found": 1
+    },
+    {
+      "id": "new-chat-step1",
+      "label": "새 채팅 — 일반/멀티 선택",
+      "area": "3. 사이드바",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 958,
+      "found": 1
+    },
+    {
+      "id": "new-chat-step2",
+      "label": "새 채팅 — 패널 수(2~6)",
+      "area": "3. 사이드바",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 1191,
+      "found": 5
+    },
+    {
+      "id": "prompt-library-list",
+      "label": "프롬프트 라이브러리 — 목록",
+      "area": "3. 사이드바",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 998,
+      "found": 1
+    },
+    {
+      "id": "prompt-library-editor",
+      "label": "프롬프트 편집(제목+본문)",
+      "area": "3. 사이드바",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 1365,
+      "found": 1
+    },
+    {
+      "id": "prompt-library-delete",
+      "label": "프롬프트 삭제 확인",
+      "area": "3. 사이드바",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 1303,
+      "found": 1
+    },
+    {
+      "id": "explorer-tree",
+      "label": "탐색기 트리",
+      "area": "4. 탐색기",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 890,
+      "found": 50
+    },
+    {
+      "id": "explorer-settings-foot",
+      "label": "탐색기 하단 프로필/설정 행",
+      "area": "4. 탐색기",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 510,
+      "found": 1
+    },
+    {
+      "id": "explorer-git-strip",
+      "label": "Git 상태 스트립",
+      "area": "4. 탐색기",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 516,
+      "found": 1
+    },
+    {
+      "id": "explorer-search",
+      "label": "파일 검색 결과",
+      "area": "4. 탐색기",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 946,
+      "found": 2
+    },
+    {
+      "id": "explorer-search-empty",
+      "label": "검색 결과 없음",
+      "area": "4. 탐색기",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 921,
+      "found": 1
+    },
+    {
+      "id": "explorer-hidden-on",
+      "label": "숨긴 항목 보기 ON",
+      "area": "4. 탐색기",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 1171,
+      "found": 1
+    },
+    {
+      "id": "explorer-ctx-menu",
+      "label": "탐색기 우클릭 메뉴",
+      "area": "4. 탐색기",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 1015,
+      "found": 8
+    },
+    {
+      "id": "explorer-fileop",
+      "label": "파일 작업 카드(새 파일)",
+      "area": "4. 탐색기",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 2751,
+      "found": 1
+    },
+    {
+      "id": "explorer-notice",
+      "label": "파일 작업 오류 알림 카드",
+      "area": "4. 탐색기",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 3469,
+      "found": 1
+    },
+    {
+      "id": "explorer-fileop-delete",
+      "label": "탐색기 삭제 확인 카드",
+      "area": "4. 탐색기",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 2252,
+      "found": 1
+    },
+    {
+      "id": "explorer-blank",
+      "label": "탐색기 — 폴더 없음",
+      "area": "4. 탐색기",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 3122,
+      "found": 1
+    },
+    {
+      "id": "changed-files-modal",
+      "label": "변경된 파일 카드(스코프 폴더)",
+      "area": "4. 탐색기",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 2389,
+      "found": 1
+    },
+    {
+      "id": "viewer-code-read",
+      "label": "코드 뷰어 — 읽기 모드",
+      "area": "5. 뷰어",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 2944,
+      "found": 1
+    },
+    {
+      "id": "viewer-diff-on",
+      "label": "변경 마킹(diff) 표시",
+      "area": "5. 뷰어",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 2680,
+      "found": 1
+    },
+    {
+      "id": "viewer-code-edit",
+      "label": "코드 뷰어 — 편집 모드(Ctrl+E)",
+      "area": "5. 뷰어",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 2769,
+      "found": 1
+    },
+    {
+      "id": "viewer-cm-find",
+      "label": "CM 편집기 찾기 바",
+      "area": "5. 뷰어",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 7284,
+      "found": 1
+    },
+    {
+      "id": "viewer-code-dirty",
+      "label": "편집 중 미저장(● 저장 칩)",
+      "area": "5. 뷰어",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 3473,
+      "found": 1
+    },
+    {
+      "id": "viewer-close-confirm",
+      "label": "미저장 편집 닫기 확인",
+      "area": "5. 뷰어",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 2975,
+      "found": 1
+    },
+    {
+      "id": "viewer-code-saved",
+      "label": "저장됨 칩",
+      "area": "5. 뷰어",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 7510,
+      "found": 1
+    },
+    {
+      "id": "viewer-save-error",
+      "label": "저장 실패 카드",
+      "area": "5. 뷰어",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 3585,
+      "found": 1
+    },
+    {
+      "id": "viewer-markdown-preview",
+      "label": "마크다운 렌더 뷰",
+      "area": "5. 뷰어",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 2537,
+      "found": 1
+    },
+    {
+      "id": "viewer-markdown-source",
+      "label": "마크다운 — 변경 소스 보기",
+      "area": "5. 뷰어",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 2677,
+      "found": 1
+    },
+    {
+      "id": "viewer-find",
+      "label": "뷰어 찾기 바(비-CM)",
+      "area": "5. 뷰어",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 7202,
+      "found": 1
+    },
+    {
+      "id": "viewer-image",
+      "label": "이미지 뷰(뷰어 안)",
+      "area": "5. 뷰어",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 2563,
+      "found": 1
+    },
+    {
+      "id": "viewer-html-preview",
+      "label": "HTML 페이지 미리보기(ccg-page)",
+      "area": "5. 뷰어",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 3450,
+      "found": 1
+    },
+    {
+      "id": "viewer-html-code",
+      "label": "HTML 코드 보기(Ctrl+D)",
+      "area": "5. 뷰어",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 2690,
+      "found": 1
+    },
+    {
+      "id": "viewer-svg-preview",
+      "label": "SVG 렌더 미리보기",
+      "area": "5. 뷰어",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 2516,
+      "found": 1
+    },
+    {
+      "id": "viewer-svg-source",
+      "label": "SVG 마크업 소스",
+      "area": "5. 뷰어",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 2682,
+      "found": 1
+    },
+    {
+      "id": "viewer-empty",
+      "label": "뷰어 — 내용 없음/오류",
+      "area": "5. 뷰어",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 2542,
+      "found": 1
+    },
+    {
+      "id": "viewer-truncated",
+      "label": "일부만 표시 칩",
+      "area": "5. 뷰어",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 2711,
+      "found": 1
+    },
+    {
+      "id": "viewer-loading",
+      "label": "뷰어 로딩 스피너",
+      "area": "5. 뷰어",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 18452,
+      "found": 1,
+      "capturedInReach": true
+    },
+    {
+      "id": "viewer-selection-ask-bar",
+      "label": "코드 선택 툴바(복사/질문)",
+      "area": "5. 뷰어",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 2632,
+      "found": 2
+    },
+    {
+      "id": "viewer-ask-panel",
+      "label": "선택 코드 질문 패널",
+      "area": "5. 뷰어",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 2984,
+      "found": 1
+    },
+    {
+      "id": "viewer-header-ctx-menu",
+      "label": "뷰어 헤더 우클릭 메뉴",
+      "area": "5. 뷰어",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 2902,
+      "found": 2
+    },
+    {
+      "id": "viewer-maximized",
+      "label": "뷰어 최대화",
+      "area": "5. 뷰어",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 3010,
+      "found": 1
+    },
+    {
+      "id": "viewer-git-snapshot",
+      "label": "Git 커밋 스냅샷 뷰어",
+      "area": "5. 뷰어",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 3221,
+      "found": 1
+    },
+    {
+      "id": "git-changes",
+      "label": "Git — 변경 목록 + 커밋 컴포저",
+      "area": "6. Git",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 1082,
+      "found": 1
+    },
+    {
+      "id": "git-history",
+      "label": "Git — 히스토리(커밋 리스트)",
+      "area": "6. Git",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 1137,
+      "found": 100
+    },
+    {
+      "id": "git-commit-detail",
+      "label": "Git — 커밋 상세(우측 패널)",
+      "area": "6. Git",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 1283,
+      "found": 1
+    },
+    {
+      "id": "git-new-branch",
+      "label": "Git — 새 브랜치 입력",
+      "area": "6. Git",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 1153,
+      "found": 1
+    },
+    {
+      "id": "git-ai-commit-step1",
+      "label": "AI 커밋 메시지 — 1/2 계정",
+      "area": "6. Git",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 1691,
+      "found": 1
+    },
+    {
+      "id": "git-ai-commit-step2",
+      "label": "AI 커밋 메시지 — 2/2 모델·effort",
+      "area": "6. Git",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 1928,
+      "found": 2
+    },
+    {
+      "id": "git-repo-list",
+      "label": "Git — 저장소 선택(2곳 이상)",
+      "area": "6. Git",
+      "ok": false,
+      "skipped": true,
+      "reason": "하위 저장소가 2곳 이상인 작업 폴더가 필요 — 이 레포에는 중첩 .git이 없다(실측)"
+    },
+    {
+      "id": "settings-profile",
+      "label": "설정 — Profile",
+      "area": "7. 설정",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 1353,
+      "found": 1
+    },
+    {
+      "id": "settings-account",
+      "label": "설정 — Account",
+      "area": "7. 설정",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 1855,
+      "found": 6
+    },
+    {
+      "id": "settings-engine",
+      "label": "설정 — Engine",
+      "area": "7. 설정",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 1838,
+      "found": 2
+    },
+    {
+      "id": "settings-engine-confirm",
+      "label": "Engine — 이전 버전 정리 확인",
+      "area": "7. 설정",
+      "surface": "main-window",
+      "ok": false,
+      "ms": 1450,
+      "error": "clickText: no .set-inner button containing 정리"
+    },
+    {
+      "id": "settings-api",
+      "label": "설정 — API",
+      "area": "7. 설정",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 1878,
+      "found": 2
+    },
+    {
+      "id": "settings-mcp",
+      "label": "설정 — MCP",
+      "area": "7. 설정",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 1862,
+      "found": 3
+    },
+    {
+      "id": "settings-skill",
+      "label": "설정 — Skill",
+      "area": "7. 설정",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 1837,
+      "found": 3
+    },
+    {
+      "id": "settings-display",
+      "label": "설정 — Display",
+      "area": "7. 설정",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 1901,
+      "found": 5
+    },
+    {
+      "id": "settings-language",
+      "label": "설정 — Language",
+      "area": "7. 설정",
+      "surface": "main-window",
+      "ok": false,
+      "ms": 9393,
+      "error": "waitFor timeout: .set-inner .sc2.row2.pick.on (1)"
+    },
+    {
+      "id": "settings-code-lsp",
+      "label": "설정 — Code(언어 서버)",
+      "area": "7. 설정",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 1837,
+      "found": 2
+    },
+    {
+      "id": "settings-code-expanded",
+      "label": "Code — 행 펼침",
+      "area": "7. 설정",
+      "surface": "main-window",
+      "ok": false,
+      "ms": 1931,
+      "error": "click: no element .set-inner .sc2.row2[4]"
+    },
+    {
+      "id": "settings-explorer",
+      "label": "설정 — Explorer",
+      "area": "7. 설정",
+      "surface": "main-window",
+      "ok": false,
+      "ms": 9339,
+      "error": "waitFor timeout: .set-inner .sc2.tgl (1)"
+    },
+    {
+      "id": "settings-gestures",
+      "label": "설정 — Gestures",
+      "area": "7. 설정",
+      "surface": "main-window",
+      "ok": false,
+      "ms": 9334,
+      "error": "waitFor timeout: .set-inner .set-sec (1)"
+    },
+    {
+      "id": "settings-rail-search",
+      "label": "설정 — 레일 검색 필터",
+      "area": "7. 설정",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 2229,
+      "found": 1
+    },
+    {
+      "id": "multi-grid-empty",
+      "label": "멀티 — 빈 패널 그리드(4분할)",
+      "area": "8. 멀티",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 1660,
+      "found": 4
+    },
+    {
+      "id": "multi-grid-counts",
+      "label": "멀티 — 패널 수 배치(n6)",
+      "area": "8. 멀티",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 1972,
+      "found": 1
+    },
+    {
+      "id": "multi-panel-expanded",
+      "label": "멀티 — 크게 보기 오버레이 카드",
+      "area": "8. 멀티",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 893,
+      "found": 1
+    },
+    {
+      "id": "multi-panel-ghost-expanded",
+      "label": "멀티 — 크게 보는 중 그리드 자리지킴",
+      "area": "8. 멀티",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 860,
+      "found": 1
+    },
+    {
+      "id": "multi-panel-rename",
+      "label": "멀티 — 패널 제목 인라인 편집(F2)",
+      "area": "8. 멀티",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 920,
+      "found": 1
+    },
+    {
+      "id": "multi-panel-folder-pop",
+      "label": "멀티 — 패널 폴더 팝오버",
+      "area": "8. 멀티",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 932,
+      "found": 1
+    },
+    {
+      "id": "multi-explorer",
+      "label": "멀티 — 포커스 패널을 따라가는 탐색기",
+      "area": "8. 멀티",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 3175,
+      "found": 1
+    },
+    {
+      "id": "multi-reorder",
+      "label": "멀티 — 패널 자리 드래그 재배치",
+      "area": "8. 멀티",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 2264,
+      "found": 1
+    },
+    {
+      "id": "multi-panel-ghost-popped",
+      "label": "멀티 — 팝아웃 중 그리드 유령",
+      "area": "8. 멀티",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 646,
+      "found": 1
+    },
+    {
+      "id": "panel-window",
+      "label": "멀티 패널 팝아웃 창",
+      "area": "9. 독립 창",
+      "surface": "panel-window",
+      "ok": true,
+      "ms": 3785,
+      "found": 1
+    },
+    {
+      "id": "multi-panel-btw-dock",
+      "label": "멀티 — 패널 btw 알약 도크",
+      "area": "8. 멀티",
+      "surface": "main-window",
+      "ok": false,
+      "ms": 22901,
+      "error": "waitForNewWindow timeout: #session"
+    },
+    {
+      "id": "multi-hydrate",
+      "label": "멀티 — 세션 복원 스피너",
+      "area": "8. 멀티",
+      "surface": "main-window",
+      "ok": true,
+      "ms": 1569,
+      "found": 1
+    },
+    {
+      "id": "session-window-welcome",
+      "label": "추가 채팅 창 — 웰컴",
+      "area": "9. 독립 창",
+      "surface": "session-window",
+      "ok": true,
+      "ms": 3784,
+      "found": 1
+    },
+    {
+      "id": "session-window-btw",
+      "label": "btw 질문 창 — 이어받기 안내 웰컴",
+      "area": "9. 독립 창",
+      "surface": "session-window",
+      "ok": false,
+      "ms": 22941,
+      "error": "waitForNewWindow timeout: #session"
+    },
+    {
+      "id": "toast-single",
+      "label": "알림 토스트 — 단건 상세 카드",
+      "area": "10. 알림",
+      "surface": "toast",
+      "ok": true,
+      "ms": 4327,
+      "found": 1
+    },
+    {
+      "id": "toast-aggregate",
+      "label": "알림 토스트 — 집계 행",
+      "area": "10. 알림",
+      "surface": "toast",
+      "ok": true,
+      "ms": 5567,
+      "found": 1
+    },
+    {
+      "id": "engine-gate-prompt",
+      "label": "엔진 미설치 안내 카드",
+      "area": "10. 알림",
+      "surface": "main-window",
+      "ok": false,
+      "ms": 40111,
+      "error": "assert 실패: .set-dialog-overlay .set-dialog .sd-title (0/1)"
+    }
+  ],
+  "windowSized": true,
+  "mergedFrom": "2026-08-24T03:00:03.306Z",
+  "summary": {
+    "defined": 156,
+    "attempted": 124,
+    "ok": 108,
+    "failed": 16,
+    "skipped": 1,
+    "successRatePct": 87.1
+  }
+}

@@ -1,0 +1,179 @@
+#!/usr/bin/env node
+// poc-small3-dialog-i18n — 첨부 대화상자 문구 넷이 `ui.lang`을 따르는가.
+//
+// SMALL3 R1의 못. `docs/decisions-3.0.md` §3.4-B가 잡은 회귀:
+//   3.0 `src-tauri/src/ipc/parity/dialog.rs`가 제목·필터 이름 넷을 한국어 리터럴로
+//   박아 두어, UI 언어를 en으로 둬도 **네이티브 파일 선택 창만 한국어**로 남았다.
+//   2.6.2(`src/main/index.ts:1355-1360`)는 넷 다 `t(ko, en)`으로 감싼다.
+//
+// 이 하네스가 재는 것 둘:
+//   A. 정적 — dialog.rs의 `labels()`가 내는 (ko, en) 넷이 2.6.2의 넷과 **글자까지** 같은가.
+//      그리고 `pick_attachments` 빌더에 한국어 리터럴이 남아 있지 않은가.
+//   B. 실측 — 격리 홈(`CCG_HOME`)에 `ui-prefs.json` 한 장만 놓고 **테스트 바이너리의
+//      자식 테스트**를 띄워 `labels()`가 실제로 뱉는 문자열 넷을 받아 온다.
+//      홈 셋: `ui.lang=en` · `ui.lang=ko` · 설정 없음(갓 설치).
+//
+//      한 프로세스에서 두 언어를 못 본다 — `ccg_fs::t`의 언어 판정이 2초 TTL의
+//      프로세스 전역 캐시라 첫 읽기로 굳는다. 그래서 언어마다 프로세스를 새로 띄운다.
+//
+// 안전: 사용자 실홈(`%USERPROFILE%\.agentcodegui`)을 **읽지도 복사하지도 않는다**.
+//       홈은 `%TEMP%` 아래 새로 만들고 끝나면 지운다. 이름 기반 kill 0.
+//
+// 쓰기:
+//   node scripts/poc-small3-dialog-i18n.mjs
+//   node scripts/poc-small3-dialog-i18n.mjs --exe=<...\agentcodegui-<hash>.exe>
+//   (exe를 안 주면 `src-tauri/target-small3/debug/deps`에서 가장 최근 것을 고른다.
+//    없으면 `CARGO_TARGET_DIR=target-small3 cargo test -p agentcodegui
+//    --features custom-protocol`을 한 번 돌려 만들어라 — 이 하네스는 빌드하지 않는다.)
+
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
+
+const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const DIALOG_RS = path.join(REPO, 'src-tauri', 'src', 'ipc', 'parity', 'dialog.rs')
+const INDEX_TS = path.join(REPO, 'src', 'main', 'index.ts')
+const DEPS = path.join(REPO, 'src-tauri', 'target-small3', 'debug', 'deps')
+const CHILD_TEST = 'ipc::parity::dialog::tests::child_prints_the_dialog_labels'
+const CHILD_ENV = 'CCG_SMALL3_DIALOG_LANG_CHILD'
+const MARK = 'SMALL3-LABELS>'
+
+const arg = (k) => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3)
+let fails = 0
+const ok = (cond, label, extra = '') => {
+  if (!cond) fails++
+  console.log(`${cond ? '  ok  ' : '  FAIL'} ${label}${extra ? ` — ${extra}` : ''}`)
+}
+
+// ── A. 정적 대조 ────────────────────────────────────────────────────────────
+
+/** 필드 ↔ 2.6.2 자리의 대응표. **이 순서가 규약이다**(2.6.2는 이름 없이 순서만 갖는다). */
+const FIELDS = ['title', 'filter_all', 'filter_images', 'filter_docs']
+
+/**
+ * `필드: ccg_fs::t("ko", "en")` 넷을 **이름과 함께** 뽑는다 → `[[field, ko, en], …]`.
+ *
+ * ★R4: R3까지 이 함수는 이름을 버리고 **등장 순서**로만 뽑았다. 그래서 `labels()`의
+ * 초기화 줄 순서만 바꾸는 **무해한** 변경(EPAIRI)에 하네스가 **거짓 양성**으로 붉었다
+ * — 크레이트 못은 R3에서 이름 기준으로 고쳤는데 하네스만 순서 기준으로 남아 있었다.
+ * (R3는 이 변이에 cargo만 돌리고 하네스를 안 돌려서 못 봤다. R4에서 둘 다 돌려 찾았다.)
+ */
+function rustPairs(src) {
+  // ★R3: `labels()`가 `[String; 4]`에서 `DialogLabels` 구조체 리터럴로 바뀌어 본문이 길어졌다.
+  const body = src.slice(src.indexOf('fn labels()'), src.indexOf('fn labels()') + 900)
+  return [...body.matchAll(/(\w+):\s*ccg_fs::t\("([^"]*)",\s*"([^"]*)"\)/g)].map((m) => [m[1], m[2], m[3]])
+}
+
+/** 2.6.2 `pickAttachments` 핸들러 안의 `t('ko', 'en')`을 순서대로 뽑는다. */
+function tsPairs(src) {
+  const head = src.indexOf('IPC.pickAttachments')
+  const body = src.slice(head, src.indexOf('return r.canceled', head))
+  return [...body.matchAll(/\bt\('([^']*)',\s*'([^']*)'\)/g)].map((m) => [m[1], m[2]])
+}
+
+const rs = fs.readFileSync(DIALOG_RS, 'utf8')
+const ts = fs.readFileSync(INDEX_TS, 'utf8')
+const rsPairs = rustPairs(rs)
+const refPairs = tsPairs(ts)
+
+console.log('A. 정적 — dialog.rs vs 2.6.2 index.ts')
+ok(rsPairs.length === 4, `3.0 labels()의 t() 콜사이트 4개`, `실제 ${rsPairs.length}`)
+ok(refPairs.length === 4, `2.6.2 pickAttachments의 t() 콜사이트 4개`, `실제 ${refPairs.length}`)
+
+// ★R4: **필드 이름으로** 조회해 2.6.2 자리와 맞춘다(소스 등장 순서에 안 기댄다).
+const byField = new Map(rsPairs.map(([f, ko, en]) => [f, [ko, en]]))
+const missing = FIELDS.filter((f) => !byField.has(f))
+ok(missing.length === 0, 'labels()에 필드 넷이 다 있다', missing.length ? `없는 필드: ${missing}` : '')
+const rsOrdered = FIELDS.map((f) => byField.get(f) ?? [])
+const same = JSON.stringify(rsOrdered) === JSON.stringify(refPairs)
+ok(same, '넷이 (ko, en) 글자까지 같다 — 필드 대응 기준', same ? '' : `\n    3.0  : ${JSON.stringify(rsOrdered)}\n    2.6.2: ${JSON.stringify(refPairs)}`)
+ok(!rsPairs.some(([, , en]) => /[가-힣]/.test(en)), 'en 인자에 한글이 없다')
+ok(!rsPairs.some(([, ko, en]) => ko === en), 'ko와 en이 같은 칸이 없다')
+
+// 빌더가 정말 `labels()`를 먹는가 + 한국어 리터럴이 되살아나지 않았는가(회귀 방지).
+// ★이 둘이 없으면 A의 대조는 「아무도 안 쓰는 함수」를 재는 셈이 된다.
+const call = rs.slice(rs.indexOf('pub fn pick_attachments'), rs.indexOf('.pick_files('))
+ok(/=\s*labels\(\)\s*;/.test(call), 'pick_attachments가 labels()를 부른다')
+// ★R3(크리틱 EPAIR): 「무엇을 쓰나」가 아니라 **「어느 자리에 쓰나」**를 본다.
+// 이름 있는 필드로 바뀌었으므로 짝이 글자로 고정된다.
+const PAIRS = [
+  ['.set_title(l.title)', '제목'],
+  ['.add_filter(l.filter_all, &all)', '첫 필터(전체)'],
+  ['.add_filter(l.filter_images, &IMAGE)', '둘째 필터(이미지)'],
+  ['.add_filter(l.filter_docs, &TEXT)', '셋째 필터(텍스트·문서)']
+]
+// ★R3 마감(크리틱 R3의 EORDER): 존재뿐 아니라 **순서**도 본다 — 첫 필터가 곧 기본 선택이라
+// `.add_filter` 세 줄을 재배열하면 첨부 창 첫 화면에서 텍스트 파일이 안 보인다.
+let prevAt = -1
+let prevWhat = ''
+for (const [pat, what] of PAIRS) {
+  const at = call.indexOf(pat)
+  ok(at >= 0, `${what}가 제 짝을 받는다`, pat)
+  if (at >= 0) {
+    if (prevAt >= 0) ok(prevAt < at, `${what}가 「${prevWhat}」보다 뒤에 온다(기본 필터 규약)`)
+    prevAt = at
+    prevWhat = what
+  }
+}
+ok(!/[가-힣]/.test(call.replace(/\/\/.*$/gm, '')), '빌더 구간에 한국어 리터럴 0')
+
+// ── B. 실측 — 격리 홈 셋에서 labels()를 직접 받아 온다 ──────────────────────
+
+function findExe() {
+  const given = arg('exe')
+  if (given) return given
+  if (!fs.existsSync(DEPS)) return null
+  const cands = fs
+    .readdirSync(DEPS)
+    .filter((f) => /^agentcodegui-[0-9a-f]+\.exe$/.test(f))
+    .map((f) => ({ f: path.join(DEPS, f), m: fs.statSync(path.join(DEPS, f)).mtimeMs }))
+    .sort((a, b) => b.m - a.m)
+  return cands[0]?.f ?? null
+}
+
+function labelsUnder(exe, tag, lang) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), `ccg-small3-dlg-${tag}-`))
+  if (lang) fs.writeFileSync(path.join(home, 'ui-prefs.json'), JSON.stringify({ 'ui.lang': lang }))
+  const r = spawnSync(exe, ['--exact', CHILD_TEST, '--nocapture', '--include-ignored'], {
+    env: { ...process.env, [CHILD_ENV]: '1', CCG_HOME: home },
+    encoding: 'utf8',
+    timeout: 60_000
+  })
+  fs.rmSync(home, { recursive: true, force: true })
+  const line = String(r.stdout || '')
+    .split(/\r?\n/)
+    .find((l) => l.startsWith(MARK))
+  if (!line) return null
+  // ★R3: 자식이 `필드=문구`로 찍는다(위치 대응을 하나 더 만들지 않으려고).
+  return line
+    .slice(MARK.length)
+    .split('\t')
+    .map((kv) => {
+      const i = kv.indexOf('=')
+      return [kv.slice(0, i), kv.slice(i + 1)]
+    })
+}
+
+console.log('\nB. 실측 — 격리 홈에서 labels()가 실제로 뱉는 것')
+const exe = findExe()
+if (!exe || !fs.existsSync(exe)) {
+  fails++
+  console.log(`  FAIL 테스트 바이너리를 못 찾았다 — CARGO_TARGET_DIR=target-small3 cargo test -p agentcodegui --features custom-protocol 을 먼저 돌려라`)
+} else {
+  console.log(`  exe: ${exe}`)
+  // 필드 이름을 같이 적는다 — 자리 뒤바꿈(크리틱 EPAIR)이 값 비교에서 바로 드러난다.
+  const pair = (words) => FIELDS.map((f, i) => [f, words[i]])
+  const KO = pair(['첨부할 파일 선택', '첨부 가능한 파일', '이미지', '텍스트·문서'])
+  const EN = pair(['Choose files to attach', 'Attachable files', 'Images', 'Text & documents'])
+  for (const [tag, lang, want] of [['en', 'en', EN], ['ko', 'ko', KO], ['기본(설정 없음)', null, KO]]) {
+    const got = labelsUnder(exe, tag.replace(/[^a-z]/g, '') || 'def', lang)
+    console.log(`  ui.lang=${String(lang)} (${tag})`)
+    console.log(`    ${got ? got.map(([f, w]) => `${f}=${w}`).join(' | ') : '(자식이 라벨을 안 찍었다)'}`)
+    ok(got != null && JSON.stringify(got) === JSON.stringify(want), `  ${tag} 기대와 일치`)
+  }
+}
+
+console.log(`\n${fails === 0 ? '전부 통과' : `${fails}건 실패`}`)
+process.exit(fails === 0 ? 0 : 1)

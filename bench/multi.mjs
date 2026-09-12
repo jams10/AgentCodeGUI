@@ -1,0 +1,380 @@
+// 멀티채팅 성능 — 이 프로젝트의 **주 게이트**.
+// 사용자 지적: "여러 개 켰을 때가 항상 문제". 단일 채팅은 어느 런타임이든 여유롭게
+// 통과하므로 변별력이 없다. 여기서 이겨야 3.0이 이긴 것이다.
+//
+// 재는 것:
+//  1) 패널 4개 + 추가 채팅 창 2개 유휴 메모리 (프로세스 트리 합)
+//  2) 그 상태에서 패널 하나를 스크롤할 때 FPS (다른 패널이 DOM에 살아있는 채로)
+//  2b) **4패널 동시 스크롤** — 부하 팔(R3 크리틱 §9-4). 한 패널 스크롤은 두 앱 다
+//     p95 16.8ms로 붙어 실패 경계 근처에 가지 않는다 = 정보가 없다.
+//  3) 패널 4개 동시 스트리밍 중 FPS·드랍 (--live일 때만, 실 엔진 4턴 동시)
+//  4) 창을 늘릴 때 프로세스가 몇 개 늘어나는지 (WebView2 vs Chromium 창 비용)
+//
+// 사용: node bench/multi.mjs electron|tauri [--live] [--panels=4] [--repeats=5]
+//
+// ── R3 크리틱 §9-2 결함 수정 ──────────────────────────────────────────────────
+// 전에는 결과를 `multi-<app>.json` **한 파일에 덮어썼다.** 팔(CCG_SINGLE_PROCESS 등)을
+// 바꿔 돌리면 직전 팔이 사라지고, 빌더는 5회 결과를 손으로 `repeats` 블록에 적어 넣었다
+// (= 하네스 산출물이 아니다). 이제
+//   (a) 파일명·본문에 팔 이름이 들어가고(`multi-<app>-<arm>.json`),
+//   (b) `--repeats=N`으로 **하네스가 직접** N회 부팅·반복하고 중앙값을 쓴다,
+//   (c) 어느 exe로 쟀는지(mtime/sha/gitHead)를 파일에 박는다(§9-6).
+import fs from 'node:fs'
+import path from 'node:path'
+import { spawn, execFileSync } from 'node:child_process'
+import {
+  electronProfile, tauriProfile, connectMainPage,
+  procTreeMem, killTree, median, sleep, envInfo, provenance, armName, REPO
+} from './lib.mjs'
+import { makeMultiFixture, plantAccountDirs } from './fixture.mjs'
+
+const kind = process.argv[2] ?? 'electron'
+const live = process.argv.includes('--live')
+const panels = Number((process.argv.find((a) => a.startsWith('--panels=')) ?? '--panels=4').split('=')[1])
+const repeats = Number((process.argv.find((a) => a.startsWith('--repeats=')) ?? '--repeats=1').split('=')[1])
+// ★R4 — `--exe=`로 **고정된 바이너리**를 잰다. 같은 레포에서 다른 라운드가 주행 중에
+// `rm -f target/release/agentcodegui.exe && npm run tauri:build`을 돌리면 exe가 사라진다
+// (R3 §R3.6에서 두 번 밟았고, 이번 라운드에선 `node_modules`가 통째로 비는 것도 봤다).
+const exeArg = (process.argv.find((a) => a.startsWith('--exe=')) ?? '').split('=').slice(1).join('=')
+// ── --tag / --out / --port (R28j DECIDE) ──────────────────────────────────────
+// `multi-<app>-<arm>.json`은 **주 게이트의 기준 결과 파일**이다(파리티 감사가 인용한다).
+// 같은 워크트리에서 여러 갈래가 동시에 도는 지금, 새 주행이 그것을 말없이 덮으면 근거가
+// 사라진다. `--tag=<t>`는 (a) 결과 파일명에 접미사를 붙이고 (b) 격리 홈을 갈라
+// (c) CDP 포트 충돌을 피하게 한다. 태그가 없으면 예전과 완전히 같은 동작이다.
+const argv = (k, d) => (process.argv.find((a) => a.startsWith(`--${k}=`)) ?? `--${k}=${d}`).split('=').slice(1).join('=')
+const TAG = argv('tag', '')
+const OUT_NAME = argv('out', '')
+const PORT = Number(argv('port', kind === 'tauri' ? 9334 : 9333))
+// ── --cwd (R28j DECIDE 수정 R1) ───────────────────────────────────────────────
+// ★ 이 한 줄이 주 게이트의 해석을 바꾼다.
+// `crates/ccg-lsp/src/launch.rs::shipped_module()`은 node_modules를 ① CCG_LSP_MODULES
+// ② **exe 폴더에서 위로** ③ **프로세스 cwd에서 위로** 훑어 찾는다. 벤치는 exe가
+// `target-*/release`(레포 안)이고 cwd도 레포라 **항상 레포의 node_modules를 문다** —
+// 그래서 3.0 팔에만 LSP 헬퍼가 뜬다. 설치본은 `%LOCALAPPDATA%\AgentCodeGUI3`에 exe와
+// uninstall.exe 두 파일뿐이고 조상 폴더에도 node_modules가 없어 헬퍼가 **0개**다.
+// 즉 벤치 경로와 배포 경로가 다른 상태를 잰다. `--cwd=`는 그 차이를 **재게** 해 준다.
+// 없으면 예전과 완전히 같은 동작(REPO).
+const CWD = argv('cwd', '')
+// ── --no-cmdline (GATES R1) ───────────────────────────────────────────────────
+// 프로세스 표본에 **명령줄과 부모 PID**를 같이 싣는다. 끄는 문(`--no-cmdline`)은 남기되
+// 기본은 켬이다 — 이유는 `procSample()` 머리말에 있다(2.6.2의 LSP를 이름으로는 못 센다).
+const NO_CMDLINE = process.argv.includes('--no-cmdline')
+// ★FPS144 R2 — 격리 홈에 계정 설정 폴더를 심어 **--live 턴이 로그인 상태를 잇게** 한다.
+// 기본 끔이라 기존 주행은 한 글자도 안 바뀐다. 왜 필요한지는 fixture.mjs의 plantAccountDirs.
+const ACCT = process.argv.includes('--acct')
+const profile = kind === 'tauri' ? tauriProfile({ ...(exeArg ? { exe: exeArg } : {}), port: PORT }) : electronProfile({ port: PORT })
+if (TAG) profile.env.CCG_HOME += '-' + TAG
+if (CWD) profile.cwd = path.resolve(CWD)
+const appVersion = kind === 'tauri' ? '3.0.0-beta.1' : '2.6.2'
+const home = profile.env.CCG_HOME
+const arm = armName({ ...process.env, ...profile.env })
+
+// ── FPS 수집기 (한 곳에만 둔다 — 문법이 갈리면 회차 비교가 무너진다) ──────────
+const COLLECT = `(() => {
+  window.__bench = { frames: [], long: 0, stop: false }
+  const b = window.__bench
+  let last = performance.now()
+  function loop(t) { b.frames.push(t - last); last = t; if (!b.stop) requestAnimationFrame(loop) }
+  requestAnimationFrame(loop)
+  try { b.po = new PerformanceObserver((l) => { for (const e of l.getEntries()) b.long += e.duration }); b.po.observe({ entryTypes: ['longtask'] }) } catch (e) {}
+  return true
+})()`
+const HARVEST = `(() => {
+  const b = window.__bench; b.stop = true; if (b.po) b.po.disconnect()
+  const f = b.frames.slice(5); if (!f.length) return null
+  const s = [...f].sort((a, c) => a - c), sum = f.reduce((a, c) => a + c, 0)
+  return { frames: f.length, avgFps: Math.round(1000 / (sum / f.length) * 10) / 10,
+    p95Ms: Math.round(s[Math.floor(s.length * 0.95)] * 10) / 10,
+    worstMs: Math.round(s[s.length - 1] * 10) / 10,
+    droppedPct: Math.round(f.filter((x) => x > 33).length / f.length * 1000) / 10,
+    droppedFrames: f.filter((x) => x > 33).length,
+    longTaskMs: Math.round(b.long) }
+})()`
+
+// ── ★ 프로세스 표본 — 이름이 아니라 **명령줄**로 가른다 (GATES R1) ────────────
+//
+// 결함(LSPDIST R1 §6.5 · 그 확인 크리틱 C5가 확정): `bench/ratios.mjs`의 헬퍼 분류기는
+// 프로세스 **이름** 정규식 `/^(node|conhost|…)/`이었는데, **2.6.2는 언어 서버를
+// `electron.exe`로 띄운다**(`ELECTRON_RUN_AS_NODE=1`). 즉 2.6.2의 LSP 헬퍼는 그 정규식에
+// **구조적으로 안 걸린다** — 「2.6.2 헬퍼 0」은 측정이 아니라 **분류 산물**이었고,
+// 그 위에서 계산한 「LSP 제외」 비율은 3.0에서만 100MB대를 빼고 2.6.2에서는 0을 뺐다.
+// 게이트를 그 수로 확정하려는 지금, 이 결함을 먼저 고치지 않으면 잣대가 한쪽으로 기운다.
+//
+// 처방: 표본에 `cmdline`과 `ppid`를 싣는다. 그러면 소비자(ratios.mjs)가
+//   ① 명령줄의 **서버 스크립트 이름**으로 헬퍼를 가르고(두 앱에서 같은 자),
+//   ② 부모-자식으로 딸린 `conhost.exe`까지 헬퍼 몫에 붙일 수 있다.
+// (LSPDIST R1 §6.5가 「다음 라운드 숙제」로 남긴 두 갈래 ⅰ·ⅱ가 바로 이것이다.)
+//
+// **값과 분류를 다른 순간에서 뽑지 않는다**: WS/Private은 `procTreeMem` 한 번의 스냅샷이고,
+// 두 번째 질의는 **분류에 쓸 문자열만** 가져온다(PID는 그 사이에 정체가 안 바뀐다).
+//
+// ★ 그리고 표본을 **세 순간에** 남긴다(`procDetailIdle`/`Windows` + 주행 끝 `procDetail`).
+//   전에는 주행 맨 끝 한 장뿐이라, 「LSP 제외」가 *정착 직후 summary − 주행 끝 헬퍼*라는
+//   **서로 다른 두 순간의 뺄셈**이었다(decisions §1.6-A (c″) — 「정공법은 하네스 숙제」).
+//   게이트를 그 뺄셈 위에 세우는 라운드라 그 숙제를 여기서 갚는다.
+function cmdlineMeta(pids) {
+  if (NO_CMDLINE || !pids?.length) return {}
+  const ps = String.raw`
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$ids = @(${pids.join(',')})
+$rows = Get-CimInstance Win32_Process | Where-Object { $ids -contains [int]$_.ProcessId } |
+  ForEach-Object { @{ pid = [uint32]$_.ProcessId; ppid = [uint32]$_.ParentProcessId; cmdline = $_.CommandLine } }
+ConvertTo-Json -InputObject @($rows) -Depth 3 -Compress
+`
+  try {
+    const raw = execFileSync('powershell', ['-NoProfile', '-Command', ps], { encoding: 'utf8', timeout: 30000 })
+    const arr = JSON.parse(raw.trim() || '[]')
+    const out = {}
+    for (const r of (Array.isArray(arr) ? arr : [arr])) out[r.pid] = { ppid: r.ppid ?? null, cmdline: r.cmdline ?? null }
+    return out
+  } catch {
+    return {}   // 분류가 없으면 소비자가 예전 방식(이름)으로 떨어진다 — 값은 안 잃는다
+  }
+}
+function procSample(rootPid) {
+  const m = procTreeMem(rootPid, { role: true })
+  const rows = m.procs ?? []
+  const meta = cmdlineMeta(rows.map((p) => p.pid))
+  return {
+    totalWsMB: m.totalWsMB,
+    totalPrivMB: m.totalPrivMB,
+    procs: rows.map((p) => ({
+      pid: p.pid, ppid: meta[p.pid]?.ppid ?? null, name: p.name, role: p.role ?? null,
+      wsMB: p.wsMB, privMB: p.privMB, cmdline: meta[p.pid]?.cmdline ?? null
+    }))
+  }
+}
+
+/** 패널 중심 좌표들. 부하 팔은 이 전부에 매 틱 휠을 뿌린다. */
+const PANEL_POINTS = `(() => [...document.querySelectorAll('.ma-p-thread')].map((el) => {
+  const r = el.getBoundingClientRect(); return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) }
+}))()`
+
+async function measureFps(cdp, points, { ms = 6000 } = {}) {
+  if (!points?.length) return null
+  await cdp.eval(COLLECT)
+  const end = performance.now() + ms
+  let dir = -140
+  let flip = performance.now() + ms / 2
+  while (performance.now() < end) {
+    if (performance.now() > flip) { dir = 140; flip = Infinity }
+    // 부하 팔: 한 틱에 모든 패널에 휠을 뿌린다(= 동시 스크롤). 단일 팔은 점이 하나.
+    for (const p of points) {
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: p.x, y: p.y, deltaX: 0, deltaY: dir })
+    }
+    await sleep(16)
+  }
+  return await cdp.eval(HARVEST)
+}
+
+// ── 1회분 (부팅 → 측정 → 종료) ───────────────────────────────────────────────
+async function runOnce(seq) {
+  fs.rmSync(home, { recursive: true, force: true })
+  const fx = makeMultiFixture(home, appVersion, { panels })
+  if (ACCT) { const r = plantAccountDirs(home); if (seq === 0) console.log('계정 설정 폴더 이식:', JSON.stringify(r)) }
+  if (seq === 0) console.log(`multi fixture: ${panels} panels x ${fx.itemsPerPanel} items @ ${home}`)
+
+  const child = spawn(profile.cmd, profile.args, {
+    env: { ...process.env, ...profile.env }, cwd: profile.cwd, stdio: 'ignore'
+  })
+  const cdp = await connectMainPage(profile.port, { timeoutMs: 45000 })
+  for (;;) {
+    if (await cdp.eval(profile.mountExpr).catch(() => false)) break
+    await sleep(100)
+  }
+  await sleep(4000)
+
+  const gridPanels = await cdp.eval(`document.querySelectorAll('.ma-p-thread').length`)
+  console.log(`[${seq + 1}/${repeats}] multi panels rendered:`, gridPanels)
+  if (!gridPanels) {
+    console.error('MULTI GRID NOT RENDERED — 픽스처/부팅 모드 확인 필요')
+    const shot = await cdp.send('Page.captureScreenshot', { format: 'png' }).catch(() => null)
+    if (shot) fs.writeFileSync(path.join(REPO, 'bench', `diag-multi-${profile.name}.png`), Buffer.from(shot.data, 'base64'))
+    cdp.close(); killTree(child.pid); process.exit(1)
+  }
+
+  const out = { seq: seq + 1, panels, itemsPerPanel: fx.itemsPerPanel, gridPanels, at: new Date().toISOString() }
+
+  // ── 1) 멀티 그리드만 띄운 유휴 ──
+  await sleep(20000)
+  const memGrid = procSample(child.pid)
+  out.idleGrid = { totalWsMB: memGrid.totalWsMB, totalPrivMB: memGrid.totalPrivMB, procs: memGrid.procs?.length }
+  // ★ `summary.idleGrid*`와 **같은 스냅샷**의 프로세스별 내역. 「LSP 제외」의 감수를
+  //   여기서 뽑으면 피감수와 같은 순간이 된다(§1.6-A (c″)가 남긴 하네스 숙제).
+  out.procDetailIdle = memGrid.procs
+  console.log('  idle (grid only):', JSON.stringify(out.idleGrid))
+
+  // ── 2) 추가 채팅 창 2개를 더 연 뒤의 유휴 (창당 비용) ──
+  for (let i = 0; i < 2; i++) {
+    await cdp.eval(`window.api.openSessionWindow()`).catch(() => null)
+    await sleep(3500)
+  }
+  await sleep(12000)
+  const memWins = procSample(child.pid)
+  out.idleWithWindows = { totalWsMB: memWins.totalWsMB, totalPrivMB: memWins.totalPrivMB, procs: memWins.procs?.length }
+  out.procDetailWindows = memWins.procs   // ★ +창2 게이트(G4)도 같은 순간으로 뺀다
+  out.windowCost = {
+    wsMBPerWindow: Math.round(((memWins.totalWsMB - memGrid.totalWsMB) / 2) * 10) / 10,
+    procsAdded: (memWins.procs?.length ?? 0) - (memGrid.procs?.length ?? 0)
+  }
+  console.log('  idle (+2 session windows):', JSON.stringify(out.idleWithWindows), 'cost/window:', JSON.stringify(out.windowCost))
+
+  // ── 3) 스크롤 FPS: 한 패널 / 4패널 동시(부하 팔) ──
+  // ★GATES R1 — **FPS 단계의 실패가 주행 전체를 버리지 않게 한다.**
+  //   2.6.2 팔에서 `Input.dispatchMouseEvent`가 20초 타임아웃으로 죽는 일이 잦다
+  //   (이 라운드 실측: 다섯 번 중 네 번). 메모리 표본은 이 단계 **앞에서** 이미 다 찍혔는데
+  //   예외 하나가 `runOnce`를 통째로 깨뜨려 **결과 파일이 아예 안 써졌다** — 분모를 못 재던
+  //   진짜 원인이 이것이다.
+  //   ★ 내 변경 탓이 아니라는 것은 대조로 확인했다: `git archive HEAD`로 푼 격리 트리에서
+  //   **손대지 않은 HEAD의 이 파일**을 그대로 돌려도 같은 자리에서 죽는다(주행 2/3).
+  //   그래서 잡아서 `fpsError`로 남기고 주행을 마친다 — FPS 칸은 null이 되고(숨기지 않는다)
+  //   메모리 칸은 산다.
+  try {
+    const pts = await cdp.eval(PANEL_POINTS).catch(() => null)
+    if (pts?.length) {
+      out.scrollInPanel = await measureFps(cdp, [pts[0]])
+      console.log('  scroll in one panel (others alive):', JSON.stringify(out.scrollInPanel))
+      await sleep(1500)
+      out.scrollAllPanels = await measureFps(cdp, pts)
+      console.log(`  scroll in ALL ${pts.length} panels (부하 팔):`, JSON.stringify(out.scrollAllPanels))
+    }
+  } catch (e) {
+    out.fpsError = String(e?.message ?? e)
+    console.error('  ! FPS 단계 실패 — 메모리 표본은 유효하다:', out.fpsError)
+  }
+
+  // ── 4) 패널 N개 동시 스트리밍 (--live) ──
+  if (live) {
+    console.log('  live streaming across panels')
+    const sent = await cdp.eval(`(async () => {
+      const panels = [...document.querySelectorAll('.ma-panel')]
+      let n = 0
+      for (const p of panels) {
+        const ta = p.querySelector('textarea')
+        const btn = p.querySelector('button.send')
+        if (!ta || !btn) continue
+        const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set
+        setter.call(ta, '1부터 120까지 한 줄에 하나씩, 설명 없이 숫자만 세어줘.')
+        ta.dispatchEvent(new Event('input', { bubbles: true }))
+        await new Promise(r => setTimeout(r, 120))
+        if (!btn.disabled) { btn.click(); n++ }
+        await new Promise(r => setTimeout(r, 200))
+      }
+      return n
+    })()`, { awaitPromise: true }).catch((e) => ({ error: String(e) }))
+    console.log('  panels sent:', JSON.stringify(sent))
+
+    let busy = false
+    for (let i = 0; i < 600; i++) {
+      busy = await cdp.eval(`document.querySelectorAll('.ma-panel .composer.scheduling').length > 0`).catch(() => false)
+      if (busy) break
+      await sleep(100)
+    }
+    if (busy) {
+      await cdp.eval(COLLECT)
+      const t0 = performance.now()
+      for (let i = 0; i < 1800; i++) {
+        const n = await cdp.eval(`document.querySelectorAll('.ma-panel .composer.scheduling').length`).catch(() => 0)
+        if (!n) break
+        await sleep(100)
+      }
+      out.liveStream = await cdp.eval(HARVEST)
+      out.liveStream.busyMs = Math.round(performance.now() - t0)
+      out.liveStream.panelsSent = sent
+      // ★FPS144 R2 — 답변 **내용 증인**. 프레임 수와 busy 지속만 남기면, 3.0이 40자짜리
+      //   `Not logged in` 오류 말풍선 한 장을 재고 있어도 표가 정상으로 보인다(R1이 그렇게
+      //   당했다: 프레임 15장·busy 314ms를 「스트리밍」으로 실었다). `looksLikeStreaming`이
+      //   false인 행은 **스트리밍을 잰 행이 아니다** — 인용하기 전에 이 칸을 본다.
+      const wit = await cdp.eval(`(() => {
+        const rows = [...document.querySelectorAll('.ma-panel')].map((p) => {
+          const ms = p.querySelectorAll('.ma-p-thread .msg')
+          const last = ms[ms.length - 1]
+          return { chars: last ? last.textContent.length : 0, tail: last ? last.textContent.slice(-60) : null }
+        })
+        return { perPanel: rows.map((r) => r.chars), total: rows.reduce((a, r) => a + r.chars, 0), tails: rows.map((r) => r.tail) }
+      })()`).catch(() => null)
+      if (wit) {
+        out.liveStream.answerChars = wit.total
+        out.liveStream.answerPerPanel = wit.perPanel
+        out.liveStream.answerTail = wit.tails?.[0] ?? null
+        out.liveStream.looksLikeStreaming = wit.total >= 400 && !/not logged in|please run \/login/i.test((wit.tails ?? []).join(' '))
+      }
+      console.log('  concurrent streaming:', JSON.stringify(out.liveStream))
+      // 앱 몫 / 엔진 몫 분리 — 엔진(CLI) 프로세스 비용은 두 앱이 똑같이 부담하는 외부
+      // 비용이라, 총합만 보면 "절반 이하"가 구조적으로 불가능해진다. 유휴 시점의 PID
+      // 집합을 기준선으로 잡고, 스트리밍 후 새로 생긴 PID를 엔진으로 분류한다.
+      // (2.6.2는 엔진도 electron.exe로 뜨므로 이름으로는 못 가른다 — PID 차집합이 정답.)
+      const memStream = procTreeMem(child.pid)
+      const uiPids = new Set((memWins.procs ?? []).map((p) => p.pid))
+      const ui = (memStream.procs ?? []).filter((p) => uiPids.has(p.pid))
+      const eng = (memStream.procs ?? []).filter((p) => !uiPids.has(p.pid))
+      const sum = (rows, k) => Math.round(rows.reduce((a, r) => a + r[k], 0) * 10) / 10
+      out.memAfterStream = {
+        totalWsMB: memStream.totalWsMB, totalPrivMB: memStream.totalPrivMB, procs: memStream.procs?.length,
+        uiWsMB: sum(ui, 'wsMB'), uiPrivMB: sum(ui, 'privMB'), uiProcs: ui.length,
+        engineWsMB: sum(eng, 'wsMB'), enginePrivMB: sum(eng, 'privMB'), engineProcs: eng.length
+      }
+      console.log('  mem after concurrent streaming:', JSON.stringify(out.memAfterStream))
+    } else {
+      out.liveStream = { error: 'no panel went busy' }
+    }
+  }
+
+  // 주행 맨 끝 표본 — 옛 파일과 같은 자리(호환). 이제 `cmdline`/`ppid`/`role`이 더 실린다.
+  out.procDetail = procSample(child.pid).procs
+  cdp.close()
+  await sleep(800)
+  killTree(child.pid)
+  await sleep(1500)
+  return out
+}
+
+// ── 실행 ─────────────────────────────────────────────────────────────────────
+const runs = []
+for (let i = 0; i < repeats; i++) runs.push(await runOnce(i))
+
+const pick = (fn) => median(runs.map(fn))
+const summary = {
+  idleGridWsMB: pick((r) => r.idleGrid?.totalWsMB),
+  idleGridPrivMB: pick((r) => r.idleGrid?.totalPrivMB),
+  idleGridProcs: pick((r) => r.idleGrid?.procs),
+  idleWithWindowsWsMB: pick((r) => r.idleWithWindows?.totalWsMB),
+  idleWithWindowsPrivMB: pick((r) => r.idleWithWindows?.totalPrivMB),
+  wsMBPerWindow: pick((r) => r.windowCost?.wsMBPerWindow),
+  procsAdded: pick((r) => r.windowCost?.procsAdded),
+  scrollInPanel: {
+    avgFps: pick((r) => r.scrollInPanel?.avgFps),
+    p95Ms: pick((r) => r.scrollInPanel?.p95Ms),
+    worstDroppedPct: Math.max(...runs.map((r) => r.scrollInPanel?.droppedPct ?? 0)),
+    zeroDropRuns: runs.filter((r) => (r.scrollInPanel?.droppedPct ?? 1) === 0).length
+  },
+  scrollAllPanels: {
+    avgFps: pick((r) => r.scrollAllPanels?.avgFps),
+    p95Ms: pick((r) => r.scrollAllPanels?.p95Ms),
+    worstDroppedPct: Math.max(...runs.map((r) => r.scrollAllPanels?.droppedPct ?? 0)),
+    zeroDropRuns: runs.filter((r) => (r.scrollAllPanels?.droppedPct ?? 1) === 0).length
+  },
+  runs: runs.length,
+  // ★ FPS 단계가 죽은 주행 수. 0이 아니면 위 scroll* 칸은 **그만큼 적은 표본**이다.
+  fpsErrorRuns: runs.filter((r) => r.fpsError).length
+}
+
+const out = {
+  app: profile.name,
+  ...provenance(profile),
+  // ★ 어디서 띄웠는가 — LSP 헬퍼가 뜨는지가 이 한 줄로 갈린다(위 `--cwd` 주석).
+  launchCwd: profile.cwd,
+  panels,
+  repeats,
+  env: envInfo(),
+  summary,
+  perRun: runs,
+  at: new Date().toISOString()
+}
+const file = path.join(
+  REPO, 'bench', 'results',
+  OUT_NAME || `multi-${profile.name}-${arm}${TAG ? '-' + TAG : ''}.json`
+)
+fs.writeFileSync(file, JSON.stringify(out, null, 2))
+console.log('\nsummary:', JSON.stringify(summary, null, 2))
+console.log('saved:', path.relative(REPO, file))

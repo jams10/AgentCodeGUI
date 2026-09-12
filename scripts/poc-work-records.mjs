@@ -7,10 +7,10 @@ import { pathToFileURL } from 'node:url'
 const root = path.resolve(import.meta.dirname, '..')
 const dir = path.join(root, '.dev-home/work-records-verification')
 fs.mkdirSync(dir, { recursive: true })
-await build({ stdin: { contents: `export * from './src/main/generationRecords'; export * from './src/main/generationUsage'; export * from './src/main/workPaths'; export * from './src/renderer/src/store/session';`, resolveDir: root },
+await build({ stdin: { contents: `export * from './src/main/generationRecords'; export * from './src/main/generationUsage'; export * from './src/main/workPaths'; export * from './app/src/store/session';`, resolveDir: root },
   outfile: path.join(dir, 'replay.mjs'), bundle: true, platform: 'node', format: 'esm', alias: { '@shared': path.join(root, 'src/shared') },
   plugins: [{ name: 'fixtures', setup(b) {
-    b.onResolve({ filter: /lib\/i18n$/ }, () => ({ path: 'language', namespace: 'test' }));
+    b.onResolve({ filter: /(?:lib\/|\.\/)i18n$/ }, () => ({ path: 'language', namespace: 'test' }));
     b.onResolve({ filter: /^\.\/secrets$/ }, () => ({ path: 'secrets', namespace: 'test' }));
     b.onLoad({ filter: /.*/, namespace: 'test' }, a => ({ contents: a.path === 'secrets' ? 'export const secretValues=()=>({TRIPO_API_KEY:"fixture-key"})' : 'export const t=(ko,en)=>en' }))
   } }] })

@@ -1,0 +1,119 @@
+[package]
+name = "agentcodegui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "AgentCodeGUI 3.0 — Tauri 앱 셸 (창 레지스트리 + IPC 디스패처)"
+default-run = "agentcodegui"
+
+# 프로덕션 빌드 표식. tauri CLI(`tauri build`)가 이 피처를 켜고, 켜져 있어야 tauri가
+# **번들된 프론트엔드(app/dist)** 를 커스텀 프로토콜로 서빙한다. 켜지지 않으면 dev로
+# 간주해 tauri.conf.json의 devUrl(http://localhost:5273)을 로드한다 — 릴리즈 exe인데
+# vite dev 서버가 없으면 빈 오류 페이지가 뜬다(실측으로 밟은 함정. 벤치가 dev 서버를
+# 재는 사고로 이어진다). 그래서 빌드는 반드시 `npm run tauri:build`로,
+# 수동 cargo 빌드가 필요하면 `cargo build --release --features custom-protocol`.
+# default에 넣지 않는 이유: `tauri dev`는 dev 모드(=이 피처 꺼짐)여야 devUrl을 쓴다.
+#
+# ★R28j UPDATER 수정 R1 — 그 `npm run tauri:build`는 이제 **업데이트 서명 개인키를 요구한다.**
+# `tauri.conf.json`에 `plugins.updater.pubkey` + `bundle.createUpdaterArtifacts:true`가 들어가면서
+# CLI가 번들 **마지막 단계에서** 설치기를 minisign으로 서명하고, 키가 없으면 종료 코드 1이다
+# (설치기는 이미 나온 뒤라 「성공한 빌드를 실패로 읽는」 자리였다 — 확인 크리틱 R1 §3.1 실측).
+# 그래서 그 npm 스크립트는 `scripts/tauri-build.mjs`를 거친다: 키를 찾아 env로 실어 주고
+# (`~/.tauri/agentcodegui3-updater.key` · `CCG_UPDATER_KEY`로 덮음), 없으면 cargo를 켜기 **전에**
+# 무엇을 해야 하는지 말하고 끝낸다. 서명 없이 설치기만 필요하면 `npm run tauri:build:unsigned`
+# (`createUpdaterArtifacts:false` — 그 산출물은 릴리스에 올리면 안 된다).
+[features]
+custom-protocol = ["tauri/custom-protocol"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# tray-icon = 시스템 트레이(M8 — src/tray.rs). image-png = 트레이 아이콘을 exe에 박아
+# 디코드하기 위해(bundle.active=false라 런타임 리소스 경로가 없다).
+tauri = { version = "2", features = ["devtools", "tray-icon", "image-png"] }
+tauri-plugin-dialog = "2"
+# ★R28j N8 — 앱 자동 업데이트(2.6.2 `src/main/updater.ts`의 자리 · `src/updater.rs`).
+#
+# 왜 Tauri 공식 플러그인인가(직접 구현 대신): 이 축의 어려운 부분은 「조회·다운로드」가
+# 아니라 **패키지 검증**과 **NSIS 설치기 기동**이다. 플러그인은 그 둘을 이미 갖고 있다 —
+# minisign 서명 검증(다운로드 바이트를 공개키로 검사 · 우리는 코드 서명서가 없으니
+# 이것이 유일한 진위 판정이다)과, 받은 `.exe`를 임시 경로에 쓰고 `ShellExecuteW`로
+# `/S /R /UPDATE`(tauri.conf.json `installMode: "quiet"` — 무음 설치 + 끝나면 재기동)를
+# 붙여 띄우는 Windows 경로다. 그 둘을 손으로 다시 쓰면 **틀렸을 때 조용한 쪽**이
+# 보안이다. 셸이 직접 드는 것은 상태기계(2.6.2와 같은 6이벤트)와 무음 설치 동안 빈
+# 화면을 메꾸는 스플래시(`updater.rs` `show_splash`)뿐이다.
+#
+# `default-features = false` + `native-tls`인 이유는 `ccg-auth`의 선택과 **같은 근거**다
+# (그 크레이트 Cargo.toml `ureq` 주석): rustls + 번들 루트 인증서 대신 OS 스토어(schannel)를
+# 써 바이너리를 줄이고 인증서 신선도를 OS에 맡긴다. `zip`도 끈다 — 우리 업데이트 아티팩트는
+# NSIS `.exe` 한 장이고(v1 호환 zip을 안 만든다 · `tauri.conf.json`
+# `createUpdaterArtifacts: true`), 켜면 zip·tar·flate2가 따라 들어온다.
+tauri-plugin-updater = { version = "2", default-features = false, features = ["native-tls"] }
+# 업데이트 스플래시(`updater.rs` `show_splash`)의 `-EncodedCommand` — 스크립트를 UTF-16LE
+# base64로. 플러그인(minisign 공개키 디코드)이 이미 끌어오는 판(Cargo.lock 0.22)이라 새
+# 의존은 아니다.
+base64 = "0.22"
+serde = { workspace = true }
+serde_json = { workspace = true }
+# External tools connect to a loopback HTTP API. The adapter protocol lives in
+# bridge/, independently of any editor or model provider.
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
+tokio = { version = "1", features = ["rt", "net", "time"] }
+uuid = { version = "1", features = ["v4"] }
+ccg-store = { path = "../crates/ccg-store" }
+# 3.0 엔진 코어(RunIdentity · 60전이 상태기계 · claude.exe 드라이버). 셸은 이 크레이트를
+# **글루 모듈(src/engine/)에서만** 만진다 — 창·크래시·스토어 코드는 엔진을 모른다.
+ccg-engine = { path = "../crates/ccg-engine" }
+# 계정 도메인(M5) — Codex 엔진의 격리 `CODEX_HOME` 물질화(auth.json + 공유 정션),
+# 그리고 ★M11의 자동 계정 전환(`engine/acct_switch.rs`).
+#
+# `net` 피처를 켜는 곳은 **여기 하나뿐**이다(ccg-auth/Cargo.toml의 규약). 그 크레이트의
+# 테스트는 이 피처 없이 돌아 사용자 실계정에 **구조적으로** 닿을 수 없다 — 그 성질을
+# 지키는 유일한 방법이 "켜는 곳을 셸로 한정"이다. 켜도 `CCG_NO_NET=1`이면 전 호출이
+# 즉시 거절되고(하네스·재생 주행), 파괴적 경로(로그아웃=토큰 해지)는 여전히 조립까지만 한다.
+ccg-auth = { path = "../crates/ccg-auth", features = ["net"] }
+# 파일·Git 도메인(M6) — 탐색기 트리·뷰어 읽기/쓰기·시스템 git 래퍼·Myers 라인 diff.
+# 셸은 `ipc/fs.rs`·`ipc/git.rs`에서만 만진다(창·엔진 코드는 이 크레이트를 모른다).
+ccg-fs = { path = "../crates/ccg-fs" }
+# 코드 인텔리전스(M7) — 언어 서버 수명 관리 + LSP stdio + 시맨틱 토큰 디스크 캐시.
+# 셸은 `ipc/lsp.rs`에서만 만진다(창·엔진·파일 코드는 이 크레이트를 모른다).
+ccg-lsp = { path = "../crates/ccg-lsp" }
+
+# 렌더러/브라우저 사망 감지(src/crash.rs). wry·tauri는 WebView2의 ProcessFailed를
+# 감싸주지 않으므로 `with_webview()`가 주는 ICoreWebView2Controller에 직접 붙인다.
+# 버전은 **tauri가 쓰는 것과 같아야 한다**(다르면 타입이 달라 controller()를 못 받는다):
+# tauri 2.11.5 → webview2-com 0.38 / windows 0.61 (Cargo.lock 확인).
+# windows의 feature들은 tao가 이미 켜 둔 것이라 추가 컴파일 비용이 없다.
+# (Win32_UI_WindowsAndMessaging = 복구 직전 고아 대화상자 정리 — ipc.rs `close_orphan_dialogs`)
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.38"
+windows = { version = "0.61", features = [
+  "Win32_Foundation",
+  # GetModuleHandleW — 창 아이콘을 exe 리소스에서 크기별로 다시 다는 자리(win.rs
+  # apply_resource_icon). tao가 이미 켜 둔 feature라 추가 컴파일 비용이 없다.
+  "Win32_System_LibraryLoader",
+  "Win32_System_Threading",
+  "Win32_System_Com",
+  "Win32_UI_WindowsAndMessaging",
+  # ── 유리(아크릴) 유지 — src/glass.rs ──
+  # DWMWA_SYSTEMBACKDROP_TYPE 재단언(DwmSet/GetWindowAttribute)
+  "Win32_Graphics_Dwm",
+  # SetWindowSubclass/DefSubclassProc — tao의 wndproc을 갈아치우지 않고 **체인**으로
+  # WM_SETTINGCHANGE·WM_DWMCOMPOSITIONCHANGED 등을 엿본다(tauri는 메시지 훅을 안 준다)
+  "Win32_UI_Shell",
+  # 잠금/해제·사용자 전환 통지(WM_WTSSESSION_CHANGE)
+  "Win32_System_RemoteDesktop",
+  # 전역 투명 효과의 2순위 신호 EnableTransparency (1순위는 아래 WinRT)
+  "Win32_System_Registry",
+  # 1순위 진실 소스 — UISettings.AdvancedEffectsEnabled. 설정 앱 토글뿐 아니라
+  # 배터리 절약·원격 세션까지 한 값에 반영된다(DwmGetColorizationColor의
+  # pfOpaqueBlend는 Win11 26200에서 거짓을 돌려줘 쓸 수 없다 — glass.rs 헤더 실측)
+  "UI_ViewManagement",
+  # ★R28f SHIPBLOCK R2 — 로그인 취소가 **래퍼 안의 CLI**까지 닿게(ipc/accounts.rs
+  # `kill_wrapped_child`). `cmd /C`를 거쳐 띄운 `.cmd` 셰임은 우리 자식이 cmd.exe라
+  # `Child::kill()`이 정작 CLI를 못 죽인다 — 스냅샷으로 **직속 자식만** 찾아 죽인다.
+  "Win32_System_Diagnostics_ToolHelp",
+  # ★3.0.3 — UI 스레드 정지(AppHangB1) 때 미니덤프 한 장(crash.rs `arm_ui_watchdog`).
+  "Win32_System_Diagnostics_Debug",
+] }

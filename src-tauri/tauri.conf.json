@@ -1,0 +1,75 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "AgentCodeGUI3",
+  "mainBinaryName": "AgentCodeGUI3",
+  "version": "3.2.5",
+  "identifier": "com.agentcodegui.app",
+  "build": {
+    "frontendDist": "../app/dist",
+    "devUrl": "http://localhost:5273",
+    "beforeDevCommand": "npm run app:dev",
+    "beforeBuildCommand": "npm run app:build"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/UnrealFactory/AgentCodeGUI/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEU2RjRERjcyMzZFNTVFNDYKUldSR1h1VTJjdC8wNWtCZ2dUMXFZR0pXR2ZZU1dYeXp6VWhGMHhsMGE4YXVMdC9nY0h2MjFNM2cK",
+      "windows": {
+        "installMode": "quiet"
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "nsis"
+    ],
+    "createUpdaterArtifacts": true,
+    "resources": {
+      "lsp-runtime/node.exe": "node.exe",
+      "lsp-modules/node_modules/typescript-language-server/lib": "node_modules/typescript-language-server/lib",
+      "lsp-modules/node_modules/typescript-language-server/package.json": "node_modules/typescript-language-server/package.json",
+      "lsp-modules/node_modules/typescript/lib": "node_modules/typescript/lib",
+      "lsp-modules/node_modules/typescript/package.json": "node_modules/typescript/package.json",
+      "lsp-modules/node_modules/pyright": "node_modules/pyright",
+      "custom-runtime/": "custom-runtime/"
+    },
+    "icon": [
+      "../build/icon.ico"
+    ],
+    "publisher": "AgentCodeGUI",
+    "homepage": "https://github.com/UnrealFactory/AgentCodeGUI",
+    "copyright": "Copyright (c) 2026 AgentCodeGUI",
+    "category": "DeveloperTool",
+    "shortDescription": "AgentCodeGUI 3.0 — Claude Code 데스크탑 IDE",
+    "longDescription": "AgentCodeGUI 3.0 — Claude Code 데스크탑 IDE (자체 파일 탐색기 + LSP 코드 인텔리전스). Tauri + Rust 재구축본.",
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "installerIcon": "../build/icon.ico",
+        "headerImage": "../build/installerHeader.bmp",
+        "sidebarImage": "../build/installerSidebar.bmp",
+        "languages": [
+          "Korean",
+          "English"
+        ],
+        "displayLanguageSelector": false,
+        "compression": "lzma",
+        "installerHooks": "./nsis/hooks.nsh"
+      }
+    }
+  }
+}

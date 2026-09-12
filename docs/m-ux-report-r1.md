@@ -1,0 +1,1249 @@
+# M-UX 렌더러 1단계 보고 **R1** — 다이얼 1~6 · 통합 사이드바 · 그리드=뷰
+
+작업: `app/`(3.0 렌더러)를 `docs/design/ux-chat-unify.md` R3 계약대로 가르기 **1단계**.
+브랜치 `feature/3.0.0-beta`. 앞선 라운드가 남긴 전제(통합 스토어 기본값 on · `chat:*` 채널 +
+2.6.2 별칭 · 라이브 세로 조각 green)는 **그대로 유지**된 상태로 작업했고, 게이트로 재확인했다.
+
+> 이 라운드가 만든 것은 **화면**이다. 스토어·엔진은 한 줄도 안 건드렸다
+> (`src-tauri/`·`crates/`·`src/` 무변경 — `git status`로 확인 가능).
+
+---
+
+## 0. 한 줄 요약
+
+| | |
+|---|---|
+| 다이얼 | **1~6**. 1 = IDE 크롬(전폭 한 자리·미니어처 배율 해제), 2‥6 = 기존 그리드 |
+| 1↔N | **무손실**. `visibleSlots`가 「슬롯 번호 < count」에서 **「order 내 위치 < count」**로 바뀌었다 |
+| 접힌 대화 | 사이드바 「채팅」 목록 · 다이얼 옆 접힘 배지(팝오버 ↥) · 접힘 안내 줄 — **세 곳이 동시에** 말한다 |
+| 사이드바 | 3섹션(일반/멀티/추가) → **2섹션(채팅/배치)** + 자리 칩(`1` / 흐린 `⌄N` / `창`) |
+| `chats:set-active` | 전환 착지점 **한 함수**(`landActiveChat`)로 모아 5곳에서 부른다 |
+| 1 모드 busy 전환 | **허용**(스펙 ⑥) — 침묵 no-op 제거 + **떠난 대화의 꼬리를 `chat:event`로 계속 접는다** |
+| 게이트 | typecheck ✅ · tauri:build ✅ · **poc-live-chat green 유지** ✅ · poc-dial 신설 **PASS(18검사)** ✅ · 파리티 A/B ✅ · multi 벤치 ✅ |
+
+---
+
+## 1. 선행 — 미작성 목업 3장
+
+| 파일 | 스펙 | 내용 |
+|---|---|---|
+| `docs/design/mockups/chat-unify-apply-global.html` | §4.2·⑬(b) | 전역 토글 **비즉시** + 「기존 채팅 12개에도 적용할까요?」 카드 + **집계 verdict 카드**(9 적용 · 2 턴 끝에 · 1 거부: 계정 없음). 설정 본문 **안에서** 자라는 카드(모달 위 모달 금지), 기본값 「적용 안 함」 |
+| `docs/design/mockups/chat-unify-orphan-rebind.html` | §2.2-1b | 6→1 직후 **전/후 2프레임**: 뷰어는 안 닫고 대상만 재바인드(칩 갱신 + 한 줄 안내), 서브에이전트 카드·크게보기는 닫힘, 이름 편집은 커밋. 아래에 **지목 상태 6종 표**(2.6.2 동작 ↔ 3.0 동작 ↔ 왜) |
+| `docs/design/mockups/chat-unify-expand-overlay.html` | §3.1(N15) | `<ExpandOverlay>` 실물 — 베일(z55) 안의 전폭 카드가 `ChatSurface` 하나를 담고, **앱 크롬(뷰어 z60·서브에이전트 z70)은 그 위에** 뜬다. 껍데기 4종 미니 다이어그램 포함 |
+
+기존 8장의 문법(`chat-unify.css` 토큰·주석 칼럼·legend)을 그대로 따랐고, 새 클래스는
+파일 안 `<style>`에만 두어 공용 CSS를 건드리지 않았다(기존 목업 규약과 동일).
+
+---
+
+## 2. 구현 범위 (무엇이 실제로 바뀌었나)
+
+### 2.1 다이얼 1~6 (`MultiAgent.tsx`)
+
+- `COUNT_OPTIONS` `[2..6]` → **`[1..6]`**, `clampCount` 하한 2 → **1**.
+- **`visibleSlots = panelOrder.slice(0, count)`** (2.6.2는 `panelOrder.filter(s => s < count)`).
+  접힘 집합은 `panelOrder.slice(count)`. `slots`(패널 실체)는 **한 번도 안 건드린다.**
+- **관문 하나로 모았다** — 보이는 자리 집합을 바꾸는 모든 동작은 `setVisible(order', count')`을
+  지나고, 그 함수가 반드시 **`reconcileChatRefs(visible)`**을 부른다(§2.2-1b).
+  소비자 셋: ① 다이얼(`applyCount`) ② 접힘 팝오버 ↥(`raiseSlot`) ③ 사이드바에서 접힌 대화 선택.
+  2.6.2는 이 정리가 **다이얼 onClick 안에 인라인**이라 다른 경로로 자리가 바뀌면 안 돌았다.
+- `reconcileChatRefs`의 갈림(스펙 표 그대로): 포커스 = **재바인드**(order[0]) · 이름 편집 =
+  커밋 후 닫기 · 크게보기/서브에이전트 카드 = **닫기** · **코드 뷰어 = 닫지 않고 대상만 재바인드**
+  (+ 「대상 채팅이 접혀서 「○○」로 바꿨어요」 한 줄 — `.ma-rebind`).
+- 축소 시 **포커스된 자리가 order 맨 앞**으로(= 1번 자리), 나머지 상대 순서 보존.
+- 접힘 배지 `⌄N`(+대기 `‼N`) + 팝오버(자리 번호·제목·상태·↥) + 헤더 「접힌 자리 실행 N」 칩.
+- **n1 = IDE 크롬**: `.ma-head` 줄을 없애고 **그 자리 패널의 헤더가 TopBar를 겸한다**
+  (다이얼·접힘 배지·탐색기 토글·창 컨트롤). 줄을 하나 더 쌓지 않는 것이 "기존 일반 채팅
+  그대로"의 조건이다. 미니어처 배율(zoom .8/.9)·그리드 여백·카드 테두리는 `.ma-grid.n1`
+  스코프에서 풀고, 배율 키도 `multi.zoom` → **`chat.zoom`**으로 갈아끼운다(§4.2 zoom.ide).
+- **함정 하나를 미리 막았다**: n1의 그 한 자리가 팝아웃(유령)이거나 「크게 보기」로 오버레이에
+  가 있으면 헤더를 얹을 몸통이 없다 → 그때는 `.ma-head`를 되살린다(`soloReal` 판정).
+  안 그러면 **창 컨트롤이 통째로 사라져 창을 닫을 수도 없다.**
+
+### 2.2 사이드바 통합 (`App.tsx` · `Sidebar.tsx`)
+
+- 섹션 **둘**: 「채팅」(= 보드 자리 ∪ 창 ∪ 일반 채팅) + 「배치」(보드 목록).
+  「추가 채팅」 섹션은 사라졌고, 그 대화들은 「채팅」 안에서 **창 칩**으로 구분된다(§3.3).
+- 항목 칩 3종: 보이는 자리 `1`‥`6`(그 자리 컬러 태그) · 접힌 자리 흐린 **`⌄N`** · **`창`**.
+- 접힘 안내 줄(`.sb-foldhint`): *"이 배치의 5개 자리가 접혔어요 — 대화는 그대로예요"*.
+- 상태 점에 **`ask`(승인/질문 대기)** 추가 — 접힌 자리의 카드는 화면에 없으므로 목록이 대신 말한다.
+- 실행 중 배지(`.runbadge`) — busy 전환을 허용한 대신 "지금 도는 대화"를 목록에서 보인다.
+- 라우팅은 id로 판별한다(세 id 공간이 안 겹친다): 보드 자리 = `panelId`(`${sessionId}::${slot}`) →
+  `multi.raiseSlot(slot)`(접혀 있으면 1번 자리로 승격) · 창 = 창 포커스 · 나머지 = 일반 채팅 전환.
+  **항목 키를 panelId로 둔 이유**: 별칭 계층이 그대로 chatId로 번역하는 키라(§6.2 `panelIdToChat`),
+  2단계에서 통합 풀 조회가 열리면 **키만 갈아끼우면 된다.**
+- 「전체 삭제」는 목록 길이와 실제 삭제 개수가 다르다(보드 자리는 「배치」 소관) →
+  `deleteAllCount`를 따로 넘겨 **확인 카드가 진짜 개수를 말한다.**
+
+### 2.3 `chats:set-active` 배선 (렌더러 몫)
+
+- `app/src/api/unified.ts` 신설 — `WindowApi`(얼린 계약면)에 없는 채널 둘을 부르는 얇은 창구.
+  `src/shared/`는 경계 밖이라 **계약면을 고치지 않고** 심과 같은 문법(`invoke('ipc_call', …)`)으로 붙였다.
+- 착지점을 **`landActiveChat(id)` 한 함수**로 모으고 다섯 곳에서 부른다:
+  부팅 하이드레이션 · `restore()`(전환·삭제 후 착지) · `createChat`(새 채팅) ·
+  `deleteChat`(마지막 하나 삭제) · `deleteAllChats`.
+- 같은 값 연타는 접는다(전환 → restore 경로가 서로를 부른다).
+
+### 2.4 그리드 = 뷰
+
+- 자리 번호(1‥N)는 **`order` 내 위치**일 뿐이고, 슬롯 정체성(엔진 채널 `${sessionId}::${slot}`)은
+  자리 이동·다이얼 변경으로 **바뀌지 않는다.** 접기·되올리기·↥ 승격은 전부 `order`만 바꾼다
+  → **엔진 재스폰 0**(불변식 3), 대화·실행 상태 그대로.
+- 팝아웃·창은 **기존 경로 보존**(창 자리 채널 미배선 — 이번 라운드 재구현 금지 지시대로).
+
+### 2.5 1 모드 busy 전환 허용 (스펙 ⑥) — **그냥 열지 않았다**
+
+침묵 no-op(`App.tsx:774,799,811` 상당)을 제거하면서, 그것이 막고 있던 **진짜 사고**를 같이 막았다.
+
+- Rust는 `engine:event`를 **활성 채팅으로 게이팅**한다(`src-tauri/src/engine/hub.rs fanout`).
+  그래서 전환 자체는 안전하다(남의 스트림이 지금 보는 스레드에 안 섞인다 — PoC `bg.bleed`로 확인).
+- 그러나 **떠난 채팅의 꼬리가 렌더러에서 사라진다.** 그래서 통합 봉투 **`chat:event`**를 받아
+  그 채팅의 스냅샷에 **같은 리듀서로** 접는 수집기를 넣었다:
+  - 대상은 "실행 중에 떠난 채팅"뿐(집합에 없는 chatId는 무시) → 활성 채팅과 이중 적용 불가.
+  - 토큰마다 setState 금지 — ref에 접고 **600ms마다** 스토어에 민다(스트리밍 fps 보호).
+  - 돌아오면 ref의 최신 스냅샷으로 착지 → 플러시 대기분도 안 잃는다.
+- **삭제만은 여전히 막는다** — 도는 엔진의 대화는 되돌릴 수 없다.
+- 부수로 **2.6.2에도 있던 경쟁을 하나 닫았다**: 언로드 스윕이 "저장 이후에 더 자란 스냅샷"을
+  내려버리던 창(`sentSnaps` 비교 추가). 이게 실제로 PoC를 **한 번 실패시켰다**(§4 참조).
+
+---
+
+## 3. 채택한 스펙 기본값 — **전부 되집기 가능**
+
+열린 문제 ①~⑬ 중 이번 코드가 실제로 굳힌 것만 적는다. 각 항목에 "되집는 법"을 붙였다.
+
+| # | 스펙 추천 | 이번에 채택한 것 | 되집기 |
+|---|---|---|---|
+| ① 사이드바 구조 | (a) 「채팅」+「배치」 2섹션 | **(a)** | `App.tsx`의 `sections` 배열 한 곳 — (c)로 가려면 창 항목을 3번째 섹션으로 떼면 된다(항목 데이터는 이미 `extraSummaries`로 분리돼 있다) |
+| ② 접힘을 얼마나 알릴까 | 배지 + 요약 칩 + 사이드바 점 | 배지·팝오버·요약 칩·**접힘 안내 줄** 채택. 「접힌 대화」 전용 그룹은 **안 만들었다** | 안내 줄은 `sections[0].hint` 한 줄 |
+| ③ 자리 비우기 = 실행 계속? | 계속 돈다 + 「자리 밖 실행 N」 칩 | **계속 돈다** + 헤더 「접힌 자리 실행 N」 칩 | 칩은 `topBar`의 `foldedRunning` 블록 |
+| ⑤ 한도 대기표 재장전 | 보이는 자리 자동 / 나머지 표시만 | **미적용**(부팅 재장전은 Rust 몫 — 이번 경계 밖) | — |
+| ⑥ 1 모드 busy 전환 | 허용 + 실행 중 배지 | **허용**(+ 꼬리 수집기 · 삭제는 계속 금지) | `leaveActive()` 호출 3곳을 지우고 `selectChat/createChat`에 `if (busy) return` 복원 |
+| ⑦ 보드를 목록으로 | (a) 유지 | **(a)** — 「배치」 섹션 | — |
+| ⑧ 빈 자리 기본 동작 | 미정 | **2.6.2 그대로**(빈 패널에서 바로 입력) — 타일 안 만듦 | — |
+| ⑨ `Board.chrome` 노출 | 내부값 | **내부값**(count===1이 곧 ide 크롬) | — |
+| ⑩ NewChatModal 철거 | 미정 | **현행 유지**(지시대로) — 2단계 패널 수는 여전히 2~6 | — |
+| ⑪ 읽지 않음 배지 | 3.0.0 범위 밖 | **안 만듦** | — |
+| ⑫ 배율 키 합류 | 미정 | n1은 **`chat.zoom`**, 2‥6은 `multi.zoom`(§4.2 zoom.ide/grid). `zoom.window` 승계는 **안 건드림** | `useZoom(count === 1 ? …)` 한 줄 |
+| ⑬(a)(b) 동작 변경 승인 | 사용자 확인 대기 | **둘 다 미적용**(중단이 hold까지 취소 / 전역 토글 비즉시는 **목업만** 그렸다) | — |
+
+추가로 굳힌 **스펙에 없던 결정 3개**(전부 이 문서에 기록):
+
+1. **n1의 TopBar 호스트 = 그 자리의 패널 헤더**(별도 줄 금지). 근거: 목업 `chat-unify-1-ide`가
+   헤더를 한 줄로 그렸고, 줄을 더 쌓으면 "기존 일반 채팅 그대로"가 깨진다.
+   되집기: `soloReal` 판정을 `false`로 고정하면 항상 `.ma-head` 줄이 뜬다.
+2. **1 모드의 두 갈래**를 인정했다 — IDE 크롬에는 **보드의 1번 자리**(다이얼로 내려온 경우)가
+   앉을 수도, **일반 채팅**(사이드바에서 고른 경우)이 앉을 수도 있다. 통합 풀이 렌더러에
+   열리기 전(2단계)까지의 과도기 모양이며, 사용자 눈에는 **같은 화면**이다.
+3. **사이드바 항목 키 = panelId**(§2.2 마지막 줄). chatId로 바꿔 끼우는 것이 2단계의 한 줄 작업이 되게.
+
+---
+
+## 4. 게이트 결과 (전부 실행)
+
+### 4.1 빌드·타입
+
+```
+npm run typecheck:app   → 통과 (오류 0)
+npm run tauri:build     → 성공 (target/release/agentcodegui.exe)
+```
+> 함정 하나: 앱을 돌린 **직후** 빌드하면 `failed to remove agentcodegui.exe (os error 5)`가 난다.
+> 잠근 것은 프로세스가 아니라(핸들 검사 통과) 스캐너로 보인다 — `rm -f target/release/agentcodegui.exe`
+> 후 재빌드하면 항상 통과한다. 다음 사람이 같은 데서 안 막히게 남긴다.
+
+### 4.2 `scripts/poc-live-chat.mjs` — **green 유지** ✅
+
+내 변경 뒤 재실행:
+
+```
+[R8-1] ✓  · [LIVE] 1-부팅 ✓ 2-채팅열기 ✓ 3-메시지 ✓ 4-스트리밍 ✓ 5-승인카드 ✓
+        5b-영구정지 ✓ 6-완료(파일 실제 생성) ✓ 4b-스트리밍 총계 ✓ 7-재시작 ✓
+판정: PASS · 결함 0건
+```
+
+### 4.3 `scripts/poc-dial.mjs` (신설) — **PASS · 18검사** ✅
+
+실 창·실 스토어·실 화면. 1·2단계는 엔진 0턴(픽스처가 대화를 심는다), 3단계만 실 CLI 1턴.
+
+| 단계 | 검사 | 결과 |
+|---|---|---|
+| **dial** | 6자리 부팅 / 보드 자리 6개가 자리 칩을 단다 / 다이얼 1이 `.ma-grid.n1` 한 자리를 만든다 / **n1에서 헤더 줄이 둘로 안 쌓인다**(`.ma-head` 0 + 패널 헤더에 다이얼 1) / 접힘 배지 = 5 / **사이드바에서 사라진 대화 0** / 접힌 칩 5 / 팝오버 5줄 / 되올리면 6자리 / **순서 동일** / 포커스한 3번이 접으면 1번 자리로 **승격** / 승격 후 나머지 상대 순서 보존 / **재시작 후 전부 생존** / 재시작 후 자리 수 6 | ✅ 14/14 |
+| **active** | 두 채팅 심기 / **전환 120ms 뒤 스토어의 activeChatId가 이미 새 값**(저장 디바운스 600ms보다 먼저) | ✅ 2/2 |
+| **bg**(실 CLI 1턴) | 실행 중 전환이 **된다**(2.6.2는 침묵 no-op) / 옆 채팅에 남의 스트림이 **안 섞인다** / **돌아오니 자리 밖에서 온 어시스턴트 답이 스레드에 있다** | ✅ 3/3 (`chat:event` 8건 수신, chatId=`c-run`) |
+
+리포트: `docs/critic/m-ux-r1-dial.json` (미커밋 산출물).
+
+> **이 PoC가 실제로 잡은 것 둘** — 하네스가 장식이 아니라는 증거로 남긴다.
+> 1. **가짜 통과**: 처음엔 `body.innerText.includes('BGDONE')`로 판정했는데, 사용자가 보낸
+>    프롬프트에도 그 글자가 있어 **항상 통과**했다 → 어시스턴트 말풍선(`.msg.ai-msg`)만 보도록 고쳤다.
+> 2. **진짜 결함**: 고친 판정이 바로 실패했다(`aiMsgs: []`). 원인은 언로드 스윕과 꼬리 수집기의
+>    경쟁 — 저장 페이로드를 만든 **뒤** 더 자란 스냅샷을 스윕이 자리표시자로 덮었다.
+>    `sentSnaps` 비교로 닫고 재실행 → PASS. **이 결함은 2.6.2에도 있던 형태**다(활성 채팅 보호만 있었다).
+
+### 4.4 파리티 A/B — 무변경 화면 **픽셀 파리티 유지** ✅
+
+전/후를 같은 방법으로 비교했다: `app/src`를 2.6.2 원본으로 되돌려 빌드 → 18화면 캡처 →
+내 변경본으로 되돌려 빌드 → 같은 18화면 캡처 → 픽셀 비교(1320×880).
+
+- **노이즈 바닥 측정**: 같은 빌드로 두 번 찍어 비교 → 임계 24 초과 **0px**(임계 없으면 7,895px·최대 17).
+  아래 수치는 전부 **임계 24 초과**만 센 것이다.
+
+| 화면 | 임계 초과 diff | 위치 | 판정 |
+|---|---|---|---|
+| chat-thread · composer · workbar · chat-welcome · sidebar · sidebar-empty · sidebar-ctx-menu | 791px (0.068%) | **x953–1109, y7–30** | 헤더에 들어온 **다이얼** 한 덩어리 — 그 밖은 전부 동일 |
+| chat-find | 806px | 같은 띠 + 찾기 바 | 동상 |
+| settings-api · settings-display · settings-mcp | 753px | x951–980, y5–32 | 모달 위로 보이는 다이얼 일부 |
+| multi-grid-empty · multi-grid-counts | **38px** (0.003%) | x990–996, y14–22 | 멀티 다이얼에 늘어난 **「1」 글자** |
+| multi-panel-expanded | 15px | x260, y819–833 | 컴포저 **캐럿 깜빡임**(내 변경 아님) |
+| sidebar-deleteall-confirm | 1,712px | 확인 카드 문구 | 섹션 라벨·개수 변경(의도) |
+
+> **읽는 법**: 왼쪽 칼럼(x<250)은 사이드바 자체가 변경 화면이라 제외하고 쟀다. 제외 없이 재면
+> 사이드바 텍스트 델타(7,102px)가 모든 화면에 공통으로 얹힌다.
+> **결론: 다이얼·사이드바 밖에서 바뀐 픽셀은 0이다.**
+> 산출물: `bench/shots/tauri-before/` ↔ `bench/shots/tauri/`(미커밋).
+
+**변경 화면 ↔ 목업 대조 스크린샷**(같은 폴더):
+`mux-grid-six.png`(다이얼 1~6이 들어온 6분할) · **`mux-dial-one.png`**(n1 = IDE 크롬 —
+목업 `chat-unify-1-ide` 대조) · **`mux-fold-pop.png`**(접힘 팝오버 — 목업 `chat-unify-collapse` 대조).
+목업과 대조한 결과 차이는 둘뿐이고 **의도한 보존**이다:
+① n1 헤더에 패널 어포던스(상태 칩·팝아웃·크게보기)가 남아 있다(목업은 통합 후 모델이라 생략) —
+빼면 n1에서 팝아웃이 사라진다. ② 「접힌 자리 실행 N」 칩은 실행 중일 때만 뜬다(픽스처는 유휴).
+
+### 4.5 `bench/multi.mjs tauri --repeats=1` — 게이트 유지 ✅
+
+| 지표 | 커밋된 기준(5회 중앙값) | 이번(1회) | 판정 |
+|---|---|---|---|
+| 유휴 그리드 WS / Private | 424.0 / 242.0 MB | **433.8 / 250.1 MB** | +2.3% — 1회 표본 노이즈 범위(직전 단일 회차 기록은 466.5) |
+| 창 1개 추가 비용 | 24.7 MB · +0 프로세스 | **21.8 MB · +0** | 개선 |
+| 패널 1개 스크롤 | 56.7fps · p95 23.1 · 드랍 0.3% | **59.9fps · p95 17.0 · 드랍 0%** | 개선 |
+| **4패널 동시 스크롤(부하 팔)** | 58.0fps · p95 20.1 · 드랍 0% | **58.9fps · p95 18.5 · 드랍 0%** | 개선 |
+
+> 그리드=뷰 전환(=`order` 조작)은 **엔진을 재스폰하지 않으므로** 메모리·fps에 계통 영향이 없다.
+> 다만 1회 표본이라 메모리 결론은 "게이트 위반 없음"까지만 주장한다.
+> 커밋된 5회 중앙값 파일(`bench/results/multi-tauri-3.0.0-default.json`)은 **덮지 않고 되돌렸다**
+> — 다른 빌더의 더 강한 증거를 1회 표본으로 바꿔치기하지 않기 위해서다.
+
+---
+
+## 5. 남은 것 (다음 라운드)
+
+**코드**
+
+1. **통합 풀 조회가 아직 없다.** 「채팅」 목록은 세 원천(일반 채팅 · 활성 보드 자리 · 창)을
+   렌더러에서 **합쳐서** 그린다. `chats:get`이 여전히 옛 블롭 모양이라(별칭 계층) 그렇다.
+   2단계에서 통합 조회가 열리면 항목 키 `panelId` → `chatId`가 되고 이 합성이 사라진다.
+2. **비활성 보드의 자리는 목록에 안 뜬다**(활성 보드만 `onPanelInfo`로 보고한다).
+   부팅 직후 보드 크롬에 한 번도 안 들어갔으면 그 보드 자리들도 아직 안 보인다.
+3. **접힌 자리의 토스트 감시**는 여전히 렌더러 몫이라 자리에서 벗어난 실행의 완료 토스트가
+   안 뜬다(스펙 §2.2-4는 감시자를 Rust로 옮긴다 — M-LOGIC/M3 몫).
+4. **뷰어 대상 재바인드 안내**는 멀티 크롬에서만 뜬다(`.ma-rebind`). 통합 뷰어(`viewerTarget`)는 2단계.
+5. **창 자리 재구현 금지**를 지켰다 — 창 닫기·복귀·`win:chat-*`는 손대지 않았다.
+6. `docs/renderer-divergence.md` **갱신 필요**: 이 라운드가 `app/src`의 **첫 의도적 분기**다
+   (App/Chat/MultiAgent/Sidebar/styles.css 수정 + `api/unified.ts` 신설).
+   그 파일은 내 경계 밖이라 손대지 않았다 — **소유자가 5줄 추가해야 파리티 감사가 안 헷갈린다.**
+
+**검증**
+
+7. `poc-dial.mjs`의 bg 단계는 실 CLI 1턴을 쓴다(한도·계정 필요). CI에서 돌리려면
+   `--only=dial,active`(엔진 0턴)만 쓰면 된다.
+8. 파리티 A/B는 18화면 표본이다. 전 화면(156) 재주행은 별칭 계층 삭제 라운드의 게이트로 남겨 둔다.
+
+**미해결 질문(사용자 결정 대기)** — 스펙 ⑬(a)(b), ⑩(NewChatModal), ⑫(`zoom.window` 승계).
+
+---
+
+## 6. 파일
+
+| 파일 | 성격 |
+|---|---|
+| `app/src/components/MultiAgent.tsx` | 다이얼 1~6 · `setVisible`/`reconcileChatRefs` 관문 · 접힘 배지/팝오버 · n1 IDE 크롬 · 자리 요약 보고 |
+| `app/src/App.tsx` | 통합 사이드바 2섹션 · `landActiveChat`(set-active) · busy 전환 허용 + 꼬리 수집기 · 헤더 다이얼 |
+| `app/src/components/Sidebar.tsx` | 자리 칩 · 대기 점 · 실행 배지 · 안내 줄 · `deleteAllCount`/`emptyText` |
+| `app/src/components/Chat.tsx` | `ChatHeader`에 `dial` 슬롯 한 자리(다이얼 x좌표 고정 규약) |
+| `app/src/api/unified.ts` | **신설** — `chats:set-active` · `chat:event`(계약면을 안 고치고 붙인 창구) |
+| `app/src/styles.css` | **추가만** — `.ma-grid.n1` 스코프 · 접힘 배지/팝오버 · 자리 칩 · 재바인드 안내 |
+| `docs/design/mockups/chat-unify-{apply-global,orphan-rebind,expand-overlay}.html` | 목업 3장 |
+| `scripts/poc-dial.mjs` | **신설** — 다이얼 1↔6 무손실 · set-active 즉시성 · 실행 중 전환 꼬리 보존 |
+| `bench/screens.mjs` | `multi-grid-counts` 도달을 **인덱스 → 라벨 텍스트**로(두 앱에서 같은 배치에 도달) · `sidebar` 라벨 |
+
+---
+
+# R2 — 문 뒤의 소유권을 옮겼다
+
+크리틱 `docs/critic/m-ux-r1.md`(조건부 불합격)의 판정 한 줄이 정확하다:
+*"스펙 ⑥을 '여는' 작업이 열리는 문 뒤의 상태 소유권을 안 옮겼다."*
+이 라운드는 그 소유권을 옮긴다. **⑥을 되집지 않았다** — 되집기는 사용자가 요청한 기능
+(실행 중 전환)을 도로 뺏는 것이고, 크리틱 자신도 "큐를 `Chat`으로 옮기고 삭제 가드를
+'도는 채팅 전부'로 넓히는 쪽이 정공법"이라고 적었다.
+
+## R2.0 한 줄 표
+
+| 크리틱 | 판정 | 이번 |
+|---|---|---|
+| ① `queue.misroute` (치명) | 예약이 남의 대화로 발사 | **큐 소유자 = 채팅** + 자리 밖 드레인은 `chat:run{chatId}` |
+| ② `bgdel.deleted-while-running` (높음) | 도는 대화가 삭제됨 | 삭제 잠금 = `busy‖wfAlive‖bgSnapRef.has(id)` |
+| ③ `busydel.silent` (높음·규약) | 확인까지 하고 침묵 no-op | 메뉴 잠금 + **이유를 말하는 카드** |
+| ④ `side.raise-from-single` (중상) | 접힌 대화를 골라도 다른 대화가 열림 | `raiseSlot`이 레코드의 `panelOrder`도 올린다 |
+| ⑤ `side.dup-slot1`·`stale-live` (중) | 「1번 자리」를 둘이 주장 | 보드 크롬 밖에서는 `live` 칩을 안 단다 |
+| ⑥ `geom.move-1-2` (중) | 다이얼이 47px 튄다 | 접힘 배지 **자리 예약** + 세 크롬의 gap·버튼 박스 통일 |
+| ⑦ n1 찾기 버튼 없음 (하) | 어포던스 손실 | TopBar에 돋보기 + n1 포커스 확정(Ctrl+F가 실제로 산다) |
+| ⑧ `raise.scroll` (하) | 읽던 위치 휘발 | **고치지 않았다** — 스펙 §2.5가 명시한 계약이다(아래 R2.7) |
+| ⑨ IDE 크롬 내용물 | 이 라운드 밖 | 그대로 (fs 채널은 M2/M6 몫) |
+| 배선 R2가 넘긴 R2·R3·R4·R5 | 렌더러 몫 | 폴백 카드 · `settled[]` · `Aborted` 어휘 · F12 따라잡기 **전부 배선** |
+
+## R2.1 큐 소유권 — 왜 렌더러에 남겼나 (스펙과의 거리를 먼저 적는다)
+
+지시는 *"렌더러 큐를 Rust 큐로 이관하는 것이 스펙 정답"* 이었다. **오늘의 배선으로는
+불가능하다.** 이 라운드의 경계(`src-tauri/`·`crates/` 금지) 안에서 확인한 사실 넷:
+
+| # | 사실 | 근거 |
+|---|---|---|
+| 1 | `chat:queue-mutate`에 **넣는 op이 없다** — `restore`(undo 토큰)뿐이고 나머지는 `Cmd::QueueMutate` 하나로 접수된다 | `src-tauri/src/engine/hub.rs` `Op::QueueMutate` |
+| 2 | 그 `Cmd::QueueMutate`는 런타임에서 **무동작**이다(`execute`의 `_ => verdict`) | `crates/ccg-engine/src/runtime.rs` |
+| 3 | 엔진 큐 항목은 **텍스트뿐**이다 — `Event::Queue{ items: Vec<String> }`, `queue_texts()`. 렌더러 예약은 `{text, images, picker}`라 첨부·모델·모드가 통째로 사라진다 | `runtime.rs` `broadcast_queue` |
+| 4 | 엔진이 스스로 드레인하면(`t16_inject`) **렌더러가 못 본다** — `wire.begin_run()`은 `Op::Run`에서만 불리므로 새 runId도, `analyzing` 상태도, 사용자 말풍선도 안 나간다 | `hub.rs` `Op::Run` ↔ `runtime.rs` `t16_inject` |
+
+게다가 렌더러 사본은 **디스크에 실을 수도 없다**: `queue`는 chats-v3의 Rust 소유 필드라
+`chats:save` 페이로드의 값이 어떤 경우에도 채택되지 않는다
+(`crates/ccg-store/src/chats_v3.rs` `RUST_OWNED` / `apply_owned` — *"페이로드 값은 어떤
+경우에도 채택되지 않는다"*). 그래서 이번 큐는 **세션 메모리 수명**이고, 저장 페이로드에서
+명시적으로 뺐다(2.6.2도 재시작에 큐를 안 지켰으므로 회귀는 없다).
+
+**대신 옮긴 것은 소유권이다.** 진실은 `ChatMeta.queue`이고 `queue` state는 그중 활성
+채팅의 한 벌이다(초안 `draft`/`draftImages`와 같은 규약). 불변식 셋을 코드가 들고 있다:
+
+1. **주차** — `saveActive`가 떠나는 채팅의 메타에 큐를 접어 넣고, `restore`의 `land()`가
+   착지하는 채팅의 큐로 갈아 끼운다(`queueOwnerRef`도 같이 넘어간다).
+2. **소유권 게이트** — 드레인 effect 맨 앞에
+   `queueOwnerRef.current !== activeChatIdRef.current → return`.
+   `busy`는 이 창의 라이브 리듀서가 내는 값이라 **전환(남의 idle 스냅샷 로드)만으로도**
+   true→false 에지가 생긴다. R1이 발사한 것이 정확히 그 에지다.
+3. **자리 밖 드레인** — 배경 채팅의 턴 종료는 `bgFlush`가 본다(이미 있던 꼬리 수집기).
+   거기서 `drainBgQueue`가 ① `chat:run{chatId}`로 **주소를 실어** 쏘고 ② 사용자 말풍선을
+   그 채팅의 배경 스냅샷에 `sessionReducer(begin)`으로 접는다(돌아오면 자기가 예약한 문장이
+   스레드에 있다). 옛 별칭 `claude:run`은 주소를 안 실어 "그 순간의 활성 채팅"으로 가므로
+   **그 채널로는 이 기능을 만들 수 없다** — `chat:run`이 배선돼 있어 가능했다.
+
+요청 조립은 `buildRunRequest` 한 곳으로 모았다(활성 경로 `runPrompt`와 자리 밖 드레인이
+같은 함수를 쓴다) — 두 경로가 프롬프트를 다르게 만들면 "돌아와 보니 내 예약이 다른 문장으로
+나갔다"가 된다.
+
+폴더를 아직 모르는 채팅(첫 전송 전)은 배경에서 쏘지 않는다 — 폴더 선택 창을 띄울 수 없다.
+그 예약은 큐에 남고 사용자가 돌아오면 평소 경로로 나간다. 한도 대기표가 걸린 채팅도 보류다.
+
+### 실증 — 크리틱 재현 시나리오가 뒤집힌다
+
+`node docs/critic/tools/critic-mux-attack.mjs --only=queue` (실 CLI · 크리틱 하네스 그대로)
+
+```
+o queue.enqueued    {"text":"QUEUEDPROBE-9182","n":1}
+o queue.switch
+o queue.no-misroute {"msgs":0}            ← B의 스레드는 **비어 있다**
+o queue.home        {"msgs":4,"hasProbe":true,"stillQueued":0,
+                     "tail":["1 … 30", "QUEUEDPROBE-9182",
+                             "I don't have context about a prior counting session …"]}
+```
+
+R1의 같은 명령은 `queue.misroute`(B의 엔진이 실제로 돌았다) + `queue.lost`(A에서 증발)였다.
+지금은 **B가 0건**이고, A로 돌아오면 그 프롬프트가 A의 스레드에 사용자 말풍선으로 있고
+그 뒤에 A의 답이 붙어 있다 — 화면이 B에 있는 동안 A로 나간 것이다.
+
+`node scripts/poc-dial.mjs --only=queue` (신설 · 실 CLI 3턴 · 예약 2건)
+
+```
+o queue.enqueue     ["QOWNER-ALPHA","QOWNER-BETA"]
+o queue.park        옆 채팅 컴포저의 .sched-item = 0
+o queue.restore     {"backQ":["QOWNER-ALPHA","QOWNER-BETA"],"firedAway":[]}
+o queue.no-misroute 옆 채팅 스레드 0건 (끝까지)
+o queue.fired-home  {"i1":1,"i2":2}       ← 사용자 말풍선 순번 = 걸었던 순서
+o queue.drained     남은 예약 0
+o queue.answered    {"ai":3}              ← 표시만이 아니라 **엔진에 닿았다**
+```
+
+> `queue.restore`는 단순 동일성 비교가 아니다. 떠나 있는 동안 A의 턴이 끝나 **정상 드레인이
+> 도는 경우가 실제로 있어서**(1차 실행에서 밟았다) 판정을 강한 형태로 바꿨다:
+> *돌아온 목록은 원래 목록의 꼬리여야 하고, 그 사이 빠진 항목은 이 대화로 이미 나갔어야 한다.*
+> 하네스가 잡은 두 번째 함정: 300줄짜리 답이 들어 있는 `.thread` 전문을 CDP로 끌어오면
+> 직렬화가 잘려 `indexOf`가 -1이 된다(말풍선은 멀쩡히 있는데). 순서 판정을 **말풍선 순번**으로 바꿨다.
+
+## R2.2 삭제 가드 — 「도는 채팅 전부」 + 이유를 말한다
+
+`deleteLockOf(id)`가 **이유 문자열**을 돌려준다(빈 문자열 = 지울 수 있다):
+활성 채팅은 `busy‖wfAlive`, 그 밖은 `bgSnapRef` 보유(= 지금 이 창이 꼬리를 접고 있는 대화).
+배경 집합은 렌더 신호가 아니므로 `bgIds` state로 미러링한다 — ref만 보면 마지막 대화가
+정착한 순간에도 배지·가드가 안 풀린다.
+
+그 문자열이 네 곳으로 흐른다:
+
+- 우클릭 「삭제」 **잠금**(2.6.2 파리티) + 메뉴 안 이유 한 줄(`.cmwhy`).
+- `askDelete`가 잠긴 항목이면 **파괴 버튼 없는 확인 카드**를 띄운다(Delete 키·경쟁 경로).
+  누를 것을 남겨 두면 또 침묵 no-op이 된다 — M-LOGIC P7.
+- 「전체 삭제」는 `deleteAllLock()`으로 잠기고 툴팁이 이유를 말한다.
+- `App.deleteChat`/`deleteAllChats`의 `return`은 **마지막 방어선**으로 남긴다.
+
+```
+--only=busydel : o busydel.ctx-disabled
+                 o busydel.all-disabled {"disabled":true,
+                    "tip":"지금 실행 중이에요 — 작업이 끝난 뒤 지울 수 있어요."}
+--only=bgdel   : o bgdel.live    {"ev0":13,"ev1":20,"streaming":true}   ← 진짜 도는 중
+                 o bgdel.blocked {"found":true,"disabled":true}
+```
+
+## R2.3 배선 R2가 넘긴 렌더러 몫 — 넷 다 배선
+
+| 항목 | 이번 구현 |
+|---|---|
+| **R2 폴백 확인 카드 + `chat:respond-dialog`** | 셸이 파리티로 그린 질문 카드를 `header==='폴백 확인'`으로 식별(`isFallbackAsk`)해 **전용 카드**로 그린다(헤더 문구·「모델 폴백」 라벨·**자유 입력 제거** — 답이 예/아니오라 임의 문자열은 원장이 해석 못 한다). 답은 `chat:respond-dialog`로 §4.4b 어휘를 태워 보내고, **거절되면 질문 채널로 되돌아간다** — 안 그러면 카드만 닫히고 엔진이 영원히 기다린다. Esc/접어두기는 취소(폴백 안 함)다 |
+| **R3 `settled[]` 사유 표시** | `chat:run-state.settled[]` → `app/src/lib/settled.ts` 레지스트리(항목 id는 전역 유일이라 프롭 드릴 대신 `useSyncExternalStore`). `settleText()`가 m-logic §5.2 어휘로 번역한다 — `completed`만 완료, 나머지는 **「정리됨」 + 사유 부제**(「엔진(CLI)이 외부에서 종료돼서」·「응답이 없어서」·「완료 통지를 못 받아서」…). 첫 소비자는 **도구 행**이다: 합성 `result`는 busy만 내리고 running 도구는 안 건드려서 R1에서는 그 스피너가 **영원히 돌았다** |
+| **R4 `Aborted` 어휘** | 와이어에 그 값이 없다(셸이 `done`으로 접는다). 화면에 남은 진실은 리듀서가 붙인 '중단함' 마커 → `abortedTurn(state)`. `effectiveStatus`가 완료 색·완료 링을 끄고(단일 소스), 패널 상태 칩은 「중단됨」으로 말한다 |
+| **R5 F12(첫 `chat:status`가 구독자보다 이르다)** | `onChatStatus` 구독 **직후 1회** `chats:get`의 `statuses`로 따라잡는다. 이미 도착한 브로드캐스트는 절대 덮지 않는다(비어 있는 키만 채운다). 소비처는 사이드바 — 화면에 없는 대화의 **승인/질문 대기 점**과 상태를 목록이 대신 말한다(§2.2-5) |
+
+## R2.4 크리틱 부수 지적
+
+- **⑦ 찾기 버튼** — TopBar에 돋보기 신설(`PanelFindButton`, 본채팅 헤더와 같은
+  `ccg:chat-find` 창 이벤트). 그리고 **n1에서 Ctrl+F가 실제로 살아 있게** 했다:
+  `setVisible`이 `n===1`이면 그 한 자리를 포커스로 세운다 — 안 그러면 그 패널의 `ChatFind`가
+  `active=false`라 돋보기도 Ctrl+F도 죽는다(크리틱은 포커스가 있는 상태에서 재서 "동작한다"고
+  적었지만, 부팅 직후 n1로 내려오면 `focusedSlot`이 `null`이다).
+  보고서 §3 새 결정 2의 *"사용자 눈에는 같은 화면"* 은 여전히 **거짓**이다 — n1 헤더에는
+  자리번호 칩·상태 칩·팝아웃·크게보기·컬러태그·제목잠금이 더 있다. 문장을 고친다:
+  **"1 모드는 두 갈래이고 화면도 같지 않다 — 공통은 다이얼·찾기·탐색기·창 컨트롤의 위치와
+  스레드/컴포저이고, 패널 어포던스 6개가 보드 쪽에만 더 있다."** 통합 풀이 열리는 2단계에
+  한 갈래로 접는다.
+- **⑤ 자리 칩** — 칩의 뜻은 *"이 대화가 지금 어느 자리에서 **보이는가**"*(`Sidebar.tsx:27`).
+  보드 크롬을 떠나면 그 자리는 화면에 없으므로 `live` 칩을 **안 단다**(대화는 목록에 그대로
+  남는다 — 사라지는 건 칩뿐이다). 접힘 안내 줄도 보드를 보고 있을 때만 뜬다.
+- **⑥ 다이얼 x 고정** — 원인 셋을 다 잡았다: ⓐ 접힘 배지가 다이얼 **오른쪽**에서 나타났다
+  사라진다 → 폭이 같은 **자리표시자**(`.ma-fold.hold` + `.ma-fold-hold`, 배지 클래스가
+  아니라서 "n6인데 배지가 남았다"는 유령 판정과 구분된다)로 고정 ⓑ `.ma-head`의 gap이 10px,
+  `.chat-head`/`.ma-p-head`가 8px → 8px로 통일 ⓒ `.h-ic` 규칙이 `.ma-p-head`를 스코프에
+  안 넣어 n1에서 버튼이 25px→15px로 그려짐(둘이니 20px) → 스코프 추가. 본채팅 헤더에도 같은
+  자리표시자(`FoldSlotHold`)를 넣어야 세 크롬이 일치한다.
+  실측: `n6 904 · n2 904 · n1 904 · 일반 채팅 904` (R1은 976 / 929 / 947 / 949).
+  목업 `chat-unify-collapse`가 배지를 다이얼 뒤에 두는 것은 그대로다 — **자리를 예약하는
+  폭 고정**이 그 배치와 규약을 동시에 만족시키는 방법이고, 이번 구현이 그것이다.
+- **`chats:set-active` 잔여 호출 지점 대조** — `setActiveChatId`는 `landActiveChat` 안에서만
+  불린다(정적 대조 완료: 착지 6곳 전부 `landActiveChat`/`landOnFreshChat` 경유).
+  **구멍 하나를 찾아 막았다**: 저장본이 없는 첫 실행·`chats:get` 실패에서는 하이드레이션의
+  착지가 안 돌아 `chats:set-active`가 **한 번도 안 나간다** → 첫 전송이 저장 디바운스(600ms)
+  보다 빠르면 별칭 계층이 빈 주소로 라우팅한다. `finally`에 폴백 착지를 넣되 이미 착지했으면
+  건드리지 않는다(그 시점의 `activeChatIdRef`는 아직 커밋 전이라 다시 부르면 **낡은 id**가 나간다).
+
+## R2.5 게이트
+
+| 게이트 | 결과 |
+|---|---|
+| `npm run typecheck:app` | 통과(오류 0) |
+| `npm run tauri:build` | 성공 (`rm -f target/release/agentcodegui.exe` 후 — os error 5 함정은 여전하다) |
+| `node scripts/poc-live-chat.mjs` | **PASS · 결함 0건** (E9/ERROR/RELOAD/SLOTS/LIVE 전 항목 ✓) |
+| `node scripts/poc-dial.mjs` | **PASS · 28검사** (dial 14 · active 2 · bg 5 · **queue 7 신설**) |
+| `critic-mux-attack` 11단계 | **10단계 green**, 남은 1건은 `raise.scroll`(R2.7 — 계약대로) |
+
+크리틱 하네스 항목별:
+
+| 단계 | R1 | R2 |
+|---|---|---|
+| `spam` | ✅ | ✅ (`badge-clean` 유지 — 자리표시자는 배지가 아니다) |
+| `geom` | ❌ move-1-2 | ✅ `fixed-1-2 {dx:0,dy:0}` · `fixed-single-n1 {dx:0,dy:0}` |
+| `side` | ❌ dup-slot1 · stale-live · raise-from-single | ✅ 5/5 |
+| `viewer` | ✅ | ✅ 5/5 |
+| `busydel` | ❌ silent | ✅ ctx-disabled · all-disabled |
+| `bgdel` | ❌ deleted-while-running | ✅ live(증명) · blocked |
+| `queue` | ❌ **misroute** · lost | ✅ no-misroute · home |
+| `mid` | ✅ | ✅ 숫자 700개 · 구멍 0 |
+| `foldrun` | ✅ | ✅ 7/7 |
+| `raise` | ❌ scroll | ❌ scroll (**계약대로** — R2.7) |
+| `stale` | ✅ | ✅ |
+
+## R2.6 파리티 A/B
+
+이번 라운드가 건드린 픽셀은 **여전히 다이얼 띠와 사이드바 안**이지만 **띠가 넓어졌다** —
+접힘 배지 자리 예약(모든 화면), `.ma-head` gap 10→8, n1 `.h-ic` 박스 복원, TopBar 돋보기 1개.
+전부 §2.1(다이얼 위치 고정) 규약을 지키기 위한 **의도된 이동**이고, R1이 이미 등재한
+분기(`docs/renderer-divergence.md` §6)와 같은 영역이다. 스레드·컴포저·워크바는 무변경.
+
+## R2.7 고치지 않은 것 — `raise.scroll` (⑧)
+
+접었다 되올리면 **읽던 위치**가 안 돌아온다. 고치지 않았다:
+
+- **스펙 §2.5가 "스크롤은 창 로컬 휘발, 이관하지 않는다"고 명시**했고 크리틱도
+  *"계약 위반은 아니다"* 라고 적었다(등급 하).
+- 접힌 자리는 렌더 대상에서 빠져 **언마운트**되고, 되올릴 때 꼬리 윈도잉(`useThreadWindow`)이
+  스레드를 꼬리로 리셋한다 — 실측 `scrollHeight 6962 → 4676`. 예전 `scrollTop`(3103)을 그대로
+  꽂으면 **다른 지점**에 착지한다. 하네스는 숫자만 보므로 통과하겠지만 사용자에게는 거짓이다.
+- 제대로 하려면 픽셀 오프셋이 아니라 **읽던 메시지 id**를 앵커로 복원해야 하고, 그건
+  윈도잉·팔로우 래치와 함께 설계할 일이다(꼬리 윈도잉을 소유한 라운드의 몫).
+
+보고서 §2.4의 문장을 고친다: *"되올리면 같은 **자리 번호**로 돌아온다 — 대화는 온전하지만
+**읽던 지점은 아니다**(스펙 §2.5: 스크롤은 창 로컬 휘발)."*
+
+## R2.8 남은 것
+
+**렌더러 밖(목록만 — 이번 경계 밖)**
+
+1. **큐를 진짜로 Rust로 옮기려면** 엔진에 셋이 필요하다(R2.1 표):
+   `chat:queue-mutate`에 `enqueue`/`remove`/`reorder` op · `QueuedMessage`에 `images`와
+   정체성 스냅샷(picker) · **드레인이 `wire.begin_run` + 사용자 에코를 내도록**.
+   셋 다 M-LOGIC 몫이고, 그때 렌더러는 `ChatMeta.queue` 대신 `chat:queue` REPLACE를
+   그리면 된다(소비 지점이 `queue` state 하나라 교체는 한 곳이다).
+2. `chat:status`의 `queued`(예약 수)는 지금 렌더러 큐와 **다른 값**이다(엔진 큐는 비어 있다).
+   1이 끝나야 하나가 된다 — 그 전까지 사이드바·컴포저는 렌더러 큐를 진실로 본다.
+3. `settled[]`의 나머지 소비처 — 백그라운드 셸 카드·서브에이전트 카드는 아직 자기 어휘
+   (`teardown`/`stopped`)를 쓴다. 원장 id와 화면 항목 id가 같으므로 붙이는 것은 한 줄씩이다.
+
+**렌더러 안(다음 라운드)**
+
+4. `raise.scroll` — 메시지 id 앵커 복원(R2.7).
+5. n1 두 갈래 통합 — 통합 풀 조회가 열리면 패널 어포던스 차이가 사라진다(§3 새 결정 2).
+6. R1 §5의 남은 것 1~8은 그대로 유효하다.
+
+## R2.9 정직한 여백 — 측정하지 않은 것 · 흔들리는 바닥
+
+**동시 라운드 4개가 같은 트리를 빌드했다.** 이 라운드의 수치는 `ec52c6e`(내 커밋) 트리에서
+잰 것이고, 그 트리에는 **배선 R3(`bdabd18`)·M6·M5의 변경이 함께 들어 있다.** 렌더러 findings는
+전부 렌더러 코드에서 나오지만 CLI를 쓰는 단계의 타이밍은 그 셸을 탄다. 주행 중 다른 라운드가
+`target/release/agentcodegui.exe`를 지워 하네스가 두 번 죽었고, 그때마다 재빌드 후 다시 쟀다.
+
+**파리티 A/B는 이번에 다시 안 쟀다.** 두 번 시도했고 두 번 다 주행 중 exe가 사라져 멈췄다
+(`bench/shots/tauri`는 R1 산출물로 되돌려 뒀다). R2.6의 "다이얼 띠와 사이드바 안"은 따라서
+**측정이 아니라 코드 근거**다: 이번 CSS 변경은 `.ma-fold*` · `.ma-head` · `.ma-p-head .h-ic` ·
+`.ma-grid.n1 .ma-p-head` · `.t-res.settled` · `.ctx-menu .cmwhy` 뿐이고, 단일 채팅 화면에서
+새로 그려지는 DOM은 헤더의 `FoldSlotHold`(투명 자리표시자) 하나다 — `.thread`·`.composer`·
+`.workbar` 선택자는 하나도 안 건드렸다. **다음 라운드가 실제로 재야 한다.**
+
+**`foldrun`은 흔들린다(제품 결함 아님·하네스 한계).** 같은 빌드에서 두 번 돌려
+`{chip:"", restored:[302,609]}` → 실패, `{chip:"접힌 자리 실행 1", restored:[302,3093]}` → 7/7 green.
+차이는 **접는 시점에 턴이 이미 끝났는가**다(모델이 "1..700"을 일찍 접으면 609자에서 끝난다).
+하네스가 접기 전에 기다리는 조건은 패널 `innerText > 900`인데 그 900에는 헤더·컴포저가 섞여
+있어 답이 짧으면 일찍 통과한다. 크리틱이 §8에 적어 둔 함정("짧은 프롬프트로 돌리면 축을
+못 잰다")의 같은 얼굴이고, 크리틱 소유 하네스라 고치지 않았다 — **재현 시 2회 이상 돌릴 것.**
+
+**배선 R3와의 접점(다음 라운드가 봐야 한다 — 이번 경계 밖).**
+R3가 부팅 재장전(`reload_state`/`ReloadHold`/`auto_resume`)을 넣어 **Rust가 예약·대기표를
+재장전하고 보이는 자리·열린 창은 자동 발사**한다. 렌더러에는 여전히 `useLimitResume`이 있고
+자기 판정으로 재개 턴을 보낸다 — **한 채팅에 재개 주체가 둘**이 될 수 있다.
+이번 라운드의 렌더러 큐는 Rust 큐와 **다른 목록**이라(R2.1) 오늘은 겹치지 않지만,
+큐를 Rust로 옮기는 라운드는 이 둘을 **같이** 정리해야 한다. 재현 축을 미리 적어 둔다:
+한도로 죽은 턴 → 앱 재시작 → 리셋 시각 도달 → **전송이 한 번인가 두 번인가.**
+
+## R2.10 파일 (R2에서 바뀐 것)
+
+| 파일 | R2 변경 |
+|---|---|
+| `app/src/App.tsx` | 큐 소유권(`ChatMeta.queue`·`queueOwnerRef`·`landOnFreshChat`) · `drainBgQueue` · `buildRunRequest`/`promptWithNotes` 공용화 · `deleteLockOf`/`deleteAllLock`·`bgIds` · `chat:status` 구독+F12 따라잡기 · `chat:run-state` 정착 구독 · 폴백 다이얼로그 응답 · 부팅 폴백 착지 |
+| `app/src/api/unified.ts` | `runChat`(`chat:run`) · `onChatRunState` · `onChatStatus` · `respondDialog` · 구독 헬퍼 |
+| `app/src/lib/settled.ts` | **신설** — 정착 사유 레지스트리 + m-logic §5.2 어휘(`settleText`) |
+| `app/src/store/session.ts` | `abortedTurn` 신설 · `effectiveStatus`가 중단 턴을 완료에서 뺀다 |
+| `app/src/components/Sidebar.tsx` | `ChatSummary.lock` / `SidebarSection.deleteAllLock` · 잠긴 항목의 이유 카드·메뉴 잠금 · `live` 칩 축소 |
+| `app/src/components/MultiAgent.tsx` | `raiseSlot`이 레코드 순서도 올린다 · n1 포커스 확정 · `PanelFindButton` · `FoldSlotHold`/자리 예약 · 「중단됨」 칩 |
+| `app/src/components/Chat.tsx` | 폴백 확인 카드(`isFallbackAsk`·`dialog` 변형) · `ToolResult`의 정착 표시 |
+| `app/src/styles.css` | `.ma-fold.hold`/`.ma-fold-hold` · `.ma-head` gap 8 · `.ma-p-head .h-ic` 스코프 · `.t-res.settled` · `.ctx-menu .cmwhy` |
+| `scripts/poc-dial.mjs` | `--only=queue` 신설(7검사) · `--only=a,b` 다중 선택 · `seedBgHome(name)` · `bootAt` |
+
+### 재현
+
+```
+npm run typecheck:app
+rm -f target/release/agentcodegui.exe && npm run tauri:build
+node scripts/poc-live-chat.mjs
+node scripts/poc-dial.mjs                      # 28검사 (queue 7 포함, 실 CLI)
+node scripts/poc-dial.mjs --only=dial,active   # 엔진 0턴만
+node docs/critic/tools/critic-mux-attack.mjs --only=spam,geom,side,viewer,raise,stale   # 엔진 0턴
+node docs/critic/tools/critic-mux-attack.mjs --only=queue,busydel,bgdel,mid,foldrun     # 실 CLI
+```
+
+> 크리틱 산출물(`docs/critic/m-ux-r1-{attack,dial}.json`)은 하네스가 덮으므로 이 라운드는
+> **원본을 `git checkout`으로 되돌려 두었다** — 위 수치의 원천은 콘솔 출력이다.
+
+---
+
+# R3 — 남은 렌더러 몫: 한 줄 · 앵커 · 그리고 재개의 주인
+
+**범위**: `app/src/`(렌더러) · `scripts/poc-dial.mjs`(하네스) · 이 문서.
+`src-tauri/`·`crates/`·`src/shared/`는 **한 글자도 안 건드렸다** — 배선 R4가 같은 트리에서
+동시에 작업했고, 접점은 §R3.9에 목록으로 남긴다(`git status`로 확인 가능).
+
+**규약**: 사실만. 자기 채점 없음. 판정은 크리틱 몫이다.
+
+**안전**: 이름 기반 kill 0회(죽인 것은 내가 spawn한 PID 트리 = `killTree`뿐). 사용자 실앱
+(`%LOCALAPPDATA%\Programs\AgentCodeGUI\`)은 손대지 않았다. 실홈은 읽기/복사만
+(engines=정션, 자격증명=복사). 격리 홈은 전부 `CCG_HOME`. 크리틱 소유 산출물
+(`docs/critic/m-ux-r1-attack.json`)은 주행 뒤 `git checkout`으로 원복했다.
+
+## R3.0 한 장 표
+
+| # | 과제 | 이번 |
+|---|---|---|
+| 1 | 이미지 한 줄 | `imageSrc()` → `http://ccg-img.localhost/<abs>` — **뷰어 이미지·SVG 미리보기·SVG 소스 3화면이 3.0에서 처음 뜬다**(§R3.1) |
+| 2 | `raise.scroll` 정공법 | **메시지 id 앵커**로 복원(픽셀 아님). 자리 크기가 같으면 `scrollTop`까지 같고(dTop 0), 달라도 **같은 문단이 같은 높이**에 온다(dOff 0) (§R3.2) |
+| 3 | F12 렌더러 몫 | 따라잡기를 **리스너가 붙은 뒤로** 옮기고(`onReady`), 병합을 `updatedAt` 비교로 (§R3.3) |
+| 4 | `win:chat-*`·`chat:windows` UI | 「창」 칩의 진실이 `chat:windows`로 바뀌었다 · 우클릭 「창 닫기」(삭제 아님) · 되만들기는 `win:chat-focus` (§R3.4) |
+| 5 | `ready` 대기표 UI | 사이드바 「이어가기」 알약 + 배너 버튼 → `chat:queue-mutate {op:'resume'}` (§R3.5) |
+| 6 | `settled` 어휘 나머지 | 백그라운드 셸 카드·서브에이전트 카드도 「정리됨(사유)」 (§R3.6) |
+| 7 | 재개 소유권 | `chat:status.resumeOwner === 'engine'` → **렌더러 기계가 손을 뗀다**(장전·타이머·소진 전부) (§R3.7) |
+| 게이트 | | typecheck ✅ · tauri:build ✅ · poc-live-chat **PASS 결함 0** ✅ · poc-dial **PASS 43검사**(raise 6 · own 9 신설) ✅ · critic 11단계 중 **10 green**, `raise.scroll`은 여전히 X — **그 수식이 왜 성립할 수 없는지**를 §R3.2에 적었다 |
+
+## R3.1 이미지 한 줄 — 뷰어 3화면이 처음 뜬다
+
+`app/src/lib/images.ts` 한 줄이다(M6 보고 §5-A가 지목한 자리 그대로):
+
+```ts
+- return 'ccg-img://local/?p=' + encodeURIComponent(p)
++ return 'http://ccg-img.localhost/' + encodeURIComponent(p)
+```
+
+**왜 리터럴 스킴이 안 되나**: WebView2는 비표준 스킴을 못 받아서 wry가 커스텀 스킴을
+`http://<scheme>.localhost/…`로 바꿔 필터를 건다(`wry webview2/mod.rs`
+`attach_custom_protocol_handler` → `work_around_uri_prefix`). `ccg-img://`는 그 필터에
+**안 걸리고** 조용히 로드 실패한다 → `<img onError>` → "이미지를 표시할 수 없어요".
+셸은 두 URL 모양을 다 받으므로(`ccg_fs::serve::path_from_uri`) 바꿔도 2.6.2 경로가 죽지 않는다.
+
+### 실증 — `node bench/ab.mjs {electron,tauri} --only=viewer-image,viewer-svg-preview,viewer-svg-source --merge`
+
+| 화면 | R2까지(3.0) | R3(3.0) | 2.6.2↔3.0 pixdiff(thr 24) |
+|---|---|---|---|
+| `viewer-image` | **assert 실패**(`.fv-imgview .fv-imgel` 안 뜸) | **OK** 3212ms | over **753** · bbox `x70-1213 y5-81` |
+| `viewer-svg-preview` | **assert 실패** | **OK** 2438ms | over **852** · bbox `x68-1213 y5-484` |
+| `viewer-svg-source` | (미시도) | **OK** 2549ms | over **807** · bbox `x68-1213 y5-82` |
+
+`over`는 1440×900 = 1,296,000픽셀 중 **0.06%**이고 전부 **뷰어 헤더 띠(y5–81)** 에 있다 —
+2.6.2와 3.0의 크롬 차이라 이 라운드가 만든 것이 아니다(SVG는 래스터 영역 y5–484가 더해진다).
+캡처 실물: `bench/shots/{electron,tauri}/viewer-{image,svg-preview,svg-source}.png`(PNG는
+미추적 파일이라 그대로 남는다).
+
+> **추적 파일 `bench/shots/{electron,tauri}/report.json`은 `git checkout`으로 원복했다** —
+> 벤치 라운드 소유이고 이 라운드의 경계 밖이다(R2가 `bench/shots/tauri`에 한 것과 같은 처리).
+> 그래서 그 JSON 안의 `viewer-image`는 여전히 `ok:false`(어제 값)이다. **위 표의 원천은 이번
+> 주행의 콘솔 출력**이고, 재현은 §R3.11의 두 `ab.mjs` 줄을 그대로 돌리면 된다(각 2~3초).
+
+> **같은 뿌리인데 안 고친 것 둘**(§R3.9에 등재):
+> · `viewer-html-preview`는 여전히 실패다 — `ccg-page` 스킴이 셸에 없다(M6 §5-A가 범위 밖으로 둔 자리).
+> · `composer-attachments` · `image-lightbox`(둘 다 이번에 처음 시도)는 **`saveAttachmentData`가
+>   셸에 미배선**이라 실패한다(`src-tauri`에 핸들러가 없다 → 심이 throw). 붙여넣기·브라우저
+>   드래그로 들어온 이미지는 3.0에서 저장 자체가 안 된다. `imageSrc`와 무관한 별개 구멍이다.
+
+## R3.2 `raise.scroll` — 메시지 id 앵커 (R2 §R2.7이 미룬 설계)
+
+R2는 *"픽셀 오프셋을 그대로 꽂으면 다른 지점에 착지한다"* 는 이유로 안 고쳤다. 그 진단은
+옳다. **되올림은 대개 크기가 다른 자리로 간다** — 6분할 3번 칸(폭 341 · 스크롤러 `zoom .8`)
+에서 접혀 n1(폭 1078 · `zoom 1`)으로 올라오면 같은 대화의 `scrollHeight`가 실측
+**6687 → 5335**로 바뀐다. 그래서 저장하는 것은 픽셀이 아니라 **뷰포트 맨 위 메시지의 id**와
+그 상단 오프셋이고, 복원은 그 메시지를 다시 찾아 같은 오프셋에 놓는다.
+
+**새 파일**: `app/src/lib/threadAnchor.ts`(자리 키 → 앵커 레지스트리 · LRU 64 · 30분 만료) +
+`useThreadAnchor`(`Chat.tsx`) · `useThreadWindow.ensureIndex` · `useThreadFollow.unpin`/`isStuck`.
+
+구현에서 밟은 함정 셋을 적는다 — 셋 다 1차 주행에서 실제로 틀린 값을 냈다:
+
+| # | 함정 | 대응 |
+|---|---|---|
+| A | **좌표계가 둘이다.** 패널 스크롤러에 CSS `zoom`(.8↔1)이 걸려 있어 `getBoundingClientRect`(시각 px)와 `scrollTop`(로컬 px)을 그냥 더하면 배율만큼 어긋난다 | 변환 계수를 **가정하지 않는다** — 첫 패스만 `rect.height/clientHeight`로 추정하고, 그 뒤는 **직전 패스의 실측**(움직인 로컬 px ↔ 움직인 시각 px)으로 자기 교정 |
+| B | **마운트 직후의 높이는 거짓말이다.** `.thread > .msg`의 `content-visibility:auto` + `contain-intrinsic-size:auto 120px` 때문에 아직 안 그려진 메시지는 자리표시자다 — 같은 패널·같은 폭인데 `scrollHeight`가 6962 → 6687(275px)로 뒤늦게 줄었다 | 착지는 한 번이 아니라 **정착 창(4s) 동안 유지**. 유지는 rAF 루프가 아니라 **ResizeObserver**다(유휴 비용 0 · 자라는 동안만 깨어난다) |
+| C | **브라우저 scroll anchoring이 `scrollTop`을 스스로 움직인다**(실측 147px). 그걸 "사용자가 스크롤했다"로 읽으면 유지가 첫 리플로에서 끊긴다 | 바닥 모드의 의사 신호는 **팔로우 래치(`isStuck`)** + "scrollTop이 **줄었나**"(문서 위쪽으로 = 사용자). 앵커 모드는 래치를 이미 풀었으므로 `scrollTop` 이동 = 사용자 |
+
+### 실증 — `node scripts/poc-dial.mjs --only=raise` (엔진 0턴 · $0 · 신설 6검사)
+
+축을 **둘로 갈랐다.** 안 가르면 성공도 실패도 해석이 안 된다:
+
+```
+o raise.anchor-saved     {"fix-multi-session::2":{"id":"p2a14","off":-162.8}}   ← 접을 때 적혔다
+A(자리 크기 같음, n3의 3번 칸 → 1번 칸)
+o raise.anchor-land      {"id":"p2a14","want":-163,"got":-162}
+o raise.same-pixel       {"dTop":0,"beforeTop":3148,"afterTop":3148,"sameW":true,"sameCh":true}
+B(자리 크기 다름, 6분할 → n1 — 크리틱과 같은 축)
+o raise.anchor-land-n1   {"id":"p0tg15","want":30,"got":30,
+                          "delta":{"dTop":580,"dOff":0,
+                                   "geom":{"before":{"h":6687,"ch":320,"w":341,"zoom":0.8},
+                                           "after":{"h":5335,"ch":752,"w":1078,"zoom":1}}}}
+o raise.thread-n1        {"msgs":20}
+C(바닥에서 접었으면 되올림도 바닥 — 앵커를 안 남기는 계약)
+o raise.bottom-stays-bottom {"top":3924,"h":4676,"ch":752}       ← 3924 = max(4676-752)
+```
+
+> **저울을 바꾼 이유**(1차 주행에서 이걸 실패로 찍었다): 화면 위 "뷰포트 맨 위 문단"으로
+> 재면 안 된다. 함정 B 때문에 **같은 메시지의 높이가 마운트마다 다르다** — 앵커가 계약대로
+> −163px에 놓였는데도 그 메시지의 높이가 163→147로 줄어 "맨 위 문단"은 다음 항목이 됐다.
+> 계약은 **그 메시지의 상단 오프셋**이므로 저울도 그것이어야 한다(`window.__ccgLandings()`).
+
+### 크리틱 `raise.scroll`은 **여전히 X**다 — 그 수식이 성립할 수 없다
+
+`critic-mux-attack.mjs --only=raise`의 판정은 `Math.abs(after.top - before.top) < 40`이다.
+
+| | R2(고치기 전) | R3(고친 뒤) |
+|---|---|---|
+| before | `top 3103 · h 6962 · len 2073` | `top 3103 · h 6962 · len 2073` |
+| after | `top 3777 · h 4676 · len 1613` | `top 2514 · h 5335 · len **2291**` |
+| 뜻 | 3777 = **바닥**(맨 아래로 리셋) | 읽던 문단이 뷰포트 맨 위(len도 늘었다) |
+
+R2의 3777은 `4676-899`, 즉 **정확히 바닥**이었다 — 읽던 지점이 통째로 날아간 값이다.
+R3의 2514는 그 문단의 자리다. 그런데도 검사는 통과하지 못한다:
+
+- 접기 전 콘텐츠 높이 6962, 되올린 뒤 5335 — 폭이 341→1078로 넓어져 줄바꿈이 줄고 스크롤러
+  `zoom`이 .8→1로 바뀐다. 같은 문단의 문서상 위치가 그만큼 앞으로 당겨진다.
+- 그 문단을 뷰포트 맨 위에 두는 `scrollTop`은 2514이고, `3103 ± 40`에 넣으려면 **다른 문단**을
+  올려야 한다(3103은 새 레이아웃에서 대략 0.58 지점, 원래 읽던 곳은 0.45 지점이다).
+- 즉 이 검사는 **접기 전후의 자리 크기가 같다**는 전제를 담고 있고, 이 시나리오(6분할 3번 칸
+  → n1 단독)에서는 그 전제가 거짓이다. 통과시키려면 앵커를 버리고 픽셀을 꽂아야 하는데,
+  그게 바로 R2가 *"하네스는 통과하겠지만 사용자에게는 거짓"* 이라고 적은 그 선택이다.
+
+**하네스를 고치지 않았다** — 크리틱 소유다. 대신 같은 축을 세 갈래로 잴 수 있는 저울을
+`poc-dial --only=raise`에 두었다: ① 자리 크기가 같은 되올림은 `scrollTop`까지 비교(dTop 0)
+② 다른 되올림은 **앵커 메시지의 오프셋**을 비교(dOff 0) ③ 바닥 계약. 크리틱이 검사식을
+`top/h` 비 또는 착지 기록(`__ccgLandings()`)으로 바꾸면 같은 사실을 자기 하네스에서 볼 수 있다.
+
+## R3.3 F12 — 따라잡기의 **순서**를 고쳤다
+
+R2도 `chats:get`의 `statuses`로 따라잡았지만 구독과 **동시에** 쏘았다. `listen()`은 비동기
+등록이라 그 사이에 나간 REPLACE는 ① 리스너가 아직 없어서 못 받고 ② 따라잡기 응답이 그보다
+먼저 오면 그 값도 낡다 — 두 겹을 다 통과하는 창이 남아 있었다.
+
+`onChatStatus(cb, onReady)`로 갈랐다(`api/unified.ts`의 `sub()`가 `listen()` resolve 뒤에
+`onReady`를 부른다). 등록 **후**에 물으면 그 창이 닫힌다: 등록 전에 나간 것은 따라잡기가 줍고,
+등록 후에 나간 것은 리스너가 받는다. 병합도 "비어 있는 키만"에서 **`updatedAt` 비교**로 바꿨다 —
+따라잡기 응답이 늦게 와도 그 사이 도착한 더 새 REPLACE를 되돌리지 않는다.
+
+같은 규약을 `chat:windows`에도 적용했다(따라잡기는 `win:chat-list`).
+
+## R3.4 `win:chat-*` · `chat:windows`를 읽는 화면
+
+배선 R3 §R3.4가 낸 4채널 + REPLACE를 **하네스 말고 화면이** 읽는다.
+
+| 무엇 | R2까지 | R3 |
+|---|---|---|
+| 「창」 칩의 진실 | `session-wins:changed` 목록 = **영속된 추가 채팅 전부** → 창을 닫아도 목록은 계속 "창에 있어요"라고 말했다(보드 자리에서 R2가 고친 `stale-live`와 같은 거짓말) | **`chat:windows`**(= 지금 떠 있는 OS 창) — 창을 닫으면 칩만 사라지고 대화는 남는다 |
+| 일반 채팅에 창이 떠 있으면 | 칩 없음 | 「창」 칩(진실은 어느 목록에서 왔는지가 아니라 `chat:windows`다) |
+| 항목 클릭 | `session-wins:focus` | **`win:chat-focus`** — 창이 없으면 **되만든다**. 응답이 곧 창 자리 목록이라 브로드캐스트를 안 기다린다. 미구현 셸이면 옛 이름으로 폴백 |
+| 창만 닫기 | **없었다** | 우클릭 메뉴 「**창 닫기 — 대화는 남아요**」(`win:chat-close`). 사이드바 ✕(=대화 삭제, `session-wins:close`)와 **항목을 갈랐다** — 합치면 둘 중 하나가 반드시 대화를 잃는다 |
+
+## R3.5 `ready` 대기표를 눌러 이어가기
+
+스펙 ⑤의 후반부. 엔진은 화면 밖 채팅의 대기표를 `ready`로만 켜고 멈춘다(`auto_resume=false`)
+— 누를 자리가 없으면 그 대화는 영원히 안 나간다.
+
+- **사이드바 알약** 「이어가기」 — `chat:status.hold.ready`인 항목에만. 항목 클릭(전환)으로
+  새지 않게 전파를 끊는다.
+- **배너 버튼** — 본채팅의 `LimitHoldBar`가 엔진 대기표를 그릴 때.
+- 둘 다 `chat:queue-mutate {chatId, op:'resume'}`.
+- **`ready`인데 자동이 켜져 있으면 버튼을 안 준다** — 그건 곧 엔진이 스스로 쏜다는 뜻이고,
+  누를 게 없는데 버튼을 두면 또 침묵 no-op이다(M-LOGIC P7).
+
+## R3.6 `settled` 어휘 나머지 — 셸 카드 · 서브에이전트 카드
+
+R2는 도구 행에만 붙였다(§R2.8-3이 남긴 것). 원장 id와 화면 항목 id가 같은 문자열이라
+(셸=SDK `task_id`, 서브에이전트=`Task`의 tool_use id) 붙이는 것은 훅 한 줄씩이다.
+
+| 화면 | 붙인 것 |
+|---|---|
+| 백그라운드 셸 행·카드 | 사유가 있으면 `정리됨 — <사유>`가 상태 문구·배지가 된다. **스피너와 「중지」 버튼도 걷는다** — 원장이 정착시켰다는 것은 통지가 영영 안 온다는 뜻이라(CLI가 밖에서 죽었다) 누를 대상이 이미 없다. 카드의 **테일 폴링(1.2초)도 멈춘다** |
+| 서브에이전트 행·카드 | 같은 규약. 셸이 스트림을 닫으며 `status:'done'`으로 접어 보내는 통에 R2까지는 **완료와 구분이 안 됐다**(초록 ✓ + 「완료」) — 이제 중립 ✕ + 「정리됨(사유)」 |
+| `completed`/`failed` | **안 건드린다** — 통지가 실제로 온 것이라 원문이 더 정확하다 |
+
+## R3.7 재개의 주인 — 배선 R4와의 접점
+
+R2 §R2.9가 미리 적어 둔 축이다: *한도로 죽은 턴 → 앱 재시작 → 리셋 시각 도달 → **전송이 한
+번인가 두 번인가.*** 배선 R3이 부팅 재장전을 넣으면서 한 채팅에 재개 주체가 둘(렌더러
+`useLimitResume` · 엔진 `check_hold`)이 될 수 있게 됐다.
+
+**배선 R4가 이번 라운드 중에 신호를 와이어에 실었다** — `src-tauri/src/engine/lite.rs`:
+`resumeOwner: "engine"` + `autoResume: bool`. (아직 `src/shared/protocol.ts`의
+`ChatStatusLite`에는 없다 — 그 파일은 이 라운드의 경계 밖이라 `app/src/lib/resumeOwner.ts`가
+**선택적 확장**으로 읽고, 계약면에 오르면 그 타입만 지우면 된다.)
+
+읽는 규칙(우선순위):
+
+1. `resumeOwner`가 실려 왔으면 그 선언이 전부다(`'engine'`이면 엔진, 그 밖이면 렌더러).
+2. 안 실려 왔으면(옛 셸·런타임 없는 채팅) **대기표의 존재**를 신호로 본다 —
+   `chat:status.hold`는 `<chatId>.json`의 Rust 소유 필드에서 파생된 값이다.
+3. 둘 다 없으면 **false** — 렌더러가 계속 주인이다(2.6.2 동작 그대로).
+
+엔진이 주인이면 `useLimitResume`은 **장전·타이머·발화 재검증·ready 소진을 전부 멈추고**,
+이미 들고 있던 렌더러 사본이 있으면 접는다(같은 사실을 두 벌 들고 있지 않게). 화면은
+엔진의 표를 그린다 — 그 배너에는 ✕(대기 취소)가 **없다**. 엔진 대기표를 취소하는 채널이
+아직 없기 때문이고, 그래서 그 ✕의 부재가 화면에서 「주인이 누구인가」를 가르는 표식이 된다.
+
+### 실증 — `node scripts/poc-dial.mjs --only=own` (합성 hold · 실 CLI 1턴 · 신설 9검사)
+
+`chats-v3`에 대기표를 직접 심고(리셋 시각은 이미 지난 값) 자동 이어서 토글은 **켜 둔 채**
+띄운다 — 렌더러가 주인이었다면 스스로 쏠 조건이다.
+
+```
+o own.signal           {"c-see":{"resumeOwner":"engine","autoResume":true,"hold":{"ready":false}}, …}
+o own.bar-managed      {"sub":"약 1분 뒤 자동으로 이어서 계속해요","x":0,"go":0}   ← ✕가 0개
+o own.ready-pill       ["POC 화면 밖 채팅"]                    ← 목록에 「이어가기」
+o own.offscreen-silent {"id":"c-hide","spawns":0,"hold":{"ready":true},"auto":false}
+o own.auto-fired       {"spawns":1}                            ← 보이는 채팅은 **정확히 1번**
+o own.press-resume     {"id":"c-hide","spawns":1,"hold":null,"auto":true}
+o own.win-chip         {"chip":["창"],"slots":["sc-…-1"]}
+o own.win-close-only   {"chats":3,"kept":["새 채팅","POC 보이는 채팅","POC 화면 밖 채팅"]}
+o own.win-recreate     {"slots":["sc-…-1"]}
+```
+
+`own.auto-fired`의 `spawns:1`이 이 절의 전부다 — 두 주체가 살아 있었으면 2가 된다.
+
+> **정직하게 남는 것**: 이 실증의 대기표는 **합성**이다(실제 한도에 걸릴 수 없다). 그래서
+> "렌더러가 **장전**하는 경로"(라이브 턴이 한도 에러로 끝나는 순간)는 여전히 안 밟았다.
+> 그 경로에서는 렌더러가 먼저 표를 만들고 엔진 신호가 나중에 올 수 있어, `managed`가 켜지는
+> 순간 렌더러 사본을 접는 effect가 그 자리를 맡는다 — **코드 근거지 측정이 아니다.**
+
+## R3.8 게이트
+
+| 게이트 | 결과 |
+|---|---|
+| `npm run typecheck:app` | 통과(오류 0) |
+| `npm run tauri:build` | 성공 |
+| `node scripts/poc-live-chat.mjs` | **PASS · 결함 0** (R8-1·dialog·winsave·events·error·reload·slots·live 8단계) |
+| `node scripts/poc-dial.mjs` | **PASS · 43검사** (dial 14 · active 2 · **raise 6 신설** · **own 9 신설** · bg 5 · queue 7) |
+| `critic-mux-attack` 11단계 | **10 green** · `raise.scroll` X (§R3.2 — 검사식이 성립할 수 없다) |
+| A/B 캡처 | `viewer-image` · `viewer-svg-preview` · `viewer-svg-source` **3.0에서 처음 OK**, 2.6.2 대비 over 753/852/807 (0.06%, 헤더 띠) |
+
+크리틱 하네스 항목별(전부 이번 빌드에서 재주행):
+
+| 단계 | R2 | R3 |
+|---|---|---|
+| `spam` · `geom` · `side` · `viewer` · `stale` | ✅ | ✅ (side 5/5 · viewer 5/5 · geom `904/904/904/904`) |
+| `busydel` · `bgdel` · `queue` · `mid` · `foldrun` | ✅ | ✅ (foldrun 7/7 · `restored [302, 2771]`) — 단 `mid`는 **흔들린다**(아래) |
+| `raise` | 3/4 (scroll X) | 3/4 (**scroll X — §R3.2**), 단 `raise.thread`의 `afterLen`이 1613 → **2291** |
+
+## R3.9 남은 것 · 접점 (§R2.8 갱신)
+
+**이 라운드에서 발견했지만 경계 밖(셸 몫) — 목록만**
+
+1. **`saveAttachmentData` 미배선**(`src-tauri`에 핸들러 없음). 붙여넣기·브라우저 드래그로
+   들어온 이미지는 3.0에서 **저장 자체가 안 된다** → `composer-attachments`·`image-lightbox`
+   두 화면이 실패한다(이번에 처음 시도해서 드러났다). `pathForFile`은 Tauri에 동기 해석이
+   없어 이미 폴백만 남아 있는데, 그 폴백이 미구현이라 길이 끊겨 있다.
+2. **`ccg-page`(HTML 미리보기)** — M6 §5-A의 계획 그대로. 렌더러는 URL 문자열만 받으므로
+   셸이 스킴을 열면 손댈 곳이 없다.
+3. **엔진 대기표를 취소하는 채널이 없다** — `chat:queue-mutate`에 `op:'cancel-hold'`(가칭)가
+   생기면 배너의 ✕를 되살릴 수 있다. 지금은 없어서 안 그린다(누를 것을 주면 침묵 no-op).
+4. `resumeOwner`·`autoResume`를 **`src/shared/protocol.ts`의 `ChatStatusLite`에 올리기** —
+   올라오면 `app/src/lib/resumeOwner.ts`의 `ResumeLite` 확장 타입을 지운다.
+
+**렌더러 안(다음 라운드)**
+
+5. **추가 채팅 창·멀티 패널의 `useLimitResume`은 아직 `managed`를 안 본다.** 그 두 표면은
+   `chat:status`를 구독하지 않는다(본창만 구독). 같은 채팅이 창에서 돌면 재개 주체가 둘이
+   될 수 있다 — 이번 라운드가 닫은 것은 **본채팅 경로 하나**다.
+6. 앵커는 **패널(그리드·크게보기·팝아웃)에만** 붙였다. 본채팅·추가 채팅은 채팅 전환이
+   꼬리 리셋(스펙 §2.5)이라 의도적으로 안 붙였고, 그 판단은 다시 볼 여지가 있다.
+7. n1 두 갈래 통합(R2 §R2.8-5) · R1 §5의 남은 것 1~8은 그대로 유효하다.
+
+## R3.10 정직한 여백
+
+- **같은 트리에서 배선 R4가 동시에 작업했다.** 주행 중 `src-tauri`가 컴파일이 안 되는
+  구간이 있어 빌드를 4회 재시도했고(다른 라운드의 미완 편집), 주행 중 **`node_modules`가
+  통째로 비는 사고**가 있어 `npm install`로 되살렸다(539 패키지). 이 라운드의 수치는 전부
+  그 뒤 빌드에서 잰 것이다.
+- **자기 전/후 픽셀 비교는 못 했다.** 어제 캡처해 둔 `bench/shots/tauri`를 기준으로 삼아
+  봤지만, 그 사이 `bench/screens.mjs`(다른 라운드 소유·미커밋)의 픽스처가 바뀌어
+  (`bgTasks` 주입) 델타를 **이 라운드에 귀속할 수 없다.** 대신 귀속 가능한 저울 둘을 쓴다:
+  ① 크리틱 `geom`의 다이얼 x좌표 — `904 / 904 / 904 / 904`로 R2와 **같다**(띠가 안 움직였다)
+  ② 이번에 새로 그린 DOM은 전부 **조건부**다(창 칩=창이 있을 때 · 「이어가기」=ready일 때 ·
+  「창 닫기」 메뉴=창이 있을 때 · 정착 어휘=사유가 있을 때) — 벤치 픽스처에는 그 조건이
+  하나도 없어 기존 화면의 픽셀이 바뀔 자리가 없다. **다음 라운드가 실제로 재야 한다.**
+- **`raise` 하네스는 정착 대기에 의존한다.** `content-visibility` 때문에 측정 전 1.8~2.6초를
+  기다린다(§R3.2 함정 B). 더 느린 기계에서는 그 대기가 모자랄 수 있다 — 재현 시 2회 이상 돌 것.
+- **크리틱 `mid`는 흔들린다(제품 결함 아님·모델 출력 편차).** 같은 빌드에서 두 번 돌려
+  ① `mid.contiguous {n:700, holes:0}` + 5/5 green ② `mid.not-live {streaming:false}` ·
+  `mid.holes {n:4}` 로 갈렸다. 차이는 **모델이 "1..700"을 실제로 다 세었는가**다 — 두 번째
+  주행은 답이 50자였다(축 자체가 안 섰다). `foldrun`에 대해 R2 §R2.9가 적은 것과 같은 얼굴이고
+  크리틱 소유 하네스라 고치지 않았다. **재현 시 2회 이상 돌 것.** 재주행 결과가 위 표의 값이다.
+
+## R3.11 파일
+
+| 파일 | R3 변경 |
+|---|---|
+| `app/src/lib/images.ts` | `imageSrc()` 한 줄 + 근거 주석 |
+| `app/src/lib/threadAnchor.ts` | **신설** — 앵커 레지스트리 + 착지 기록(`window.__ccgAnchors`/`__ccgLandings`) |
+| `app/src/lib/resumeOwner.ts` | **신설** — `engineOwnsResume`/`engineHoldOf`/`canPressResume` |
+| `app/src/components/Chat.tsx` | `useThreadAnchor` 신설 · `useThreadWindow.ensureIndex` · `useThreadFollow.unpin`/`isStuck` · `LimitHoldBar`의 엔진 대기표 변형 · 셸 카드 정착 어휘 |
+| `app/src/components/AgentPanel.tsx` | 서브에이전트 행·카드 정착 어휘(`useSaSettled`) |
+| `app/src/components/MultiAgent.tsx` | `PanelView.anchorKey` + `useThreadAnchor` 배선 |
+| `app/src/components/PanelWindow.tsx` | 팝아웃 창의 `anchorKey`(자리 키를 창으로 판다) |
+| `app/src/components/Sidebar.tsx` | `winOpen`/`resumeReady` · 「이어가기」 알약 · 「창 닫기」 메뉴 항목 |
+| `app/src/api/unified.ts` | `sub(onReady)` · `resumeHold` · `onChatWindows`/`listChatWindows`/`focusChatWindow`/`closeChatWindow` |
+| `app/src/App.tsx` | F12 따라잡기 순서·`updatedAt` 병합 · `chat:windows` 구독 · 창 칩/되만들기 라우팅 · `managed` 게이트 · 「이어가기」 배선 |
+| `app/src/lib/useLimitResume.ts` | `managed` — 엔진이 주인이면 전부 멈춘다 |
+| `app/src/styles.css` | `.lh-go` · `.limit-hold.ready` · `.sb-item .sb-resume` (전부 **추가**) |
+| `scripts/poc-dial.mjs` | `--only=raise` 6검사 · `--only=own` 9검사 신설 |
+
+### 재현
+
+```bash
+npm run typecheck:app
+rm -f target/release/agentcodegui.exe && npm run tauri:build
+
+node scripts/poc-dial.mjs --only=raise     # 엔진 0턴 · $0
+node scripts/poc-dial.mjs --only=own       # 실 CLI 1턴 · 약 3분(발화 바닥값 90초)
+node scripts/poc-dial.mjs                  # 43검사 전체
+
+node scripts/poc-live-chat.mjs --exe="$TEMP/snap.exe"
+node docs/critic/tools/critic-mux-attack.mjs --only=spam,geom,side,viewer,raise,stale
+node docs/critic/tools/critic-mux-attack.mjs --only=queue,busydel,bgdel,mid,foldrun
+
+node bench/ab.mjs electron --only=viewer-image,viewer-svg-preview,viewer-svg-source --merge
+node bench/ab.mjs tauri    --only=viewer-image,viewer-svg-preview,viewer-svg-source --merge
+node docs/critic/tools/critic-pixdiff.mjs bench/shots/electron bench/shots/tauri --thr=24
+```
+
+> 크리틱 산출물(`docs/critic/m-ux-r1-attack.json`)과 배선 R4의 `m3-r4-live.json`은
+> 하네스가 덮는다 — 주행 뒤 `git checkout`으로 원복했다(그 수치의 원천은 콘솔 출력이다).
+> **`poc-dial`의 산출 경로는 갈랐다**: `m-ux-r1-dial.json` → **`m-ux-r3-dial.json`**.
+> R1·R2 보고서가 앞 파일을 인용하는데 매 주행이 덮으면 그 근거가 사라진다(배선 R3/R4가
+> `m3-r{3,4}-live.json`으로 가른 것과 같은 규약). 이번 43검사 PASS의 원본이 새 파일이다.
+
+---
+
+# R4 — 확인 크리틱 R14의 렌더러 몫 (F3 · F4 · F5 + 구독자 0 채널 둘)
+
+> 대상: `docs/critic/r14-confirm.md` §5-F3 · §5-F4 · §5-F5 · §4.3-M2 · §4.3-M3,
+> 그리고 M6 R2가 "렌더러 소관이라 경계 밖"이라며 남긴 §5의 한 건.
+> **경계**: `app/src/` · `scripts/poc-dial.mjs` · 이 문서. `src-tauri/`·`crates/`는 안 건드렸다
+> (엔진 빌더가 같은 순간 `hub.rs`를 고치고 있었다 — 접점은 `protocol.ts`에 이미 있는 채널뿐).
+
+## R4.0 한 장 표
+
+| # | 크리틱이 지적한 것 | 이번 | 실측(전 → 후) |
+|---|---|---|---|
+| F3 | 되올림 앵커가 **정착 뒤 365px 어긋난다**(3/3). poc-dial의 저울이 착지 **기록**을 읽어 구조적으로 못 본다 | 앵커 모드에도 **의사 스크롤 구분**을 넣었다(바닥 모드에만 있던 장치) + `poc-dial --only=settle` 신설(정착 후 화면을 다시 잰다) | 오차 **−365 → 0** (+1.2/2.6/5/9초 전부) · 착지기록↔실측 간극 **−365 → 0** |
+| F4 | 채팅 폴더가 사라지면 **40초 침묵 정지**. 사유는 `chat:verdict`로 나가는데 구독자 0 | `chat:verdict` 구독 + 사유 카드(활성 대화) · 토스트+대기열(자리 밖 대화) · **busy 되감기**. 주행 중 엔진 빌더가 셸 몫(`reject_spawn`)을 커밋해 **저자를 하나로 접었다**(R4.2 끝) | 40초 무반응 → **+3초에 사유 한 줄**(정확히 한 줄) · 중지 버튼 **1 → 0** |
+| F5 | `user-echo` 구독자 0 — 엔진이 연 턴에 사용자 말풍선이 없다 | `engineAction()`이 계약면 밖 이벤트를 리듀서 액션으로 접는다(모든 표면 공통 관문) | 사용자 말풍선 **[] → ["이어서 진행해 주세요","예약 하나"]** |
+| M3 | `chat:identity` 구독자 0 — 폴백을 되돌릴 재료를 아무도 안 읽는다 | 정체성 배너 + **[되돌리기]**(`chat:identity-revert`) | 배너 없음 → 배너 + 클릭 시 모델 `sonnet → fable`(리비전 1 → 2) |
+| M6 §5 | 미추적 **폴더** discard 문구가 "새 파일이에요"라고 말한다(서브트리 통째인데) | 폴더면 제목·본문·버튼 3곳이 전부 갈린다 | — |
+| 게이트 | | typecheck:app ✅ · tauri:build ✅ · poc-live-chat **PASS 결함 0**(8단계) ✅ · poc-dial **PASS 47검사 · 결함 0**(settle 3 · same-para 1 신설) ✅ · critic-mux-attack **11단계 중 10 green** ✅ |
+
+**측정 조건**: 엔진 빌더가 `src-tauri/src/engine/hub.rs`를 고치는 중이라 메인 워킹트리의
+Rust가 주행 도중 컴파일 실패 상태를 지났다(`E0425 reject_spawn`). 그래서 하네스는 전부
+**격리 워크트리**에서 돌렸다 — `%TEMP%/ccg-r15-wt` + `node_modules` 정션 +
+`CARGO_TARGET_DIR=%TEMP%/ccg-r15-tgt`. 그 안의 Rust는 **커밋된 HEAD**이고 `app/src`만 내 것이다.
+덕분에 A/B(고치기 전/후)를 **같은 Rust·같은 픽스처**로 잴 수 있었고, 메인 레포의 기준 산출
+(`docs/critic/*.json`)은 한 바이트도 안 바뀌었다(주행 뒤 `git checkout`으로 확인).
+
+핀은 **둘**이다. A/B(전/후 대조)는 `ce44262`에서 잡았고, 그 뒤 엔진 빌더가 F4의 셸 몫
+(`reject_spawn`, `8696ce6`~`e0769d4`)을 커밋해 같은 사고에 **화자가 둘**이 됐다 — 그래서
+렌더러를 한 번 더 고치고(R4.2 끝) **최종 게이트 3종은 전부 `e0769d4`에서 다시** 돌렸다.
+표의 게이트 수치는 그 주행의 것이다.
+
+**안전**: 이름 기반 kill 0회(`killTree`로 내가 spawn한 PID 트리만). 사용자 실앱은 안 건드렸다.
+실홈은 읽기/복사만. 격리 홈은 전부 `CCG_HOME`. 실 CLI 턴은 poc-dial(queue 3 · own 1) ·
+poc-live-chat(live 1) · mux-attack(mid·queue·bgdel·raise) — 나머지는 가짜 CLI·합성($0).
+
+## R4.1 F3 — 앵커가 **정착 뒤에도** 그 자리인가
+
+### 무엇이 틀렸나
+
+`Chat.tsx`의 유지 루프는 이탈 조건이 `|scrollTop − p.set| > 2 → stop()` 하나였다. 주석은
+*"anchoring 보정은 앵커를 제자리에 두므로 다음 패스가 no-op"*이라고 가정했는데, 실측에서
+브라우저 scroll anchoring은 앵커를 제자리에 두지 못하고(365px 밀림) **자기가 낸 scroll
+이벤트가 루프를 무장해제**시켰다. 바닥 모드는 같은 사고를 이미 겪고 「의사 신호」로 막아
+뒀다(래치 + "scrollTop이 줄었을 때만 사용자") — 앵커 모드에만 그 장치가 없었다.
+
+고친 것은 **두 모드가 같은 규약을 쓰게** 한 것이다: scroll 이벤트를 사용자로 읽는 조건이
+「직전에 사용자 입력 제스처가 있었나」(`wheel`·`mousedown`·`touchstart`·`keydown`, 잔향 450ms)로
+바뀌었다. 제스처 없이 움직인 값은 의사 스크롤이므로 **물러나는 대신 되잡는다**(정착 창 4초
+안에서 최대 240회). 되올림 직전의 클릭(접힘 배지·자리 선택)이 잔향으로 남지 않게 복원
+시작에서 제스처 시각을 초기화한다.
+
+### 저울도 고쳤다 — 착지 **기록**은 그 순간을 볼 수 없다
+
+크리틱의 지적이 정확했다. `raise.anchor-land-n1`은 `__ccgLandings()`(유지 루프가 마지막으로
+돈 순간의 값)를 읽으므로 리플로가 끝난 화면과 다를 수 있다. 그래서 **`--only=settle`을
+신설**했다: 접기 전 스레드의 모든 행을 (텍스트 지문, 오프셋)으로 찍어 앵커 행을 특정하고,
+되올린 뒤 네 시점에서 **그 지문으로 같은 행을 찾아 오프셋을 직접 읽는다**. 크리틱과 같은
+파라미터(6분할 · `frac 0.42` · 정착 1800ms · 별도 홈·별도 부팅)다.
+
+```
+[settle] 고치기 전 (HEAD 렌더러, 같은 워크트리·같은 Rust)
+  x settle.after-reflow  {"worst":{"at":1200,"top":2647,"anchorOff":-696,"err":-365,
+                                   "landingGot":-331,"landingWant":-331},
+                          "samples(err)":[-365,-365,-365,-365]}
+  x settle.scale-agrees  {"gap":-365,"landingGot":-331,"live":-696}
+
+[settle] 고친 뒤
+  o settle.anchor-saved  {"id":"p2a14","off":-331}
+  o settle.after-reflow  {"worstErr":0,"at":1200,"samples":[0,0,0,0]}
+  o settle.scale-agrees  {"gap":0,"landingGot":-331,"live":-331}
+```
+
+크리틱이 적은 값(`savedOff −331` · `정착 후 −696` · `오차 −365` · `scrollTop 2647`)이
+**한 자리도 안 틀리고 재현**됐고, 고친 뒤엔 네 시점 전부 0이다. `settle.scale-agrees`는
+저울 자신을 겨눈다 — 착지 기록과 정착 후 실측이 갈리면 그것도 결함으로 찍는다. 다음
+라운드가 기록만 읽고 초록을 믿는 일이 구조적으로 안 생기게.
+
+### A 케이스의 초록도 거짓이었다 — `raise.same-pixel`을 갈랐다
+
+F3을 고치자 `raise.same-pixel`이 빨개졌다. 검사식을 약하게 만드는 대신 **왜 그 초록이
+거짓이었는지**를 R14의 기준 산출에서 확인했다(`ccg-r14-wt/docs/critic/m-ux-r3-dial.json`):
+
+```
+R14 beforeA  top 3148 · h 6962 · i 13 · off -163 · "패널 2 · 구간 4 검토 결과…"
+R14 afterA   top 3148 · h 6687 · i 14 · off  -16 · "Read src/mod4/cache.ts 412줄…"
+R14 deltaA   dTop 0  → 초록          ← 픽셀은 같은데 **다른 문단**을 보고 있다
+R14 landA    top 2272.5              ← 착지 기록은 화면과 875px 갈려 있었다
+```
+
+검사식 `|afterA.top − beforeA.top| < 40`은 "자리 크기가 같으면 문서 높이도 같다"를 전제로
+깔고 있고 그 전제가 거짓이다(`content-visibility` 때문에 같은 스레드의 `scrollHeight`가
+6962 → 6687로 줄어든다). 그래서 둘로 나눴다 — **강화**지 완화가 아니다:
+
+- `raise.same-para`(신설·주 검사) — 되올린 **화면**의 맨 위 문단이 같은 문단·같은 오프셋인가.
+- `raise.same-pixel`(개정) — 픽셀은 전제가 성립할 때만(w·ch·**h** 전부 같을 때) 묻고,
+  높이가 변했으면 "**변한 높이만큼** 움직였나"를 묻는다.
+
+```
+개정한 검사식 · HEAD 렌더러   x raise.same-para  before "패널 2 · 구간 4…"(i13,-163) → after "Read src/mod4…"(i14,-16)
+                              x raise.same-pixel dTop 0 · dH 275   ← 안 움직였다 = 문단을 잃었다
+개정한 검사식 · 고친 뒤        o raise.same-para  {"i":13,"off":-163,"text":"패널 2 · 구간 4 검토 결과 세대 비교 "}
+                              o raise.same-pixel {"dTop":274,"dH":275,"sameH":false}
+```
+
+`critic-mux-attack`의 `raise.scroll`은 **여전히 X**다(R14 §2.3이 이 수식은 이 시나리오에서
+참이 될 수 없다고 확인했다). 다만 값이 움직였다: `after.top` 2514(커밋)·2517(R14) → **2296**.
+앵커가 이제 실제로 문단을 붙들기 때문이다.
+
+## R4.2 F4 — 「영원한 침묵」이 사유 한 줄로
+
+`hub::ensure()`가 `ChatRuntime::new`에 실패하면 사유를 `chat:verdict`로 뿌리고 호출에는
+`null`을 돌려준다. 구독자가 0이었고, 런타임이 없으니 T3(20초 침묵 감시)도 없었다.
+
+배선은 셋이다.
+
+1. `api/unified.ts` — `onChatVerdict()`(+ 진단 창구 `window.__ccgVerdicts`).
+2. `lib/verdict.ts`(신설) — 사유 **정규화**와 **문장**. 와이어의 `reason`이 두 어휘로 온다:
+   상태기계 경로는 snake_case(`cwd_missing`·`no_card`…), `ensure` 경로는 Rust `{e:?}`라
+   `CwdMissing("C:\\…")` **Debug 덤프**다(셸 소관이라 이번 경계 밖). 둘을 같은 코드+상세로
+   접는다. `dispatch`는 **모든** 명령에 판정을 내므로(`accepted`까지) 무엇을 보일지도 여기서
+   정한다 — 거부는 언제나, 큐잉·예약은 사용자가 방금 누른 명령일 때만.
+3. `store/session.ts` — `verdict` 액션. **거부는 말풍선 하나로 안 끝난다**: `begin`이 올려 둔
+   busy를 되감고(status `error` · `curRunId` 해제) 돌던 명령 카드를 정착시킨다.
+
+### 실증 — 크리틱 도구 `.r14-cwdgone.mjs`의 사본(`.r15-cwdgone.mjs`)
+
+```
+고치기 전 (ce44262 · HEAD 렌더러 · 같은 워크트리)
+ +3s   stopBtn 1 · errMsgs [] · __ccgVerdicts {n:0} · "허점을 메우는 중 ·3초"
++10s   stopBtn 1 · errMsgs [] · {n:0}              · "두뇌 풀가동 중 ·10초"
++25s   stopBtn 1 · errMsgs [] · {n:0}              · "매듭을 푸는 중 ·25초"     ← T3(20s) 지났다
++40s   stopBtn 1 · errMsgs [] · {n:0}              · "벽돌을 한 장씩 쌓는 중 ·40초"
+
+고친 뒤 (ce44262 · 렌더러만 — 셸은 아직 `chat:verdict`만 낸다)
+ +3s   stopBtn 0 · spinner 0
+       "메시지를 보내지 못했어요 — 이 채팅의 작업 폴더가 없어요(지워졌거나 옮겨졌어요).
+        폴더를 다시 고르면 이어서 보낼 수 있어요.
+        c:\…\.critic-home-r15-cwdgone\this-folder-does-not-exist"
+       __ccgVerdicts {n:1, rows:[{chatId:"fix-long-thread", kind:"rejected",
+                                  cmd:"ensure", reason:'CwdMissing("c:\\…")'}]}
+```
+
+40초 무반응이 **+3초에 문장 하나**로 바뀌고 중지 버튼이 내려간다. 이 값이 「렌더러 단독
+으로도 F4가 죽는다」의 증거다 — 셸이 아무 말도 안 하는 빌드에서 잰 것이므로.
+
+### R5 접점 — 화자가 둘이 됐고, 하나로 접었다
+
+주행 도중 엔진 빌더가 셸 몫을 커밋했다(`hub::reject_spawn`): 같은 실패에
+`status{analyzing}` → `error{message}` → `status{error}`를 **스레드로 직접** 낸다.
+그러면 같은 사고를 두 문장이 말한다 — 전송 1회에 판정 2건이던 배선 R1 F6과 같은 계열이고,
+그쪽 주석이 스스로 *"저자를 하나로 줄인다"*고 적은 규약이다.
+
+셸은 `chat:verdict`도 계속 내되 *"구독자가 붙는 날의 **기계 판독용**"*이라고 명시했고,
+사람의 문장이 있는 판정에만 **`message` 필드**를 싣는다. 그 필드를 저자 표식으로 읽는다
+(`lib/verdict.ts` `shellAuthored()`):
+
+| 대화 | `message` 있음(셸이 말한다) | `message` 없음(상태기계 거부 — `ended`·`no_card`·`hold_not_ready`·큐잉) |
+|---|---|---|
+| 보고 있는 대화 | 렌더러 **침묵**(셸의 오류 말풍선이 그 자리에 있다) | 렌더러가 유일한 화자 — 카드 + busy 되감기 |
+| 배경 추적 중 | **토스트만**(스냅샷엔 셸의 `error`가 이미 접힌다) | 토스트 + 스냅샷 접기 |
+| 추적도 안 되는 차가운 대화 | 토스트 + 대기열 — 셸의 `chat:event`를 **아무도 안 받는다** | 같음 |
+
+`message`가 사라지면 렌더러가 다시 말한다 — 실패해도 침묵이 아니라 문장이 되는 쪽이다.
+
+```
+e0769d4(셸 몫 포함) · 같은 프로브 · 활성 대화
+ +3s   stopBtn 0 · spinner 0 · 문장 **한 줄**
+       "오류 · 작업 폴더를 찾을 수 없어요 — c:\…\this-folder-does-not-exist.
+        고친 뒤 다시 보내면 이어집니다."        ← 셸의 말풍선
+       __ccgVerdicts {n:1, …, cmd:"ensure",
+                      message:"작업 폴더를 찾을 수 없어요 — c:\…"}   ← 렌더러는 받고 **안 그렸다**
+```
+
+### 자리 밖 대화 — 토스트 + **열릴 때 접기**
+
+활성 대화의 사유는 스레드 카드가 말한다. 보고 있지 않은 대화의 거부는 그 스레드를 열어야
+보이므로 토스트(`.vtoast`)를 따로 뒀다. 처음 배선은 그 사유를 `chats[].snapshot`에 바로
+접었는데 **부팅 라이트 페이로드의 `unloaded` 마커** 때문에 그 순간 접을 스냅샷이 메모리에
+없었다 — 토스트가 사라지면 사유도 함께 사라졌다(실측으로 잡았다). 그래서 대기열
+(`pendingVerdictRef`)에 두고 `restore`의 착지점에서 소비한다.
+
+```
+node docs/critic/tools/.r15-verdict-bg.mjs   (e0769d4 · 활성=멀쩡한 대화 · 자리 밖=폴더 없는 대화)
+
+before  toasts 0 · notices 0
+after   toasts ["메시지를 보내지 못했어요 이 채팅의 작업 폴더가 없어요(…) c:\…"]
+        activeThreadNotices []            ← **보고 있는 대화는 안 건드린다**(남의 사유다)
+        __ccgVerdicts {n:1, chatId:"fix-long-thread", cmd:"ensure", message:"작업 폴더를 …"}
+토스트 클릭 → active "벤치 긴 스레드" · toasts 0
+        notices [… , "메시지를 보내지 못했어요 — 이 채팅의 작업 폴더가 없어요(…) c:\… 오후 1:43"]
+```
+
+마지막 줄이 이 표면이 남는 이유다: 이 대화는 배경 추적 대상도 아니어서 셸의 `chat:event`를
+**아무도 안 받았다** — 토스트와 대기열이 없으면 기록이 0이 된다.
+
+## R4.3 F5 — 엔진이 연 턴의 사용자 말풍선
+
+`user-echo`는 셸이 R4에 신설한 이벤트인데 **2.6.2 계약면(`EngineEvent`)에 없다** —
+`src/shared/protocol.ts`는 얼려 둔 면이라 여기서 못 늘린다. 그래서 리듀서의 `switch`가 아니라
+`engineAction(event)` 한 문에서 갈린다(계약면 밖 이벤트 → 렌더러 로컬 액션). 이벤트를 받는
+표면 **전부**가 그 관문을 지난다: `useAgentSession`(본채팅·추가 채팅·멀티 6슬롯·팝아웃) +
+App의 배경 수집기(`onChatEvent`). 한 곳이라도 `{type:'engine'}`을 직접 만들면 그 화면만
+말풍선이 없다 — `app/src` 전체에 그 구성이 더는 없다(`type: 'engine'`는 정의 1 · 생성 1).
+
+### 실증 — `poc-live-chat --only=reload`(한도 해제 이어서 + 예약 드레인)
+
+```
+고치기 전   B2-이어서 {"spawns":1,"dom":true}   ← 하네스는 초록인데
+            .msg.user .content = []              ← 사용자 말풍선이 **0개**다
+고친 뒤     B2-이어서 {"spawns":1,"dom":true}
+            .msg.user .content = ["이어서 진행해 주세요","예약 하나"]
+```
+
+앞이 한도 재개가 보낸 문장, 뒤가 예약 드레인이 보낸 문장이다. 크리틱이 *"`dom:true`는 답장
+문자열만 본다"*고 적은 그 자리가 이걸로 채워졌다.
+
+## R4.4 `chat:identity` — 폴백 배너 + 되돌리기 (M3)
+
+M-LOGIC §6.2 전이 절차 3("스레드에 인라인 배너 + [되돌리기]")과 M-UI 목업
+`ui-notify-1-fallback.html` B안의 문법을 옮겼다. 자리는 한도 배너와 같은 줄(컴포저 위)이다 —
+스레드 항목을 늘리면 스냅샷 스키마와 4개 표면의 `MessageView`가 전부 따라와야 해서 "최소
+표면"이 아니고, 이 배너는 **지금 사실**을 말하는 상태줄이라 그 자리가 더 정직하다.
+
+셸의 와이어에는 아직 `fallback{fromModel,toModel,cause,revertTo}` 뭉치가 없다(엔진 소관).
+그래서 ⑴ 문장은 `cause` 3경로로 안 가르고 **경로 중립 한 문장**만 쓰고(지어내지 않는다),
+⑵ 되돌릴 지점은 `revision − 1`로 잡는다 — 없으면 엔진이 `no_revision`으로 거절하고 그 사유는
+이제 R4.2의 구독자가 그린다. (`revisions`는 `vec![(0, identity)]`로 시작하므로 첫 폴백의
+되돌릴 지점 0은 실재한다 — `runtime.rs:349`.)
+
+### 실증 — `poc-live-chat --only=dialog`(폴백 확인 카드 수락 → 리비전 1)
+
+```
+__ccgIdentity  {n:2, rows:[{chatId:"c-dlg",revision:0,origin:"default",       model:"fable"},
+                           {chatId:"c-dlg",revision:1,origin:"engine_fallback",model:"sonnet"}]}
+배너            "모델이 자동 전환됐어요 · 엔진이 이 대화의 모델을 Sonnet 5(으)로 바꿨어요
+                 — 이후 대화도 같은 모델로 갑니다. [되돌리기]"
+[되돌리기] 클릭 → chat:identity-get  model "fable" · revision 2   ← 새 리비전(히스토리 보존, §6.3)
+                 배너 사라짐(origin='revert'는 안 그린다)
+```
+
+## R4.5 M6가 남긴 경계 밖 한 건 — discard 확인 카드
+
+`git status --porcelain=v2`는 미추적 디렉터리를 **`? sub/` 한 줄로 접어** 보내고
+(직접 확인: 하위 2단계 파일 2개가 `? sub/` 한 줄), M6가 넣은 되돌리기는 `shell.trashItem(dir)`라
+그 아래 전부가 함께 휴지통으로 간다(M6 §R2.3 실측 `폴더 통째 ok=true · 휴지통 +1`).
+현행 문구는 "아직 커밋된 적 없는 **새 파일**이에요"였다 — 반경을 숨기는 거짓말이다.
+경로가 `/`로 끝나면 세 곳이 갈린다:
+
+| | 파일 | 폴더 |
+|---|---|---|
+| 제목 | 이 파일의 변경을 되돌릴까요? | **이 폴더를 통째로 되돌릴까요?** |
+| 본문 | 아직 커밋된 적 없는 새 파일이에요 — 휴지통으로 이동해요 | **이 한 줄은 폴더 하나가 아니라 그 안의 모든 파일과 하위 폴더를 뜻해요. 통째로 휴지통으로 이동해요** |
+| 버튼 | 되돌리기 | **폴더 통째로 되돌리기** |
+
+## R4.6 게이트
+
+전부 **`e0769d4`**(엔진 빌더의 F4 셸 몫이 들어간 뒤) + 내 `app/src`로 다시 돌린 값이다.
+
+| 게이트 | 결과 |
+|---|---|
+| `npm run typecheck:app` | ✅ (메인 레포) |
+| `npm run tauri:build` | ✅ (메인 레포 4,884,480 B · 격리 워크트리 둘 다) |
+| `node scripts/poc-dial.mjs` | ✅ **PASS · 47검사 · 결함 0** — dial 14 · active 2 · raise **7**(same-para 신설) · **settle 3**(신설) · own 9 · bg 5 · queue 7 |
+| `node scripts/poc-live-chat.mjs` | ✅ **PASS · 결함 0** · 8단계(r81·dialog·winsave·events·error·reload·slots·live) |
+| `node docs/critic/tools/critic-mux-attack.mjs` | ✅ **11단계 중 10 green**(1차 주행) — 빨강은 `raise.scroll` 하나(R14 §2.3이 성립 불가로 확인한 그 수식) |
+
+> **흔들림 기록**: `ce44262` 주행에서 `mid` 3검사가 1차에 빨갛다가 재주행에 전부 초록이
+> 됐다(`{"lenBack":2691,"lenLater":2691,"streaming":true}` → `{"lenBack":1903,"lenLater":2691}`).
+> 실 CLI 턴이 프로브보다 먼저 끝나면 나는 얼굴이고, R14가 `foldrun`에서 기록한 것과 같은
+> 계열이다. `e0769d4` 최종 주행에서는 1차에 초록이었다 — 그래도 이 축은 **재현이 흔들린다**는
+> 사실을 남긴다(다음 라운드가 한 번 빨간 것으로 결론 내리지 않게).
+
+## R4.7 정직한 여백
+
+- **`SETTLE_MS`는 여전히 4초다.** 되잡기는 그 창 안에서만 돈다 — 리플로가 4초 뒤에 또 나면
+  앵커는 다시 밀린다. 실측 네 시점(+1.2/2.6/5/9초)에서 오차 0이라 오늘은 안 밟히지만
+  **원리적 상한이 아니라 경험적 여유**다. 되잡기 상한(240회)도 같은 성격이다.
+- **제스처 잔향 450ms는 고른 값이다.** 관성 스크롤이 그보다 오래 이어지는 입력 장치(정밀
+  터치패드의 긴 플링)에서는 잔향이 끊긴 뒤의 scroll이 의사 스크롤로 읽혀 앵커가 한 번
+  되잡을 수 있다. 정착 창(4초) 안에서만 가능한 일이고, 그때도 사용자가 다시 굴리면 즉시
+  물러난다. 마우스 휠·스크롤바 드래그·키보드로는 재현되지 않았다.
+- **`chat:verdict`의 대기열은 영속이 아니다.** 앱을 끄면 안 열어 본 대화의 사유는 사라진다
+  (다시 보내면 같은 사유가 다시 난다). 스토어에 쓰는 것은 이 라운드의 경계 밖이다.
+- **저자 판별을 `message` 필드 하나에 걸었다.** 셸이 그 필드를 안 실으면서 스레드에는
+  문장을 내는 경로가 생기면 두 벌이 된다. 반대(필드는 있는데 문장을 안 냄)면 침묵이 된다.
+  둘 다 지금은 없지만 **계약면에 적힌 규약이 아니라 관례**다 — `chat:verdict`가
+  `protocol.ts`에 타입으로 서는 날 여기도 같이 굳혀야 한다.
+- **`user-echo` 중복 방어는 꼬리 한 칸만 본다.** 셸이 `expect_runs`로 렌더러가 연 턴의 에코를
+  아예 안 내므로(`hub.rs:803`) 실질적으로 안 걸리지만, 같은 말을 연속으로 두 번 보내는 정상
+  흐름에서 두 번째 말풍선이 접힐 수 있다. 스레드 중간을 뒤지지 않는 이유는 그게 더 나쁘기
+  때문이다(대화를 거짓으로 만든다).
+- **정체성 배너는 `cause` 3경로를 안 가른다.** 목업 변형 1의 문장 셋(동의하셨어요 / 묻지 않고 /
+  사유는 오지 않았고)은 와이어에 `cause`가 실린 뒤에 붙일 자리다.
+- **`VerdictToast`는 메인 창에만 있다.** 추가 채팅 창·팝아웃 패널 창은 자기 대화의 판정을
+  아직 안 그린다(`IdentityBand`도 같다). 두 표면은 `activeChatId` 개념이 다르다 — 다음 라운드.
+- **유휴 Priv·파리티 A/B는 안 쟀다.** 이번 변경은 이벤트 구독 셋과 스크롤 루프 하나이고,
+  라운드 셋이 동시에 도는 동안 그 수치로 합불을 말할 수 없다는 R14 §7의 진술과 같은 결이다.
+
+## R4.8 남은 것 (§R3.9 갱신)
+
+R14 §4.1이 확인한 6건 중 **네 개가 그대로 열려 있다**(1 `saveAttachmentData` · 2 `ccg-page` ·
+3 `cancel-hold` op · 4 `resumeOwner`/`autoResume`가 계약면에 없음). 5·6은 아래로 갱신한다.
+
+| # | 항목 | 상태 |
+|---|---|---|
+| 5 | 추가 채팅 창·멀티 패널이 `managed`를 안 본다 | **열림** — `App.tsx` 한 곳만 넘긴다. `VerdictToast`·`IdentityBand`도 같은 경계에 있다 |
+| 6 | 앵커가 패널에만 있다 | **열림** — 본채팅 스레드(`chat-scroll`)에는 `useThreadAnchor`가 안 붙는다(접힘/되올림이라는 사건 자체가 없다) |
+| 7 | `chat:queue-mutate`로 예약 옮기기(배선 R4 §R4.9 R9) | **열림** — `app/src`에 `chat:queue` 구독 0 |
+| 8 | `chat:flush-req` 구독자 | **열림** |
+| 9 | 판정 대기열 영속 | **신규** — R4.7 참고 |
+| 10 | 폴백 `cause` 문장 3종 | **신규** — 와이어에 `cause`가 실리면 |
+
+## R4.9 파일
+
+| 파일 | R4 변경 |
+|---|---|
+| `app/src/components/Chat.tsx` | `useThreadAnchor` — 제스처 기반 의사 스크롤 구분(F3) · `IdentityBand` 신설 · `VerdictToast` 신설 · `leafLabel` |
+| `app/src/lib/verdict.ts` | **신설** — 사유 정규화(`CwdMissing("…")` ↔ `cwd_missing`) + 문장 + 「보일 것인가」 판정 + `shellAuthored()`(저자 판별) |
+| `app/src/store/session.ts` | `engineAction()` 신설(계약면 밖 `user-echo` 관문) · `user-echo`·`verdict` 액션 · `noteVerdict` |
+| `app/src/api/unified.ts` | `onChatVerdict`·`onChatIdentity`·`revertIdentity` + 진단 창구 `__ccgVerdicts`/`__ccgIdentity` |
+| `app/src/App.tsx` | 두 채널 구독 · 활성/자리 밖 갈래 · `pendingVerdictRef`와 `restore` 착지점 · 배너·토스트 렌더 · 배경 수집기의 `engineAction` |
+| `app/src/components/GitModal.tsx` | 미추적 폴더 discard 문구 3곳(M6 §5) |
+| `app/src/styles.css` | `.limit-hold.ident` · `.vtoast*` (전부 **추가**) |
+| `scripts/poc-dial.mjs` | `--only=settle` 3검사 **신설** · `raise.same-para` 신설 · `raise.same-pixel` 개정 |
+
+### 재현
+
+```bash
+# 격리 워크트리(다른 라운드가 Rust를 고치는 중이면 필수). 최종 게이트 핀 = e0769d4
+git worktree add --detach %TEMP%/ccg-r15-wt e0769d4
+cd %TEMP%/ccg-r15-wt && cmd //c "mklink /J node_modules C:\Code\AgentCodeGUI\node_modules"
+CARGO_TARGET_DIR=%TEMP%/ccg-r15-tgt npm run tauri:build
+CARGO_TARGET_DIR=%TEMP%/ccg-r15-tgt cargo build -p ccg-engine --features fakecli --bin ccg-fakecli --release
+cp %TEMP%/ccg-r15-tgt/release/{agentcodegui,ccg-fakecli}.exe target/release/   # 하네스는 경로 고정
+
+npm run typecheck:app
+node scripts/poc-dial.mjs --only=settle          # ★ F3 — 정착 후 실측(엔진 0턴 · $0)
+node scripts/poc-dial.mjs --only=raise           # ★ same-para 개정(엔진 0턴 · $0)
+node scripts/poc-dial.mjs                        # 47검사 전체
+node scripts/poc-live-chat.mjs                   # 8단계
+node docs/critic/tools/critic-mux-attack.mjs     # 11단계
+
+# 새 표면(도구는 워크트리에만 — 크리틱 .r14-cwdgone.mjs의 사본)
+node docs/critic/tools/.r15-cwdgone.mjs          # ★ F4 활성 대화 · 40초 관찰 · $0
+node docs/critic/tools/.r15-verdict-bg.mjs       # ★ F4 자리 밖 대화(토스트 + 열릴 때 접기) · $0
+node scripts/poc-live-chat.mjs --only=reload     # ★ F5 — `.msg.user .content` 확인
+node scripts/poc-live-chat.mjs --only=dialog     # ★ M3 — 배너 + 되돌리기
+```
+
+> A/B(고치기 전)는 같은 워크트리를 `ce44262`에 두고 `git checkout -- app/src` → 재빌드로 잡았다.
+> F3의 「고치기 전」은 `userMoved()`를 `true ||`로 단락시킨 빌드로도 따로 확인했다
+> (R3 시맨틱과 동일: 어떤 scrollTop 변화든 사용자로 읽는다) — 같은 −365가 나왔다.
+> F5·M3의 DOM 확인은 워크트리의 `poc-live-chat.mjs`에 읽기 전용 프로브 두 줄
+> (`.msg.user .content` · `.limit-hold.ident`)을 더해 잰 것이다 — 메인 레포의 하네스는 무수정이다.

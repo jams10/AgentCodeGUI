@@ -1,0 +1,502 @@
+#!/usr/bin/env node
+/* ============================================================================
+ * poc-limit-engine — R28 확인 크리틱 R2가 세운 **통과 조건 하나**를 실물로 잰다.
+ *
+ * 크리틱의 문장(그대로 옮긴다):
+ *   > 본채팅에 이번 안전장치가 아예 안 걸린다 — `lite.rs`가 `resumeOwner:"engine"`을
+ *   > 조건 없이 실어 `useLimitResume`이 장전·타이머·재검증·소진을 전부 건너뛴다.
+ *   > 그런데 엔진 쪽 재검증의 원천은 아직 `NoProbe`(=「풀린 것으로 두고 진행」)다.
+ *   > **통과 조건은 하나다 — 대기표를 심은 본채팅에서 조회 불가 판(CCG_NO_NET=1 +
+ *   > 리셋 시각 경과)을 만들고 전송 0이 나오는 실측.**
+ *
+ * 그래서 이 하네스는 **엔진의 판**을 만든다(렌더러 pref가 아니라):
+ *   ① 격리 홈에 채팅 하나를 심고 `chats-v3/<id>.json`에 `hold`(리셋 시각 = 2시간 전)를 넣는다.
+ *      부팅 재장전(`engine/mod.rs::reload_pending`)이 그 표를 엔진 런타임에 다시 건다.
+ *   ② 그 채팅을 **활성**으로 둔다 = `auto_resume: true`. 자동이 켜진 최악의 판이다.
+ *   ③ 엔진 자리에는 **가짜 CLI**(ccg-fakecli)를 꽂는다. 한 글자라도 나가면
+ *      `stdin.log`에 바이트로 남는다 — 「전송 0」의 물증이 추론이 아니라 파일이다.
+ *   ④ `CCG_NO_NET=1` — 토큰은 나오는데 usage 조회가 죽는 그 판.
+ *
+ * 재는 것:
+ *   A. 관찰창(기본 110초) 내내 **spawns 0 · stdin.log 없음 · 큐에 재개 나팔 0**
+ *   B. 재검증이 **돌긴 돈다**(`limitProbe.asks`가 오르고 판정이 `unavailable`)
+ *   C. 재확인 간격이 15초부터 배로 — tick마다 조회를 때리지 않는다
+ *   D. (--long) 계속 실패하면 **눌러서 이어가기**로 착지한다(ready·autoPaused) —
+ *      눈감고 쏘는 대신 사용자에게 넘긴다. 그리고 눌렀을 때 정확히 한 번 나간다.
+ *
+ * ── 안전 규칙 ───────────────────────────────────────────────────────────────
+ *  · 실계정을 한 줄도 안 읽는다(합성 자격증명) · `CCG_NO_NET=1`이라 HTTP 0건 = 토큰 회전 0.
+ *  · 이름 기반 kill 금지 — 죽이는 것은 spawn한 PID 트리뿐.
+ *  · 앱 홈·CDP 포트는 T3T4 갈래 전용.
+ *
+ *   node scripts/poc-limit-engine.mjs [--exe=…] [--fakecli=…] [--long] [--keep] [--out=…]
+ * ========================================================================== */
+import fs from 'node:fs'
+import path from 'node:path'
+import { spawn, spawnSync } from 'node:child_process'
+import { connectMainPage, killTree, sleep, REPO } from '../bench/lib.mjs'
+
+const args = process.argv.slice(2)
+const KEEP = args.includes('--keep')
+const LONG = args.includes('--long')
+const argOf = (k, d) => (args.find((a) => a.startsWith(`--${k}=`)) ?? '').split('=')[1] || d
+// ★R28f WFIRE — 홈·CDP 포트를 **인자로 받는다**(기본값은 R28e 그대로). 다섯 갈래가 같은
+// 워킹트리에서 동시에 도는 라운드라, 하드코딩된 9425 · 레포 안 고정 홈은 두 갈래가 같은
+// 시각에 이 하네스를 돌리면 서로의 홈과 디버깅 포트를 밟는다(단일 인스턴스 락 · CDP 충돌).
+const HOME = argOf('home', path.join(REPO, '.poc-home-engine-t3t4'))
+const PORT = Number(argOf('port', 9425))
+const OUT = argOf('out', path.join(REPO, 'docs', 'critic', 'limit-engine-t3t4-r3.json'))
+const EXE = argOf('exe', path.join(REPO, 'target-t3t4', 'release', 'agentcodegui.exe'))
+const FAKECLI = argOf('fakecli', path.join(REPO, 'target-t3t4', 'release', 'ccg-fakecli.exe'))
+/** ★R28g BANNER — **접힘 모드**. 「예산으로 접힌 표를 들고 앱을 껐다 켠다」를 실물로 만든다
+ *  (R28f 확인 크리틱 R1 F1의 그 재현). 표준 주행(E0~E13)과 **재는 판이 다르다** — 이미
+ *  접힌 표는 재검증 사다리가 아예 안 도므로 E5~E8의 전제가 성립하지 않는다.
+ *
+ *    node scripts/poc-limit-engine.mjs --fold --paused=1 --seed-fires=12 --out=…   # 고친 판
+ *    node scripts/poc-limit-engine.mjs --fold --paused=0 --seed-fires=12 --out=…   # 대조군(R28f) */
+const FOLD = args.includes('--fold')
+/** 관찰창(초). 크리틱은 92초를 봤다 — 그보다 길게 본다.
+ *  `--long`은 손 드는 순간까지 본다: 첫 재검증이 리셋+90초(=t≈90s)이고 그 뒤
+ *  15+30+60+120+240 = 465초라 t≈555s. 여유를 얹어 620초.
+ *  `--fold`는 「부팅 뒤 첫 판정」 하나만 보면 된다. 리셋 시각이 이미 지난 표의 `due_at`은
+ *  `max(resets_at + 90s, armed_at + 15s)`인데 재장전이 `resets_at`을 **지금**으로 놓으므로
+ *  (`engine::remaining_ms`가 0을 낸다) 그 판정은 **재장전 + 90초**다. 여유를 얹어 120초.
+ *  (실측: 45초 창에서는 대조군의 통행권이 아직 안 열려 F7이 붉었다.) */
+const WATCH_S = Number(argOf('watch', FOLD ? 120 : LONG ? 620 : 110))
+// ★R28f WFIRE — 디스크에 심는 상한 두 칸(0 = R28e 이전의 판 그대로).
+const SEED_FIRES = Number(argOf('seed-fires', 0))
+const SEED_ATTEMPTS = Number(argOf('seed-attempts', 0))
+// ★R28g BANNER — 접힘 모드가 파일에 심는 두 칸. `paused` 한 칸이 이 라운드의 과녁이고,
+// `ready:true`는 **접힌 표가 디스크에 남는 유일한 모양**이다(`check_hold`의 세 착지).
+const SEED_PAUSED = FOLD && argOf('paused', '1') === '1'
+const SEED_READY = FOLD || argOf('seed-ready', '0') === '1'
+const EMAIL = 'engine-seed@t3t4.test'
+const CHAT = 'c-limit-engine'
+
+const rep = { at: new Date().toISOString(), exe: EXE, watchSec: WATCH_S, long: LONG, steps: {}, findings: [] }
+let pass = 0
+const ok = (id, detail) => {
+  pass++
+  console.log(`  ✓ ${id}${detail !== undefined ? ` — ${JSON.stringify(detail)}` : ''}`)
+}
+const fail = (id, why, extra) => {
+  rep.findings.push({ id, why, ...(extra ?? {}) })
+  console.error(`  ✗ ${id} — ${why}${extra ? ` ${JSON.stringify(extra)}` : ''}`)
+}
+const check = (id, cond, why, extra) => (cond ? ok(id, extra) : fail(id, why, extra))
+
+const rmrf = (p) => {
+  for (let i = 0; i < 10; i++) {
+    try {
+      fs.rmSync(p, { recursive: true, force: true, maxRetries: 4, retryDelay: 200 })
+      return
+    } catch {
+      spawnSync('cmd', ['/c', 'ping', '127.0.0.1', '-n', '2'], { stdio: 'ignore' })
+    }
+  }
+}
+const write = (p, v) => {
+  fs.mkdirSync(path.dirname(p), { recursive: true })
+  fs.writeFileSync(p, typeof v === 'string' ? v : JSON.stringify(v, null, 2))
+}
+
+/** `ccg_auth::account_slug`의 JS 원본 — 폴더 이름이 어긋나면 토큰을 못 찾아 판이 달라진다. */
+function accountSlug(email) {
+  const safe = email.toLowerCase().replace(/[^a-z0-9._-]+/g, '_')
+  let h = 0
+  for (let i = 0; i < email.length; i++) h = (h * 31 + email.charCodeAt(i)) >>> 0
+  return `${safe}-${h.toString(36)}`
+}
+
+function seedHome() {
+  rmrf(HOME)
+  const work = path.join(HOME, 'work')
+  fs.mkdirSync(work, { recursive: true })
+
+  // ① 합성 계정 — **살아 있는 액세스 토큰**이라 `access_token`이 네트워크 없이 돈다.
+  //    그 뒤 `send`가 CCG_NO_NET으로 죽는다 = 「토큰은 나오는데 조회가 죽는」 그 판.
+  write(path.join(HOME, 'accounts.json'), {
+    version: 3,
+    defaultEmail: EMAIL,
+    accounts: [{ email: EMAIL, subscriptionType: 'max' }]
+  })
+  write(path.join(HOME, 'accounts', accountSlug(EMAIL), '.credentials.json'), {
+    claudeAiOauth: { accessToken: 'A-engine-seed', expiresAt: Date.now() + 3600_000, scopes: ['user:inference'] }
+  })
+
+  // ② 가짜 CLI를 엔진 자리에 꽂는다 — **한 글자라도 나가면 파일로 남는다.**
+  const engd = path.join(HOME, 'engines', 'fake', 'node_modules', '@anthropic-ai', 'claude-agent-sdk-win32-x64')
+  fs.mkdirSync(engd, { recursive: true })
+  fs.copyFileSync(FAKECLI, path.join(engd, 'claude.exe'))
+  write(path.join(HOME, 'config.json'), { activeVersion: 'fake' })
+  // 스폰되면 곧바로 정상 종료하는 대본(전송이 일어났을 때 앱이 매달리지 않게).
+  write(
+    path.join(HOME, 'fake.jsonl'),
+    [
+      JSON.stringify({ emit: { type: 'system', subtype: 'init', session_id: 'S1', model: 'opus' } }),
+      JSON.stringify({
+        emit: { type: 'result', subtype: 'success', is_error: false, result: '(가짜 응답)', session_id: 'S1' },
+        afterMs: 200
+      }),
+      JSON.stringify({ exit: 0 })
+    ].join('\n')
+  )
+
+  // ③ 채팅 하나 + **리셋 시각이 2시간 전인 대기표**.
+  const resetsAt = Math.floor(Date.now() / 1000) - 7200
+  write(path.join(HOME, 'chats-v3', 'index.json'), { version: 1, order: [CHAT], activeChatId: CHAT })
+  write(path.join(HOME, 'chats-v3', `${CHAT}.json`), {
+    id: CHAT,
+    title: '한도 대기표',
+    identity: {
+      engine: { kind: 'claude', model: 'opus', effort: 'xhigh', codexAccount: null },
+      billing: { kind: 'subscription', account: EMAIL, dropEnvKey: false },
+      cwd: work,
+      addDirs: [],
+      mode: 'auto',
+      systemPrompt: null,
+      outputStyle: null,
+      tools: { skillOverrides: {}, deniedMcp: [] }
+    },
+    // ★ 이 표가 이 하네스의 과녁이다. 리셋 시각은 이미 지났다 = 옛 판이 쏘던 조건.
+    // ★R28f WFIRE — `attempts`·`fires`는 **디스크에 적히는 상한**이다(`hub::persist_hold`).
+    // `--seed-fires=N`으로 「예산을 N발 쓴 채 앱을 껐다」를 만든다 — 그 값이 새 프로세스의
+    // 런타임까지 살아 오는지가 E11이 재는 것이고, 기본 0은 R28e와 한 글자도 다르지 않다.
+    // ★R28g BANNER — `--fold`면 **접힌 표 그대로**(`ready:true` + `paused`)를 심는다.
+    // 크리틱이 실앱에서 포획한 원문이 정확히 이 모양이다:
+    //   {"hold":{"resetAt":…,"ready":true,"fires":12,"paused":false}}  ← R28f
+    hold: { resetsAt, ready: SEED_READY, attempts: SEED_ATTEMPTS, fires: SEED_FIRES, ...(FOLD ? { paused: SEED_PAUSED } : {}) },
+    draft: '',
+    draftImages: [],
+    updatedAt: Date.now(),
+    snapshot: { messages: [], session: 'S0' }
+  })
+  // 한도 자동 이어서 토글은 켜 둔 상태(최악의 판).
+  write(path.join(HOME, 'ui-prefs.json'), { 'limitResume.on': true })
+  return { resetsAt, work }
+}
+
+const IPC = (channel, payload = []) =>
+  `await window.__TAURI_INTERNALS__.invoke('ipc_call', { channel: ${JSON.stringify(channel)}, payload: ${JSON.stringify(payload)} })`
+
+async function boot() {
+  for (const [what, p] of [
+    ['빌드된 exe', EXE],
+    ['가짜 CLI', FAKECLI]
+  ])
+    if (!fs.existsSync(p))
+      throw new Error(`${what}가 없다: ${p}\n  cargo build --release --features custom-protocol\n  cargo build -p ccg-engine --features fakecli --release --bin ccg-fakecli`)
+  const child = spawn(EXE, [], {
+    cwd: REPO,
+    env: {
+      ...process.env,
+      CCG_HOME: HOME,
+      CCG_CDP_PORT: String(PORT),
+      CCG_NO_NET: '1',
+      CCG_FAKECLI_SCRIPT: path.join(HOME, 'fake.jsonl'),
+      CCG_FAKECLI_IN: path.join(HOME, 'stdin.log')
+    },
+    stdio: ['ignore', 'pipe', 'pipe']
+  })
+  let log = ''
+  child.stdout.on('data', (d) => (log += d.toString()))
+  child.stderr.on('data', (d) => (log += d.toString()))
+  const cdp = await connectMainPage(PORT, { timeoutMs: 60_000 })
+  for (let i = 0; i < 400; i++) {
+    const up = await cdp
+      .eval(`(async () => { try { return !!(await window.api.app.getVersion()) } catch { return false } })()`, { awaitPromise: true })
+      .catch(() => false)
+    if (up) break
+    await sleep(100)
+  }
+  const j = async (expr) =>
+    JSON.parse(await cdp.eval(`(async () => JSON.stringify(await (${expr})) ?? 'null')()`, { awaitPromise: true }))
+  return { child, cdp, j, log: () => log }
+}
+
+/** 전송의 물증 — 가짜 CLI가 받은 stdin 바이트. */
+const stdinBytes = () => {
+  try {
+    return fs.statSync(path.join(HOME, 'stdin.log')).size
+  } catch {
+    return 0
+  }
+}
+/** 나갔다면 **무엇이** 나갔나 — 옛 판(`--exe=`로 지목한 대조군)의 대조 증거. */
+const stdinHead = () => {
+  try {
+    return fs.readFileSync(path.join(HOME, 'stdin.log'), 'utf8').slice(0, 600)
+  } catch {
+    return ''
+  }
+}
+
+/** 디스크에 지금 적혀 있는 `hold`(쓰는 쪽의 물증). */
+const holdOnDisk = () => {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(HOME, 'chats-v3', `${CHAT}.json`), 'utf8')).hold ?? null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * ★R28g BANNER — **접힘 모드**(`--fold`). R28f 확인 크리틱 R1 F1의 재현을 계기로 못 박는다.
+ *
+ * 크리틱이 실앱에서 포획한 행:
+ *   {"chatId":"c-crit-carry","hold":{"resetAt":…,"ready":true,"fires":12,"paused":false},…}
+ * 그 행에 렌더러 실번들 `budgetLanding(paused, fires)`를 먹이면 **false**라 배너가
+ * 「한도가 풀렸어요 — 눌러서 이어가기」라고 말한다 — 12발을 태우고 여전히 막힌 표에 대고.
+ *
+ * `--paused=1/0` 한 칸이 **대조군 스위치**다. 같은 바이너리·같은 대본·같은 네 칸 경로
+ * (`hub::persist_hold` → 채팅 파일 → `status::HoldLite` → `ReloadHold` → `LimitHold`)에서
+ * 그 한 칸만 바꾸면 R28f의 거짓말이 그대로 재현된다. 그리고 **같은 스위치가 통행권
+ * (`LimitHold::reloaded`)도 가른다** — 접힌 표는 부팅 뒤 판정에 안 들어가고(조회 0),
+ * 안 접힌 `ready` 표는 정확히 한 번 들어간다(조회 ≥1).
+ */
+async function foldRun(app) {
+  const wireRow = async () => {
+    const got = await app.j(IPC('chats:get', [{ light: true }])).catch(() => null)
+    return got?.statuses?.[CHAT] ?? null
+  }
+  await sleep(3000)
+  const wire = await wireRow()
+  const dbg0 = await app.j(IPC('engine:debug')).catch(() => null)
+  const row0 = (dbg0?.chats ?? []).find((c) => c.chatId === CHAT) ?? null
+  // 렌더러 실번들과 **같은 식**(`app/src/lib/limitResume.ts`의 `budgetLanding`).
+  const budget = !!wire?.hold?.paused && (wire?.hold?.fires ?? 0) >= 12
+  rep.steps.fold = { seeded: { paused: SEED_PAUSED, ready: SEED_READY, fires: SEED_FIRES }, wire, engine: row0, budgetLanding: budget }
+  console.log(`\n① 부팅 행(앱이 실제로 내리는 그 행) — ${JSON.stringify(wire?.hold ?? null)}`)
+  check('F0 부팅 재장전이 표를 다시 걸었다', !!row0?.hold, '엔진이 표를 안 들었다 = 재는 판이 아니다', { row: row0 })
+  check(
+    `F1 ★★ 와이어 행의 paused가 파일과 같다 — 심은 값 ${SEED_PAUSED}`,
+    wire?.hold?.paused === SEED_PAUSED,
+    `심은 ${SEED_PAUSED} · 행 ${JSON.stringify(wire?.hold ?? null)}`,
+    { seeded: SEED_PAUSED, got: wire?.hold?.paused ?? null }
+  )
+  check(`F2 ★ 예산도 그대로 건너왔다 — 심은 값 ${SEED_FIRES}`, (wire?.hold?.fires ?? -1) === SEED_FIRES, JSON.stringify(wire?.hold ?? null), {
+    got: wire?.hold?.fires ?? null
+  })
+  check(
+    `F3 ★★ 배너 문장이 갈린다(budgetLanding=${budget}) — ${SEED_PAUSED ? '「12번 보냈는데 계속 막혔어요」' : '「한도가 풀렸어요」(= R28f의 거짓말)'}`,
+    budget === (SEED_PAUSED && SEED_FIRES >= 12),
+    `budgetLanding=${budget}`,
+    { budgetLanding: budget }
+  )
+  check('F4 ★ 엔진 런타임도 같은 값을 든다', row0?.hold?.autoPaused === SEED_PAUSED, JSON.stringify(row0?.hold ?? null), {
+    got: row0?.hold?.autoPaused ?? null
+  })
+
+  console.log(`\n② 관찰 — ${WATCH_S}초(부팅 뒤 첫 판정 = 재장전 + 90초 · due_at = resets_at + GRACE)`)
+  const t0 = Date.now()
+  let worst = { spawns: 0, stdin: 0, queue: 0 }
+  while ((Date.now() - t0) / 1000 < WATCH_S) {
+    await sleep(5000)
+    const dbg = await app.j(IPC('engine:debug')).catch(() => null)
+    const row = (dbg?.chats ?? []).find((c) => c.chatId === CHAT) ?? null
+    worst = {
+      spawns: Math.max(worst.spawns, row?.spawns ?? 0),
+      stdin: Math.max(worst.stdin, stdinBytes()),
+      queue: Math.max(worst.queue, (row?.queue ?? []).length)
+    }
+    process.stdout.write(
+      `   t=${String(Math.round((Date.now() - t0) / 1000)).padStart(3)}s spawns=${row?.spawns ?? '-'} stdin=${stdinBytes()}B ` +
+        `ready=${row?.hold?.ready ?? '-'} paused=${row?.hold?.autoPaused ?? '-'} probes=${row?.hold?.probes ?? '-'} ` +
+        `asks=${dbg?.limitProbe?.asks ?? '-'} fires=${row?.episodeFires ?? '-'}\n`
+    )
+    if ((row?.spawns ?? 0) > 0 || stdinBytes() > 0) break
+  }
+  const dbg1 = await app.j(IPC('engine:debug')).catch(() => null)
+  const row1 = (dbg1?.chats ?? []).find((c) => c.chatId === CHAT) ?? null
+  const asks = dbg1?.limitProbe?.asks ?? 0
+  const disk = holdOnDisk()
+  rep.steps.foldAfter = { row: row1, asks, disk, worst }
+  console.log('\n③ 판정')
+  check('F5 ★★ 예산을 다 쓴 표는 한 글자도 안 보낸다(전송 0)', worst.spawns === 0 && worst.stdin === 0, JSON.stringify(worst), { worst })
+  check('F6 ★ 디스크의 hold가 `paused` 칸을 들고 왕복한다(쓰는 쪽)', typeof disk?.paused === 'boolean', JSON.stringify(disk), { disk })
+  // ★ 통행권(`LimitHold::reloaded`) — **같은 스위치가 부팅 뒤 첫 판정의 유무를 가른다.**
+  //   접힌 표: 판정에 안 들어간다 → 조회 0 · `ready` 유지(버튼이 유일한 출구).
+  //   안 접힌 `ready` 표: 정확히 한 번 들어간다 → 조회 ≥1(CCG_NO_NET이라 「못 물어봤다」로
+  //   착지하고 재확인 사다리가 시작된다). R28f에서는 **양쪽 다 0**이었다(F1/F3의 뿌리).
+  if (SEED_PAUSED) {
+    check('F7 ★★ 접힌 표에는 통행권이 없다 — 조회 0 · ready 유지', asks === 0 && row1?.hold?.ready === true, `asks=${asks} ready=${row1?.hold?.ready}`, {
+      asks,
+      ready: row1?.hold?.ready ?? null
+    })
+    check('F8 ★ 접힌 채 그대로다(재판정이 접힘을 풀지 않았다)', row1?.hold?.autoPaused === true, JSON.stringify(row1?.hold ?? null), { hold: row1?.hold ?? null })
+  } else {
+    check(
+      'F7 ★★ `ready` 표는 부팅 뒤 **한 번** 판정에 들어간다(크리틱 F3: 20시간 0발이던 자리)',
+      asks >= 1 && (row1?.hold?.probes ?? 0) >= 1,
+      `asks=${asks} probes=${row1?.hold?.probes}`,
+      { asks, probes: row1?.hold?.probes ?? null }
+    )
+    check('F8 ★ 그 판정은 처음부터 다시 한다(ready를 내리고 인프로세스와 같은 경로)', row1?.hold?.ready === false, JSON.stringify(row1?.hold ?? null), {
+      hold: row1?.hold ?? null
+    })
+  }
+}
+
+async function main() {
+  const seed = seedHome()
+  const app = await boot()
+  const pid = app.child.pid
+  const samples = []
+  try {
+    // 부팅 재장전은 `chats:get`이 도는 부팅 흐름에서 걸린다 — 화면이 뜬 뒤 한 박자 준다.
+    await app.j(IPC('chats:get', [{ light: true }])).catch(() => null)
+    // ★R28g BANNER — 접힘 모드는 **재는 판이 다르다**(이미 접힌 표는 재검증 사다리가 아예
+    // 안 돈다 = E5~E8의 전제가 성립하지 않는다). 표준 주행과 섞지 않고 여기서 갈라진다.
+    // 라벨 블록을 쓰는 이유는 하나다 — 아래 표준 본문을 **한 줄도 안 건드리려고**.
+    standard: {
+      if (FOLD) {
+        await foldRun(app)
+        break standard
+      }
+    await sleep(3000)
+
+    const dbg0 = await app.j(IPC('engine:debug'))
+    const row0 = (dbg0?.chats ?? []).find((c) => c.chatId === CHAT) ?? null
+    rep.steps.reload = { row: row0, limitProbe: dbg0?.limitProbe ?? null }
+    check('E0 부팅 재장전이 엔진에 대기표를 다시 걸었다', !!row0?.hold, '엔진이 표를 안 들었다 = 이 하네스가 재는 판이 아니다', { row: row0 })
+    check('E0′ 자동 재개가 켜진 최악의 판이다', row0?.autoResume === true, '자동이 꺼져 있으면 안 쏘는 게 당연하다', { autoResume: row0?.autoResume })
+
+    console.log(`\n① 관찰 — ${WATCH_S}초 (CCG_NO_NET=1 · 리셋 시각 2시간 전 · 자동 ON)`)
+    const t0 = Date.now()
+    let worst = { spawns: 0, stdin: 0, queue: 0 }
+    while ((Date.now() - t0) / 1000 < WATCH_S) {
+      await sleep(5000)
+      const dbg = await app.j(IPC('engine:debug')).catch(() => null)
+      const row = (dbg?.chats ?? []).find((c) => c.chatId === CHAT) ?? null
+      const s = {
+        t: Math.round((Date.now() - t0) / 1000),
+        spawns: row?.spawns ?? -1,
+        queue: (row?.queue ?? []).length,
+        hold: row?.hold ?? null,
+        // ★R28f WFIRE — 예산은 표 **밖**에 산다(`ChatRuntime::episode_fires`) — 별도 칸이다.
+        episodeFires: row?.episodeFires ?? null,
+        stdin: stdinBytes(),
+        probe: dbg?.limitProbe ?? null
+      }
+      samples.push(s)
+      worst = {
+        spawns: Math.max(worst.spawns, s.spawns),
+        stdin: Math.max(worst.stdin, s.stdin),
+        queue: Math.max(worst.queue, s.queue)
+      }
+      process.stdout.write(
+        `   t=${String(s.t).padStart(3)}s spawns=${s.spawns} stdin=${s.stdin}B queue=${s.queue} ` +
+          `probes=${s.hold?.probes ?? '-'} ready=${s.hold?.ready ?? '-'} asks=${s.probe?.asks ?? '-'} ` +
+          `fires=${s.episodeFires ?? '-'}/att=${s.hold?.attempts ?? '-'}\n`
+      )
+      if (s.spawns > 0 || s.stdin > 0) break // 이미 졌다 — 더 볼 것이 없다
+    }
+    rep.steps.samples = samples
+    rep.steps.stdinHead = stdinHead()
+    const last = samples[samples.length - 1] ?? {}
+
+    console.log('\n② 판정')
+    check('E1 ★★ 전송 0 — CLI가 한 번도 안 떴다', worst.spawns === 0, `spawns=${worst.spawns}`, { spawns: worst.spawns })
+    check('E1′ ★★ 전송 0 — 가짜 CLI의 stdin이 비었다(바이트 물증)', worst.stdin === 0, `${worst.stdin}바이트가 나갔다`, { bytes: worst.stdin })
+    check('E2 재개 나팔이 큐에 안 들어갔다', worst.queue === 0, `큐 ${worst.queue}건`, { queue: worst.queue })
+    check('E3 대기표가 살아 있다(소진 = 전송이다)', !!last.hold, '표가 사라졌다', { hold: last.hold })
+    // `ready`가 켜질 수 있는 자리는 **하나뿐**이다: 재확인을 다 쓰고 사용자에게 넘길 때
+    // (`autoPaused`). 그 표식 없이 켜졌다면 그게 「못 물어봤는데 풀렸다고 했다」이다.
+    const badReady = samples.filter((s) => s.hold?.ready === true && s.hold?.autoPaused !== true)
+    check('E4 「풀렸다」로 켜진 적이 없다(넘기는 순간 제외)', badReady.length === 0, JSON.stringify(badReady[0]?.hold), {
+      first: badReady[0] ?? null
+    })
+
+    console.log('\n③ 재검증이 실제로 돌았나(안 도는 것과 구분)')
+    check('E5 ★ 훅이 배선돼 있다(asks > 0)', (last.probe?.asks ?? 0) > 0, '엔진이 훅을 한 번도 안 물었다 = NoProbe 그대로다', { probe: last.probe })
+    check('E6 판정이 「못 물어봤다」로 나왔다', (last.probe?.unavailable ?? 0) > 0 && (last.probe?.clear ?? 0) === 0, JSON.stringify(last.probe), { probe: last.probe })
+    check('E7 재확인 계수가 올랐다', (last.hold?.probes ?? 0) >= 2, `probes=${last.hold?.probes}`, { probes: last.hold?.probes })
+    // 15·30·60·120·240초 사다리 = 110초에 4회 안쪽. tick(20ms)마다 물으면 수천이다.
+    check('E8 tick마다 조회하지 않는다(사다리)', (last.probe?.asks ?? 0) <= Math.ceil(WATCH_S / 15) + 2, `asks=${last.probe?.asks}`, {
+      asks: last.probe?.asks
+    })
+
+    // ★R28f WFIRE — **상한이 프로세스 경계를 넘어왔는가**(R28e 확인 크리틱 R1 §4.1).
+    //
+    // 여기가 「엔진 못 ⑭·⑯이 재는 규칙」과 「실앱의 배선」 사이의 유일한 간극이다: 못은
+    // `reload_state`를 직접 부르지만 실앱은 `hub::persist_hold` → 채팅 파일 →
+    // `status::HoldLite` → `engine::reload_pending` → `ReloadHold`의 네 칸을 지난다.
+    // 그중 한 칸만 값을 안 나르면 못은 초록인데 앱은 그대로 재충전된다.
+    //
+    // 대조군은 **같은 하네스의 기본값**이다(`--seed-fires=0` → 아래 두 값이 0).
+    console.log('\n③′ ★R28f — 디스크에 적힌 상한이 새 프로세스로 살아 왔나')
+    rep.steps.seed = { fires: SEED_FIRES, attempts: SEED_ATTEMPTS }
+    rep.steps.carried = { episodeFires: last.episodeFires ?? null, attempts: last.hold?.attempts ?? null }
+    check(
+      `E11 ★★ 예산(fires)이 재장전을 넘었다 — 심은 값 ${SEED_FIRES}`,
+      (last.episodeFires ?? -1) === SEED_FIRES,
+      `심은 ${SEED_FIRES} · 읽힌 ${last.episodeFires}`,
+      { seeded: SEED_FIRES, got: last.episodeFires ?? null }
+    )
+    check(
+      `E12 ★ 연속 계수(attempts)도 넘었다 — 심은 값 ${SEED_ATTEMPTS}`,
+      (last.hold?.attempts ?? -1) === SEED_ATTEMPTS,
+      `심은 ${SEED_ATTEMPTS} · 읽힌 ${last.hold?.attempts}`,
+      { seeded: SEED_ATTEMPTS, got: last.hold?.attempts ?? null }
+    )
+    // 그리고 **쓰는 쪽**: 살아 있는 앱이 채팅 파일에 그 두 칸을 실제로 적는가.
+    const onDisk = (() => {
+      try {
+        return JSON.parse(fs.readFileSync(path.join(HOME, 'chats-v3', `${CHAT}.json`), 'utf8')).hold ?? null
+      } catch {
+        return null
+      }
+    })()
+    rep.steps.holdOnDisk = onDisk
+    check(
+      'E13 ★ 채팅 파일의 hold가 두 칸을 들고 있다(쓰는 쪽)',
+      !!onDisk && typeof onDisk.fires === 'number' && typeof onDisk.attempts === 'number',
+      JSON.stringify(onDisk),
+      { hold: onDisk }
+    )
+
+    if (LONG) {
+      console.log('\n④ --long — 계속 실패하면 「눌러서 이어가기」로 착지하나')
+      const give = samples.find((s) => s.hold?.ready === true)
+      rep.steps.giveUp = give ?? null
+      check('E9 ★ 눈감고 쏘는 대신 사용자에게 넘긴다', !!give?.hold?.autoPaused, '착지가 ready+autoPaused가 아니다', { give })
+      check('E9′ 넘기는 그 순간에도 전송은 0이다', (give?.spawns ?? 0) === 0 && (give?.stdin ?? 0) === 0, JSON.stringify(give), { give })
+      if (give) {
+        // 「눌러서 이어가기」의 유일한 출구 — 채널을 늘리지 않고 `op:'resume'`로 간다.
+        await app.j(IPC('chat:queue-mutate', [{ chatId: CHAT, op: 'resume' }])).catch(() => null)
+        await sleep(4000)
+        const dbg = await app.j(IPC('engine:debug')).catch(() => null)
+        const row = (dbg?.chats ?? []).find((c) => c.chatId === CHAT) ?? null
+        rep.steps.afterPress = { row, stdin: stdinBytes() }
+        check('E10 사용자가 누르면 그때 나간다(출구가 막히면 그건 침묵이다)', (row?.spawns ?? 0) >= 1 || stdinBytes() > 0, JSON.stringify(row), {
+          row,
+          stdin: stdinBytes()
+        })
+      }
+    }
+    } // ← standard 라벨 블록 끝(★R28g BANNER)
+  } finally {
+    try {
+      app.cdp.close?.()
+    } catch {
+      /* ignore */
+    }
+    rep.steps.appLog = app.log().slice(-4000)
+    killTree(pid)
+    await sleep(500)
+    if (!KEEP) rmrf(HOME)
+  }
+  rep.seed = seed
+  rep.pass = pass
+  rep.fail = rep.findings.length
+  fs.mkdirSync(path.dirname(OUT), { recursive: true })
+  fs.writeFileSync(OUT, JSON.stringify(rep, null, 2))
+  console.log(`\n${rep.findings.length === 0 ? 'PASS' : 'FAIL'} — ${pass} 통과, ${rep.findings.length} 실패`)
+  console.log(`리포트: ${OUT}`)
+  process.exit(rep.findings.length === 0 ? 0 : 1)
+}
+
+main().catch((e) => {
+  console.error(e)
+  process.exit(2)
+})
