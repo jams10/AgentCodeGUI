@@ -436,14 +436,13 @@ pub fn panel_seat_of(chat: &str) -> Option<Seat> {
                 if s.as_str() != Some(chat) {
                     continue;
                 }
-                let count = b
-                    .get("count")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(1)
-                    .clamp(1, ccg_store::boards::SLOT_COUNT as u64) as usize;
+                // ★3.3 페이지 — 번호는 그 슬롯이 사는 **페이지 부분열** 안의 위치(1‥6), 자리 수도 그 페이지 것
+                let page = ccg_store::boards::page_of(i);
+                let count = ccg_store::boards::page_count(b, page);
                 let order = ccg_store::boards::sanitize_order(b.get("order"));
                 let num = order
                     .iter()
+                    .filter(|&&s| ccg_store::boards::page_of(s) == page)
                     .position(|&s| s == i)
                     .filter(|p| *p < count)
                     .map(|p| p as u32 + 1);

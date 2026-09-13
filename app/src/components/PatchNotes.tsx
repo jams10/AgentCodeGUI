@@ -88,6 +88,15 @@ const START_ROWS = (ko: boolean): CmpRow[] => [
 ]
 const LEGEND: [string, string] = ['v2.6.2', 'v3.0']
 
+// 3.3.0 실측 — bench/load-pages.mjs(가짜 CLI로 12패널 동시 스트리밍, 화면 6 + 숨은 페이지 6, 60토큰/s,
+// 릴리즈 번들, 결과 bench/results/load-pages-base-hz60.json → load-pages-final-hz60.json). 두 언어가 같은 수를 쓰도록 한 곳에.
+const PERF_ROWS_330 = (ko: boolean): CmpRow[] => [
+  { label: ko ? '프레임 작업 시간 p95' : 'Frame work p95', before: 29.9, after: 9.3, unit: 'ms' },
+  { label: ko ? '16.6ms 넘긴 프레임' : 'Frames over 16.6 ms', before: 11.3, after: 0.7, unit: '%' },
+  { label: ko ? '드랍 프레임' : 'Dropped frames', before: 7.2, after: 2.6, unit: '%' }
+]
+const LEGEND_330: [string, string] = ['v3.2.5', 'v3.3.0']
+
 // 커밋 수 — 리드 문장이 인용한다. 릴리즈 직전에 다시 세서 갱신할 것:
 //   2.6.2까지 = git rev-list --count v2.6.2 · 3.0 = git rev-list --count v2.6.2..HEAD
 //   (2026-09-02 실측: 137 / 426)
@@ -152,6 +161,14 @@ const RELEASES: Record<string, LocalizedRelease> = {
   //   지난 창 제외 + net.rs NetError::RateLimited(긴 Retry-After는 자지 않고 그 길이로 격리 · 상한 1시간) + acct_switch
   //   note_hold + 렌더러 lib/usageWindow.ts(windowRolled·nextReset) + accounts.ts scheduleRolledRefresh(리셋 시각 타이머 ·
   //   지난 창은 즉시, 계정당 1분) + Settings LimRow 「초기화됨 · 새 값 확인 중」·useNowSec·정렬 키 + Chat picker 줄·소진 숨김.
+  // 3.3.0 — 2026-09-13 멀티 12패널(페이지 [1][2]) + 스트리밍 성능. ① 슬롯 12 = 6칸 페이지 둘(MultiAgent PAGE_SIZE·
+  //   boards.rs SLOT_COUNT 12·count2/page/promo2 — 옛 6칸 저장본은 순열을 이어 붙여 이관), 자리 수·접힘·승격이 페이지별,
+  //   번호는 두 페이지 모두 1‥6, Ctrl+Tab, 숨은 페이지 점(실행=노랑·응답 대기=파랑), 토스트 클릭 → jumpToPanel(페이지·자리
+  //   착지). 숨은 페이지는 DOM을 안 그리고 훅만 상주. ② 성능 — bench/load-pages.mjs 프로파일: 렌더러 JS의 47%가 공개 커밋마다
+  //   글 전체를 재파싱하는 micromark. 동시 공개 수 비례 커밋 바닥(activeReveals) + 머리/꼬리 분할(lib/streamSplit.ts) +
+  //   ResizeObserver 바닥 고정(매 프레임 scrollHeight 루프 폐기) + 래치 중 기하 읽기 생략 + 스냅 effect 키를 메시지 수로 +
+  //   Composer memo(PanelView useEvent 콜백) + .ma-p-thread contain:content. 기각: 프레임당 커밋 예산(p95 9.3→15.4로 악화),
+  //   꼬리 평문(서식이 문단 끝에 입혀지는 외관 — 사용자 거절).
   // 3.2.5 — 2026-09-12 제보 둘: ① 채팅 선택 툴바(복사·더 자세히·번역)가 드래그만 해도 떠서 거슬림 → SelectionToolbar의
   //   왼쪽 버튼 mouseup 경로 제거, contextmenu에서만 띄운다(파일 뷰어 툴바는 원래 우클릭 전용). ② 웹에서 해지한 ChatGPT Pro
   //   (10/11까지 이용)가 카드에 「구독 중」·날짜 없음: accounts/check 실측 — 해지돼도 has_active_subscription:true·cancels_at:null이고
@@ -162,6 +179,66 @@ const RELEASES: Record<string, LocalizedRelease> = {
   //   Codex CLI는 토큰을 8일·401 때만 갱신한다 → app-server `account/read {refreshToken:true}`로 재발급 후 재조회
   //   (codex_limit::refresh_account · subscriptions.rs worker · 초기화권 창 새로고침). 조회 실패 행은 「확인 불가」로.
   //   Claude는 토큰이 불투명이라 라벨(subscriptionType)만 로그인 때 값으로 굳어 있었다 → /api/oauth/profile로 되싱크.
+  '3.3.0': {
+    ko: {
+      eyebrow: 'TWELVE PANELS',
+      lead: '멀티 채팅이 6칸 페이지 두 개, 최대 12패널이 됐습니다. 여러 패널이 동시에 답을 쓸 때의 끊김도 크게 줄였습니다.',
+      notes: [
+        {
+          tag: '멀티',
+          name: '페이지 1·2 — 패널 12개',
+          desc: (
+            <>
+              헤더의 <b>[1] [2]</b>로 6칸짜리 페이지 둘을 오갑니다. 자리 수(1~6)·접힘·순서는 페이지마다 따로 기억하고, 번호는 두 페이지 모두 1부터 셉니다.
+              보고 있지 않은 페이지의 패널도 계속 실행됩니다 — 실행 중이면 페이지 버튼에 노란 점, 승인·질문을 기다리면 파란 점이 켜집니다.
+              알림을 누르면 그 패널이 있는 페이지와 자리로 바로 갑니다. <b>Ctrl+Tab</b>으로도 넘길 수 있고, 예전 6칸 배치는 그대로 1페이지가 됩니다.
+            </>
+          )
+        },
+        {
+          tag: '성능',
+          name: '여러 패널이 동시에 답할 때 덜 끊김',
+          desc: (
+            <>
+              답이 흘러들어올 때마다 말풍선 전체를 다시 그리던 것을, 이미 굳은 앞부분은 두고 자라는 꼬리만 다시 그리도록 바꿨습니다.
+              스크롤을 바닥에 붙이는 방식도 매 프레임 확인에서 내용이 자랄 때만 붙이는 방식으로 바꿨습니다.
+              아래는 12패널이 동시에 답을 쓰는 상황(60토큰/초)의 실측입니다. 완성된 답변의 모양은 전과 같습니다.
+            </>
+          ),
+          chart: <Cmp rows={PERF_ROWS_330(true)} legend={LEGEND_330} />
+        }
+      ]
+    },
+    en: {
+      eyebrow: 'TWELVE PANELS',
+      lead: 'Multi chat now has two pages of six panels, up to twelve in one board, and streaming in many panels at once stutters far less.',
+      notes: [
+        {
+          tag: 'Multi',
+          name: 'Pages 1 and 2 — twelve panels',
+          desc: (
+            <>
+              Switch between two six-panel pages with <b>[1] [2]</b> in the header. Panel count (1–6), folding, and order are remembered per page, and numbering starts at 1 on both pages.
+              Panels on the page you are not looking at keep running — the page button shows an amber dot while something runs there and a blue dot when a panel waits for approval or an answer.
+              Clicking a notification jumps to that panel's page and seat. <b>Ctrl+Tab</b> switches pages too, and an existing six-panel layout simply becomes page 1.
+            </>
+          )
+        },
+        {
+          tag: 'Performance',
+          name: 'Less stutter while many panels stream',
+          desc: (
+            <>
+              Each streamed chunk used to re-render the whole message; now the settled part stays put and only the growing tail is redrawn.
+              Bottom-following also moved from a per-frame check to reacting only when content actually grows.
+              Measured with twelve panels streaming at once (60 tokens/s). Finished messages look exactly as before.
+            </>
+          ),
+          chart: <Cmp rows={PERF_ROWS_330(false)} legend={LEGEND_330} />
+        }
+      ]
+    }
+  },
   '3.2.5': {
     ko: {
       eyebrow: 'SELECTION & SUBSCRIPTION',

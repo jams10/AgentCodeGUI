@@ -465,4 +465,45 @@ fn the_dial_overlay_survives_the_board_round_trip_and_null_clears_it() {
     assert!(sanitize_promo(Some(&json!({ "slot": 1, "base": [0, 0, 2, 3, 4, 5] }))).is_none());
     assert!(sanitize_promo(Some(&json!({ "slot": 6, "base": [0, 1, 2, 3, 4, 5] }))).is_none());
     assert!(sanitize_promo(Some(&json!({ "slot": 2, "base": [5, 4, 3, 2, 1, 0] }))).is_some());
+    // ★3.3 2페이지 승격은 base가 6‥11의 순열이어야 한다
+    assert!(sanitize_promo(Some(&json!({ "slot": 8, "base": [11, 10, 9, 8, 7, 6] }))).is_some());
+    assert!(sanitize_promo(Some(&json!({ "slot": 8, "base": [0, 1, 2, 3, 4, 5] }))).is_none());
+    assert!(sanitize_promo(Some(&json!({ "slot": 12, "base": [6, 7, 8, 9, 10, 11] }))).is_none());
+}
+
+// ── ★3.3 페이지 — 2페이지 자리 수·보던 페이지·2페이지 승격이 보드 왕복에서 산다 ────────
+#[test]
+fn the_second_page_layout_survives_the_board_round_trip() {
+    let _h = migrated("bridge-page2");
+    let find = |id: &str| -> Value {
+        ma_get(false)["sessions"].as_array().unwrap().iter().find(|x| x["id"] == json!(id)).cloned().unwrap()
+    };
+    // 구 저장본(2.6.2 이관) — count2·page가 없어야 렌더러가 count·1페이지로 폴백한다
+    let base = find("sess-A");
+    assert!(base.get("count2").is_none() && base.get("page").is_none(), "이관 직후엔 2페이지 값이 없어야 한다");
+    let mut s = ma_session("sess-A", false);
+    s["count2"] = json!(3);
+    s["page"] = json!(1);
+    s["promo2"] = json!({ "slot": 8, "base": [6, 7, 8, 9, 10, 11] });
+    let _ = ma_save(&json!({ "version": 2, "activeSessionId": "sess-A", "sessions": [s] }));
+    let got = find("sess-A");
+    assert_eq!(got["count2"], json!(3));
+    assert_eq!(got["page"], json!(1));
+    assert_eq!(got["promo2"], json!({ "slot": 8, "base": [6, 7, 8, 9, 10, 11] }));
+    assert_eq!(got["panels"].as_array().map(Vec::len), Some(12), "패널은 12자리로 내준다");
+    // 마커 저장(키 없음)은 지난 값을 지킨다
+    let mut s2 = ma_session("sess-A", false);
+    for k in ["count2", "page", "promo2"] {
+        s2.as_object_mut().unwrap().remove(k);
+    }
+    let _ = ma_save(&json!({ "version": 2, "activeSessionId": "sess-A", "sessions": [s2] }));
+    let kept = find("sess-A");
+    assert_eq!(kept["count2"], json!(3));
+    assert_eq!(kept["page"], json!(1));
+    assert_eq!(kept["promo2"]["slot"], json!(8));
+    // null promo2 = 걷음
+    let mut s3 = ma_session("sess-A", false);
+    s3["promo2"] = Value::Null;
+    let _ = ma_save(&json!({ "version": 2, "activeSessionId": "sess-A", "sessions": [s3] }));
+    assert!(find("sess-A").get("promo2").is_none(), "걷은 2페이지 오버레이가 되살아났다");
 }

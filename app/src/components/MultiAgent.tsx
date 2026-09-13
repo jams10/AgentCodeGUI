@@ -46,7 +46,7 @@ import { ExternalToolChip } from './ExternalTools'
 import type { ExternalContextSnapshot } from '@shared/externalTools'
 import { shellAuthored, verdictLine, verdictNote } from '../lib/verdict'
 // ★3.0.8 — 다이얼(자리 수) ↔ 표시 순서의 순수 규칙. 줄일 때의 포커스 자리 승격은 임시 오버레이다.
-import { resizeLayout, sanitizePromo, type LayoutPromo } from '../lib/panelLayout'
+import { resizeLayout, sanitizePromoIn, type LayoutPromo } from '../lib/panelLayout'
 import type { LimitHold } from '../lib/limitResume'
 import type { LimitResumeSurface } from '../lib/useLimitResume'
 import { useManagedLimitResume } from '../lib/useManagedLimitResume'
@@ -64,7 +64,7 @@ import { extractMentions } from '../lib/mentions'
 import { useTurnNotifyList } from '../lib/notify'
 import { mergeRefs, useZoom, ZoomBadge } from './zoom'
 import { MouseGestureLayer, clearGesture, sessionWindowGesture } from './mouseGesture'
-import { IconFolder, IconChevDown, IconMascot, IconPanelRight, IconSearch, IconExpand, IconCollapse, IconPopout, IconPencil, IconLock, IconLockOpen } from './icons'
+import { IconFolder, IconChevDown, IconMascot, IconPanelRight, IconSearch, IconExpand, IconCollapse, IconPopout, IconPencil, IconLock, IconLockOpen, IconGrid, IconPages } from './icons'
 import { t, useLang } from '../lib/i18n'
 import { openInViewerWindow, setViewerWindowMode, viewerWindowMode } from '../lib/viewerWindow'
 
@@ -74,8 +74,20 @@ import { openInViewerWindow, setViewerWindowMode, viewerWindowMode } from '../li
 // Claude Code engine addressed by `${sessionId}::${slot}` — unique per session, so two
 // sessions never collide on the shared event channel, and a session's runs keep going
 // in the background after you switch away (events resync when you come back).
-const SLOT_COUNT = 6
-const SLOTS = [0, 1, 2, 3, 4, 5]
+//
+// ★3.3 페이지 — 12슬롯을 6개씩 두 페이지로 나눠 본다(헤더 [1][2]). 슬롯 0‥5 = 1페이지,
+// 6‥11 = 2페이지. 자리 수(다이얼 1‥6)·접힘·승격(promo)은 **페이지마다 따로** 논다 —
+// 페이지는 자리 배치 규칙(`lib/panelLayout.ts`)을 제 슬롯 묶음에만 적용하는 '보기'다.
+// 12슬롯의 세션 훅은 전부 상주해 숨은 페이지의 실행·이벤트·큐 드레인·한도 대기표가 그대로
+// 돌고, 그리드엔 현재 페이지의 패널만 마운트한다(숨은 페이지 DOM 없음 — 12패널 상주
+// 렌더러 비용을 6패널로 묶는다. 전환 비용은 꼬리 윈도잉(useThreadWindow)이 막는다).
+const PAGE_SIZE = 6
+const PAGE_COUNT = 2
+const SLOT_COUNT = PAGE_SIZE * PAGE_COUNT
+const SLOTS = Array.from({ length: SLOT_COUNT }, (_, i) => i)
+const PAGES = Array.from({ length: PAGE_COUNT }, (_, i) => i)
+const PAGE_SLOTS = PAGES.map((p) => SLOTS.slice(p * PAGE_SIZE, (p + 1) * PAGE_SIZE))
+const pageOf = (slot: number): number => Math.floor(slot / PAGE_SIZE)
 
 // 그리드 배치는 .ma-grid.nN 클래스가 결정 (PoC: 2·3=한 줄, 4=2×2, 5=3+2 스팬, 6=3×2)
 // ★ 3.0 M-UX — 다이얼에 **1**이 들어왔다(ux-chat-unify §2.1). 1 = 그리드가 아니라
@@ -171,7 +183,11 @@ interface PersistedSession {
   // ★3.0.8 — 자리 수를 줄이며 끌어올린 자리와 그 전의 순서(`lib/panelLayout.ts`). 늘릴 때 되돌리는 근거.
   // null = 오버레이 없음. 없으면(예전 저장본) 오버레이 없음과 같다.
   promo?: LayoutPromo | null
-  panels: PersistedPanel[] // length SLOT_COUNT
+  // ★3.3 페이지 — `count`·`promo`는 1페이지 것(이름은 예전 저장본·구 빌드 호환). 2페이지는 아래.
+  count2?: number // 2페이지 자리 수 — 없으면(예전 저장본) count를 따른다
+  promo2?: LayoutPromo | null // 2페이지 승격 오버레이(base는 슬롯 6‥11의 순열)
+  page?: number // 마지막으로 보던 페이지(0‥PAGE_COUNT-1) — 없으면 1페이지
+  panels: PersistedPanel[] // length SLOT_COUNT (구 저장본은 6 — 나머지는 빈 패널)
   updatedAt?: number // 마지막 활동(실행 시작) 시각 — 사이드바 상대 시간 표시용
   // 패널 스냅샷이 메모리에 없다는 표식 — panels는 빈 배열이고 진짜는 디스크(maStore)에
   // 있다(전환 시 loadSession으로 되읽음). 모든 세션×6패널 스냅샷을 상주시키면 렌더러
@@ -190,9 +206,20 @@ interface MultiPersist {
 // the active session's panels reported up for persistence
 interface CommitPayload {
   count: number
+  count2: number
+  page: number
   panelOrder: number[]
   promo: LayoutPromo | null
+  promo2: LayoutPromo | null
   panels: PersistedPanel[]
+}
+
+// ★3.3 알림 토스트 클릭 → 패널 착지 요청 (App → useMultiSessions → ActiveSession). seq로 같은
+// 요청의 재적용을 막고, 소비한 쪽이 clearJump(seq)로 지운다.
+export interface PanelJump {
+  id: string // 세션(보드) id
+  slot: number
+  seq: number
 }
 
 // 왼쪽 칼럼 파일 탐색기(` 전환)가 따라갈 패널의 스냅샷 — ActiveSession이 App으로
@@ -207,8 +234,10 @@ export interface PanelSummary {
   panelId: string
   title: string
   status: AgentStatus
-  pos: number | null // 보이는 자리 번호(1‥N) — 접혀 있으면 null
+  pos: number | null // 제 페이지 안에서 보이는 자리 번호(1‥N) — 접혀 있으면 null
   fold: number | null // 접힘 집합 안의 자리 번호(count+1‥6) — 보이면 null
+  page: number // ★3.3 이 자리가 사는 페이지(0‥) — 번호(pos)는 페이지 안 번호라 페이지와 함께 읽는다
+  shown: boolean // ★3.3 지금 화면에 있는가 = 보이는 자리이고 그 페이지를 보는 중 (pos != null만으론 모자란다)
   color: string
   popped: boolean // 별도 창에서 보는 중(유령 셀)
   ask: boolean // 승인/질문 대기
@@ -254,19 +283,39 @@ function blankSession(id: string, count = 4): PersistedSession {
     title: '',
     custom: false,
     count,
+    count2: count,
+    page: 0,
     panels: SLOTS.map(() => ({ title: '', custom: false, cwd: '', picker: { ...DEFAULT_PICKER } }))
   }
 }
 // ★ 3.0 M-UX — 하한이 2에서 **1**로 내려왔다. 1은 "패널 하나짜리 그리드"가 아니라
-// IDE 크롬이고, 나머지 자리는 삭제가 아니라 **접힘**이다(§2.2).
+// IDE 크롬이고, 나머지 자리는 삭제가 아니라 **접힘**이다(§2.2). 상한은 한 페이지(6).
 function clampCount(n: unknown): number {
   const v = typeof n === 'number' ? n : 4
-  return Math.max(1, Math.min(SLOT_COUNT, Math.round(v)))
+  return Math.max(1, Math.min(PAGE_SIZE, Math.round(v)))
+}
+function clampPage(n: unknown): number {
+  return typeof n === 'number' && Number.isInteger(n) && n >= 0 && n < PAGE_COUNT ? n : 0
 }
 // 패널 표시 순서 위생 — 슬롯 번호의 온전한 순열만 인정(길이·구성원 검사), 어긋나면
 // (예전 저장본·크래시 반토막) 기본 순서. 표시만 바꾸는 값이라 폴백이 안전하다.
+// ★3.3 1페이지만 있던 구 저장본(6짜리 순열)은 뒤에 2페이지 슬롯을 기본 순서로 이어 붙인다.
 function sanitizePanelOrder(v: unknown): number[] {
-  return Array.isArray(v) && v.length === SLOT_COUNT && SLOTS.every((s) => v.includes(s)) ? (v as number[]) : [...SLOTS]
+  if (!Array.isArray(v)) return [...SLOTS]
+  if (v.length === SLOT_COUNT && SLOTS.every((s) => v.includes(s))) return v as number[]
+  const legacy = PAGE_SLOTS[0]
+  if (v.length === legacy.length && legacy.every((s) => v.includes(s))) return [...(v as number[]), ...SLOTS.slice(PAGE_SIZE)]
+  return [...SLOTS]
+}
+// 페이지 p의 표시 순서 — 전체 순열에서 그 페이지 슬롯만 골라낸 부분열(자리 규칙은 여기에 적용)
+function orderOfPage(order: number[], p: number): number[] {
+  return order.filter((s) => pageOf(s) === p)
+}
+// 페이지 p의 부분열을 전체 순열에 되끼운다 — 페이지끼리는 순서가 무의미하니 1페이지‥2페이지 순으로 정규화
+function mergePageOrder(order: number[], p: number, sub: number[]): number[] {
+  const out: number[] = []
+  for (const q of PAGES) out.push(...(q === p ? sub : orderOfPage(order, q)))
+  return out
 }
 function basename(p: string): string {
   const parts = p.split(/[\\/]+/).filter(Boolean)
@@ -432,7 +481,7 @@ export const PanelView = memo(function PanelView({
   onCycleColor,
   btwWins,
 }: PanelViewProps) {
-  useLang() // 언어 전환 재렌더 구독 (memo 컴포넌트라 루트 재렌더를 안 탄다)
+  const lang = useLang() // 언어 전환 재렌더 구독 (memo 컴포넌트라 루트 재렌더를 안 탄다)
   const scrollRef = useRef<HTMLDivElement>(null)
   const composerRef = useRef<HTMLTextAreaElement>(null)
   // 마우스 제스처(↑/↓) 대상 — 이 패널의 스레드 엘리먼트를 state로 추적 (패널별 독립)
@@ -519,10 +568,29 @@ export const PanelView = memo(function PanelView({
   }
 
   // 첨부 파일 선택 — 진짜 Composer의 [+] 버튼이 부른다 (본채팅과 같은 OS 픽커)
-  const pickImages = async (): Promise<void> => {
+  const pickImages = useEvent(async (): Promise<void> => {
     const paths = await window.api.pickAttachments()
     if (paths.length) onAddImages(slot, paths)
-  }
+  })
+  // ★3.3 Composer(memo)에 넘기는 콜백은 전부 정체성 고정 — 스트리밍 델타마다 이 패널이 다시
+  // 그려져도 컴포저는 자기 props(초안·큐·picker·첨부)가 바뀔 때만 재조정된다.
+  const onComposerChange = useEvent((text: string) => onInput(slot, text))
+  const onComposerSend = useEvent(() => {
+    // 전송 = 따라가기 재개 — 위를 읽던 중이어도 내 메시지와 답이 시야로 (본채팅과 동일)
+    follow.pin()
+    onSend(slot)
+  })
+  const onComposerStop = useEvent(() => onStop(slot))
+  const onComposerSchedule = useEvent(() => onSchedule(slot))
+  const onComposerRemoveQueued = useEvent((id: string) => onRemoveQueued(slot, id))
+  const onComposerPicker = useEvent((p: PickerState) => onPicker(slot, p))
+  const onComposerApiMode = useEvent((next: boolean, eng?: EngineId) => onApiMode(slot, next, eng))
+  const onComposerAddImagePaths = useEvent((paths: string[]) => onAddImages(slot, paths))
+  const onComposerRemoveImage = useEvent((i: number) => onRemoveImage(slot, i))
+  const onComposerCancelHold = useEvent(() => onCancelHold(slot))
+  const onComposerResumeHold = useEvent(() => onResumeHold(slot))
+  // "/" 팔레트 명령 목록 — 언어가 바뀔 때만 새로 (매 렌더 새 배열이면 memo가 무의미)
+  const composerCommands = useMemo(() => slashCommandsWithBtw(), [lang])
 
   // 스레드 바닥 따라가기 — 본채팅과 같은 의도 래치(useThreadFollow): 스트리밍 중에도
   // 휠 업이면 따라가기를 풀어 위 내용을 읽을 수 있고, 바닥에 다시 닿으면 재개된다.
@@ -530,10 +598,14 @@ export const PanelView = memo(function PanelView({
   const follow = useThreadFollow(threadEl, busy)
   // 꼬리 윈도잉 — 패널마다 독립 (긴 세션 DOM 상주가 패널 수만큼 곱해지는 걸 막는다)
   const twin = useThreadWindow(threadEl, state.messages.length)
+  // ★3.3 키는 **메시지 수·상태**다 — `state.messages`는 스트리밍 델타마다 새 배열이라 그 키로는
+  // 이 effect가 델타마다 돌고, 커밋 직후의 `scrollHeight` 읽기가 매번 강제 레이아웃이었다
+  // (12패널 프로파일에서 `get scrollHeight` 4.5%). 스트리밍 중 성장은 useThreadFollow의
+  // ResizeObserver가 붙이므로 여기선 새 말풍선·실행 종료(최종본 교체)만 잡으면 된다.
   useEffect(() => {
     follow.snapIfStuck()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.messages, state.thinkingText])
+  }, [state.messages.length, state.status])
   // 초기화(/clear·제스처)로 스레드가 비면 따라가기·점프 버튼도 백지로 — 패널의 clear는
   // ActiveSession(clearPanel) 소관이라 여기서 빈 스레드를 신호로 받는다. 빈 스레드는
   // scroll 이벤트가 없어 showJump 잔상이 저절로 안 꺼진다(2026-09-01 사용자 보고)
@@ -852,38 +924,34 @@ export const PanelView = memo(function PanelView({
         onRefreshUsage={refreshUsage}
       />
       {/* 한도 자동 이어서 상태줄 — 이 패널 대기표의 재개 예정 (본채팅과 같은 공용 바) */}
-      <LimitHoldBar hold={limitHold} managed={managedLimitHold} enabled={autoResume} onCancel={() => onCancelHold(slot)} onResume={() => onResumeHold(slot)} onContinue={() => onResumeHold(slot)} />
+      <LimitHoldBar hold={limitHold} managed={managedLimitHold} enabled={autoResume} onCancel={onComposerCancelHold} onResume={onComposerResumeHold} onContinue={onComposerResumeHold} />
       <Composer
         value={meta.input}
-        onChange={(t) => onInput(slot, t)}
+        onChange={onComposerChange}
         history={sentHistory}
-        // 전송 = 따라가기 재개 — 위를 읽던 중이어도 내 메시지와 답이 시야로 (본채팅과 동일)
-        onSend={() => {
-          follow.pin()
-          onSend(slot)
-        }}
-        onStop={() => onStop(slot)}
-        onSchedule={() => onSchedule(slot)}
+        onSend={onComposerSend}
+        onStop={onComposerStop}
+        onSchedule={onComposerSchedule}
         queued={meta.queue}
-        onRemoveQueued={(id) => onRemoveQueued(slot, id)}
+        onRemoveQueued={onComposerRemoveQueued}
         busy={busy}
         started={started}
         picker={meta.picker}
-        setPicker={(p) => onPicker(slot, p)}
+        setPicker={onComposerPicker}
         apiMode={meta.api}
         apiReady={apiReady}
         apiReadyCodex={apiReadyCodex}
-        onApiModeChange={(next, eng) => onApiMode(slot, next, eng)}
+        onApiModeChange={onComposerApiMode}
         autoResume={autoResume}
         onAutoResumeChange={onAutoResume}
         images={meta.images}
         onPickImages={pickImages}
-        onAddImagePaths={(paths) => onAddImages(slot, paths)}
-        onRemoveImage={(i) => onRemoveImage(slot, i)}
+        onAddImagePaths={onComposerAddImagePaths}
+        onRemoveImage={onComposerRemoveImage}
         onOpenImage={onOpenImage}
         cwd={cwd}
         mentionBase={cwd}
-        commands={slashCommandsWithBtw()}
+        commands={composerCommands}
         inputRef={composerRef}
         // ★R28 ACCT §3 — 이 자리의 식별자. 계정 picker가 「사용 중」 역인덱스에서 자기
         // 자리를 뺄 때 쓴다(자기 자리는 경고가 아니라 「현재」다). 패널은 자기 chatId를
@@ -1063,6 +1131,10 @@ function statusLabel(s: AgentStatus): string {
 export function PanelDial({ count, onPick }: { count: number; onPick: (n: number) => void }) {
   return (
     <div className="ma-count" role="tablist" aria-label={t('패널 수', 'Panel count')}>
+      {/* ★3.3 글자 대신 격자 아이콘이 라벨 — 왼쪽 페이지 세그먼트(겹친 창 아이콘)와 짝 */}
+      <span className="ma-seg-ico" aria-hidden="true">
+        <IconGrid size={13} />
+      </span>
       {COUNT_OPTIONS.map((n) => (
         <button
           key={n}
@@ -1074,6 +1146,47 @@ export function PanelDial({ count, onPick }: { count: number; onPick: (n: number
         >
           {n}
         </button>
+      ))}
+    </div>
+  )
+}
+
+// ★3.3 페이지 세그먼트 [1][2] — 다이얼과 같은 .ma-count 문법, 겹친 창 아이콘이 라벨.
+// dots[p] = 숨은 페이지의 상태 점('' | 'ask' | 'busy') — 보는 페이지엔 안 뜬다(눈앞의 패널이 이미 말한다).
+export function PageSeg({ page, dots, onPick }: { page: number; dots: string[]; onPick: (p: number) => void }) {
+  return (
+    <div className="ma-count ma-pages" role="tablist" aria-label={t('페이지', 'Page')}>
+      <span className="ma-seg-ico" aria-hidden="true">
+        <IconPages size={13} />
+      </span>
+      {dots.map((dot, p) => (
+        <button
+          key={p}
+          role="tab"
+          aria-selected={page === p}
+          className={'ma-count-btn has-tip' + (page === p ? ' on' : '')}
+          data-tip={t(`${p + 1}페이지 — 자리 6개 (Ctrl+Tab)`, `Page ${p + 1} — six slots (Ctrl+Tab)`)}
+          onClick={() => onPick(p)}
+        >
+          {p + 1}
+          {dot && <i className={'ma-page-dot ' + dot} aria-hidden="true" />}
+        </button>
+      ))}
+    </div>
+  )
+}
+// 일반 채팅(IDE 크롬)엔 페이지가 없다 — 폭만 예약해 다이얼이 두 크롬에서 같은 x에 앉게
+// (FoldSlotHold와 같은 규약: 1↔2 전환에서 다이얼이 화면에서 안 움직인다)
+export function PageSegHold() {
+  return (
+    <div className="ma-count ma-pages hold" aria-hidden="true">
+      <span className="ma-seg-ico">
+        <IconPages size={13} />
+      </span>
+      {PAGES.map((p) => (
+        <span key={p} className="ma-count-btn">
+          {p + 1}
+        </span>
       ))}
     </div>
   )
@@ -1120,7 +1233,9 @@ function ActiveSession({
   countSeed,
   raiseSeed,
   explorerHidden,
-  onToggleExplorer
+  onToggleExplorer,
+  jump,
+  onJumpDone
 }: {
   sessionId: string
   initial: PersistedSession
@@ -1140,15 +1255,25 @@ function ActiveSession({
   raiseSeed?: { slot: number; seq: number } // ★ 사이드바에서 고른 접힌 자리 → 1번 자리로
   explorerHidden?: boolean // 탐색기가 내려가 있는가 — 헤더 토글 버튼의 상태 표시
   onToggleExplorer?: () => void // 헤더 토글 버튼 — 사이드바 ⟷ 탐색기 (본채팅 헤더와 동일)
+  jump?: PanelJump | null // ★3.3 알림 클릭 착지 요청 — 이 세션 것이면 그 슬롯의 페이지로 넘기고 포커스
+  onJumpDone?: (seq: number) => void // 착지 요청 소비 통지 (재마운트 때 같은 요청이 재적용되지 않게)
 }) {
-  // every slot's session — six fixed hook calls, subscribed for this session's lifetime
+  // every slot's session — twelve fixed hook calls, subscribed for this session's lifetime.
+  // ★3.3 페이지와 무관하게 전부 상주 — 숨은 페이지 패널의 스트리밍·완료·질문 카드 상태가 여기
+  // 쌓이고, 그 페이지로 넘어가는 순간 PanelView가 이 상태로 그려진다(이벤트 유실 없음).
   const s0 = useAgentSession(subFor(chan(sessionId, 0)))
   const s1 = useAgentSession(subFor(chan(sessionId, 1)))
   const s2 = useAgentSession(subFor(chan(sessionId, 2)))
   const s3 = useAgentSession(subFor(chan(sessionId, 3)))
   const s4 = useAgentSession(subFor(chan(sessionId, 4)))
   const s5 = useAgentSession(subFor(chan(sessionId, 5)))
-  const sessions = [s0, s1, s2, s3, s4, s5]
+  const s6 = useAgentSession(subFor(chan(sessionId, 6)))
+  const s7 = useAgentSession(subFor(chan(sessionId, 7)))
+  const s8 = useAgentSession(subFor(chan(sessionId, 8)))
+  const s9 = useAgentSession(subFor(chan(sessionId, 9)))
+  const s10 = useAgentSession(subFor(chan(sessionId, 10)))
+  const s11 = useAgentSession(subFor(chan(sessionId, 11)))
+  const sessions = [s0, s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11]
   // n1(IDE 크롬) 웰컴 인사말 — 본채팅과 같은 프로필 닉네임
   const profileName = useProfileName()
 
@@ -1169,7 +1294,10 @@ function ActiveSession({
   // 생성/삭제된 파일이 새로고침 없이 보인다 (본채팅 fsTick과 같은 규칙)
   const [fsTick, setFsTick] = useState(0)
 
-  const [count, setCount] = useState(() => clampCount(initial.count))
+  // ★3.3 페이지별 자리 수 [1페이지, 2페이지] + 보는 페이지. 예전 저장본은 count2가 없어 1페이지 값을 따른다.
+  const [counts, setCounts] = useState<number[]>(() => [clampCount(initial.count), clampCount(initial.count2 ?? initial.count)])
+  const [page, setPage] = useState(() => clampPage(initial.page))
+  const count = counts[page] // 현재 페이지의 자리 수 — 다이얼·그리드 nN·n1 판정의 단일 소스
   const [focusedSlot, setFocusedSlot] = useState<number | null>(null)
   // 패널 표시 순서(슬롯 순열) — 헤더 길게 누르기 드래그로 바꾼다. 그리드가 이 순서로
   // 그리고, 슬롯 정체성(엔진·대화·컬러 태그)은 패널을 따라간다. 세션에 영속.
@@ -1177,7 +1305,11 @@ function ActiveSession({
   const [panelOrder, setPanelOrder] = useState<number[]>(() => sanitizePanelOrder(initial.panelOrder))
   // 1분할에서 현재 대화를 보여 주는 임시 승격(`lib/panelLayout.ts`). 2‥6분할로 돌아가면 `base`로 복원한다.
   // 손으로 순서를 바꾸면(드래그·↥ 올리기) 그 순서가 새 진실이라 걷는다. 세션에 영속.
-  const [promo, setPromo] = useState<LayoutPromo | null>(() => sanitizePromo(initial.promo, SLOT_COUNT))
+  // ★3.3 페이지마다 하나 — base는 그 페이지 슬롯 묶음의 순열
+  const [promos, setPromos] = useState<(LayoutPromo | null)[]>(() => [
+    sanitizePromoIn(initial.promo, PAGE_SLOTS[0]),
+    sanitizePromoIn(initial.promo2, PAGE_SLOTS[1])
+  ])
   // 지금 보이는 슬롯들, 자리 순서대로 — 번호(인덱스+1)·그리드 렌더의 단일 소스.
   //
   // ★ 3.0 M-UX (ux-chat-unify §2.2) — 판정 기준이 **슬롯 번호**에서 **order 내 위치**로
@@ -1185,8 +1317,16 @@ function ActiveSession({
   // 패널이 "보이던 자리"를 통째로 잃었다(자리 번호와 슬롯 번호가 묶여 있었다).
   // 지금은 `order.slice(0, count)` — 접힌 자리는 `order.slice(count)`이고, 대화는
   // 어디로도 가지 않는다. 되올리면 같은 자리로 돌아온다(slots를 안 건드리므로).
-  const visibleSlots = panelOrder.slice(0, count)
-  const foldedSlots = panelOrder.slice(count)
+  //
+  // ★3.3 페이지 — 규칙은 그대로, 대상이 **그 페이지의 부분열**이다. 번호(pos)는 페이지 안
+  // 자리(1‥6)라 2페이지도 1부터 센다(유저 결정: 7‥12가 아니라 1‥6).
+  const pageOrders = PAGES.map((p) => orderOfPage(panelOrder, p))
+  const pageVisible = PAGES.map((p) => pageOrders[p].slice(0, counts[p]))
+  const visibleSlots = pageVisible[page]
+  const foldedSlots = pageOrders[page].slice(count)
+  // 두 페이지의 보이는 자리 전부 — 과금·계정 프리페치처럼 "돌고 있을 수 있는 자리" 집계용(숨은 페이지도 돈다)
+  const allVisible = pageVisible.flat()
+  const numOf = (slot: number): number => pageVisible[pageOf(slot)].indexOf(slot) + 1
   const [metas, setMetas] = useState<PanelMeta[]>(() =>
     SLOTS.map((i) => {
       const p = initial.panels?.[i]
@@ -1215,7 +1355,7 @@ function ActiveSession({
   const acctSig = JSON.stringify(
     Array.from(
       // ★ 보이는 자리 기준 — 슬롯 번호(slice(0,count))가 아니라 order 위치다(§2.2)
-      new Set(visibleSlots.map((i) => metas[i]).filter((m) => m.picker.engine !== 'codex').map((m) => m.picker.account ?? ''))
+      new Set(allVisible.map((i) => metas[i]).filter((m) => m.picker.engine !== 'codex').map((m) => m.picker.account ?? ''))
     ).sort()
   )
   useEffect(() => {
@@ -1286,9 +1426,25 @@ function ActiveSession({
   //   · 서브에이전트·크게보기·라이트박스 → **닫는다**(그 채팅 원장/스레드의 내용).
   //   · 포커스 → order[0]로 재바인드(키보드 스코프는 항상 정의돼 있어야 한다).
   //   · 이름 편집 → 커밋 후 닫기(입력 중이던 글자를 버리지 않는다 — 인풋 onBlur가 커밋).
-  const reconcileChatRefs = useEvent((vis: number[]) => {
-    const seen = new Set(vis)
-    const fallback = vis[0] ?? 0
+  // ★3.3 페이지 전환 — 보기만 바뀐다(세션 훅·실행은 전부 상주). 다른 페이지 슬롯을 가리키던
+  // 선택·이름 편집·크게 보기는 놓는다(안 보이는 패널이 Esc 취소·F2를 쥐면 사고). 파일 뷰어·
+  // 서브에이전트 카드는 오버레이라 남긴다. 팝아웃 창도 그대로 — 돌아오면 유령 셀이 다시 선다.
+  const goPage = useEvent((p: number) => {
+    if (p === page || p < 0 || p >= PAGE_COUNT) return
+    endPanelDrag() // 드래그 중 전환이면 집힌 패널을 놓는다 (그 DOM이 곧 사라진다)
+    setPage(p)
+    const drop = (s: number | null): number | null => (s != null && pageOf(s) !== p ? null : s)
+    setFocusedSlot(drop)
+    setRenamingSlot(drop)
+    setExpandedSlot(drop)
+    // n1 페이지로 넘어오면 그 한 자리가 곧 「지금 대화」 — setVisible과 같은 이유로 포커스
+    if (counts[p] === 1) setFocusedSlot(pageVisible[p][0] ?? null)
+  })
+  // ★3.3 `vis`는 **그 페이지(p)**의 보이는 자리. 다른 페이지 슬롯은 이 전이의 대상이 아니라
+  // 그대로 둔다(그 페이지의 참조는 페이지 전환 goPage가 따로 정리한다).
+  const reconcileChatRefs = useEvent((vis: number[], p: number) => {
+    const seen = new Set([...vis, ...SLOTS.filter((s) => pageOf(s) !== p)])
+    const fallback = vis[0] ?? p * PAGE_SIZE
     setFocusedSlot((s) => (s != null && !seen.has(s) ? fallback : s))
     setRenamingSlot((s) => (s != null && !seen.has(s) ? null : s)) // 커밋은 인풋 blur가 한다
     setExpandedSlot((s) => (s != null && !seen.has(s) ? null : s))
@@ -1312,37 +1468,40 @@ function ActiveSession({
   })
   // 보이는 자리 집합을 바꾸는 유일한 문 — 소비자: ① 다이얼 ② 접힘 팝오버 「↥ 1번 자리로」
   // ③ 사이드바에서 접힌 대화 선택. 여섯 번째가 생겨도 규칙은 안 샌다(열거가 아니라 관문).
-  const setVisible = useEvent((nextOrder: number[], nextCount: number) => {
+  // ★3.3 `nextSub` = 페이지 p의 부분열(그 페이지 슬롯의 순열), 자리 수도 그 페이지 것
+  const setVisible = useEvent((nextSub: number[], nextCount: number, p: number = page) => {
     const n = clampCount(nextCount)
-    setPanelOrder(nextOrder)
-    setCount(n)
+    setPanelOrder((prev) => mergePageOrder(prev, p, nextSub))
+    setCounts((prev) => (prev[p] === n ? prev : prev.map((c, i) => (i === p ? n : c))))
     // ★ R2 — n1은 자리가 하나뿐이니 그 자리가 곧 「지금 대화」다. 포커스를 안 세우면
     // 그 패널의 ChatFind가 `active=false`라 **Ctrl+F도 헤더 돋보기도 죽는다**
     // (일반 채팅에서는 되는 기능이 n1에서만 안 되는 것 — 두 갈래의 어포던스 격차).
-    if (n === 1) setFocusedSlot(nextOrder[0])
-    reconcileChatRefs(nextOrder.slice(0, n))
+    if (n === 1 && p === page) setFocusedSlot(nextSub[0])
+    reconcileChatRefs(nextSub.slice(0, n), p)
   })
   // 다이얼 — 2‥6분할은 원래 순서의 앞 N개를 유지한다. 접히는 포커스는 setVisible에서
   // 재바인드한다. 1분할만 현재 대화를 임시로 올리고, 여러 자리로 돌아가면 원래 순서를 복원한다.
   // 포커스를 마지막 자리에 끼우던 규칙은 5→4에서 빈 5번이 기존 4번을 밀어냈다(2026-09-08).
-  const applyCount = useEvent((n: number) => {
+  const applyCount = useEvent((n: number, p: number = page) => {
     const next = clampCount(n)
-    const cur = panelOrder
+    const cur = pageOrders[p]
     const keep = focusedSlot != null && cur.includes(focusedSlot) ? focusedSlot : cur[0]
-    const r = resizeLayout({ order: cur, count, promo }, next, keep)
-    setPromo(r.promo)
-    setVisible(r.order, next)
+    const r = resizeLayout({ order: cur, count: counts[p], promo: promos[p] }, next, keep)
+    setPromos((prev) => prev.map((x, i) => (i === p ? r.promo : x)))
+    setVisible(r.order, next, p)
   })
   // 접힌 자리를 1번 자리로 올린다(팝오버 ↥ · 사이드바 클릭). count는 그대로 —
   // 자리 수를 바꾸지 않고 **누가 보이는가**만 바꾼다. 밀려난 자리는 접힘 집합 맨 앞으로.
   const raiseSlot = useEvent((slot: number) => {
-    const cur = panelOrder
-    if (cur.indexOf(slot) < count) {
+    const p = pageOf(slot)
+    if (p !== page) goPage(p) // ★3.3 다른 페이지의 자리 — 그 페이지로 먼저 넘긴다
+    const cur = pageOrders[p]
+    if (cur.indexOf(slot) < counts[p]) {
       setFocusedSlot(slot) // 이미 보이는 자리 — 포커스만
       return
     }
-    setPromo(null) // 손으로 올린 순서가 새 진실 — 다이얼 오버레이는 걷는다(★3.0.8)
-    setVisible([slot, ...cur.filter((s) => s !== slot)], count)
+    setPromos((prev) => prev.map((x, i) => (i === p ? null : x))) // 손으로 올린 순서가 새 진실 — 다이얼 오버레이는 걷는다(★3.0.8)
+    setVisible([slot, ...cur.filter((s) => s !== slot)], counts[p], p)
     setFocusedSlot(slot)
   })
   // 접힘 배지가 세는 것 — **내용이 있는** 접힌 자리만(빈 자리는 대화가 아니다, §2.4).
@@ -1432,10 +1591,21 @@ function ActiveSession({
     onStatus(sessionId, aggStatus)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aggStatus])
+  // ★3.3 숨은 페이지 버튼의 점 — 그 페이지 전 슬롯(접힌 자리 포함 — 접혀도 엔진은 돈다) 기준.
+  // 응답 대기(승인/질문)가 실행 중보다 우선(사용자 손이 필요한 쪽).
+  const pageDot = (p: number): '' | 'ask' | 'busy' => {
+    let busy = false
+    for (const s of PAGE_SLOTS[p]) {
+      const st = sessions[s].state
+      if (st.pendingPermission || st.pendingQuestion) return 'ask'
+      if (sessions[s].busy) busy = true
+    }
+    return busy ? 'busy' : ''
+  }
 
   // 예산(전역 누적) — API 과금 패널의 WorkBar 컨텍스트 팝오버(비용 행)용. API 패널이
   // 있을 때만 읽고, 실행이 끝날 때마다 다시 읽어 실행 직후 바로 맞아떨어지게 한다
-  const billApi = visibleSlots.filter((i) => metas[i].api).length
+  const billApi = allVisible.filter((i) => metas[i].api).length
   const [budget, setBudget] = useState<{ budgetUsd: number | null; spentUsd: number } | null>(null)
   useEffect(() => {
     if (!billApi) return
@@ -1447,11 +1617,22 @@ function ActiveSession({
 
   // build the persistable form of this session (latest closure kept in a ref so the
   // unmount commit captures the final state)
-  const buildRef = useRef<() => CommitPayload>(() => ({ count, panelOrder: [...SLOTS], promo: null, panels: [] }))
+  const buildRef = useRef<() => CommitPayload>(() => ({
+    count: counts[0],
+    count2: counts[1],
+    page,
+    panelOrder: [...SLOTS],
+    promo: null,
+    promo2: null,
+    panels: []
+  }))
   buildRef.current = () => ({
-    count,
+    count: counts[0],
+    count2: counts[1],
+    page,
     panelOrder,
-    promo,
+    promo: promos[0],
+    promo2: promos[1],
     panels: SLOTS.map((i) => {
       const m = metas[i]
       return {
@@ -1472,7 +1653,7 @@ function ActiveSession({
     const t = setTimeout(() => onCommit(sessionId, buildRef.current()), 600)
     return () => clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [count, metas, sig, panelOrder, promo])
+  }, [counts, metas, sig, panelOrder, promos, page])
   useEffect(() => {
     return () => onCommit(sessionId, buildRef.current())
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1507,10 +1688,21 @@ function ActiveSession({
   const escCancelSole = useEvent((): boolean => {
     const running = sessions
       .map((s, i) => (s.busy || s.state.workflows.some((w) => w.status === 'running') ? i : -1))
-      // 팝아웃 패널은 제외 — 다른 창에서 보고 있는 실행을 그리드의 눈먼 Esc가 끊으면 사고
-      .filter((i) => i >= 0 && !popped[i])
+      // 팝아웃 패널은 제외 — 다른 창에서 보고 있는 실행을 그리드의 눈먼 Esc가 끊으면 사고.
+      // ★3.3 숨은 페이지의 패널도 제외 — 안 보이는 실행을 눈먼 Esc로 끊으면 같은 사고
+      .filter((i) => i >= 0 && !popped[i] && pageOf(i) === page)
     return running.length === 1 ? escCancelPanel(running[0]) : false
   })
+  // ★3.3 알림 토스트 클릭 착지 — 그 슬롯의 페이지로 넘기고, 접혀 있으면 1번 자리로 올린 뒤 포커스
+  // (raiseSlot 관문 — 페이지 전환·reconcile이 따라 돈다).
+  useEffect(() => {
+    if (!jump || jump.id !== sessionId) return
+    const slot = jump.slot
+    if (Number.isInteger(slot) && slot >= 0 && slot < SLOT_COUNT) raiseSlot(slot)
+    onJumpDone?.(jump.seq)
+    // seq만 본다 — 같은 요청은 한 번만 적용 (raiseSlot·onJumpDone은 useEvent/stable)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jump?.seq])
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       // 앱 전역 오버레이(폴더 확인 / 프롬프트 모달 / 파일 뷰어 / 폴더 팝오버)가 열려
@@ -1548,6 +1740,12 @@ function ActiveSession({
         }
         return
       }
+      // ★3.3 Ctrl+Tab / Ctrl+Shift+Tab = 페이지 넘기기 — 입력 중에도 동작 (브라우저 탭 전환의 기대)
+      if (e.ctrlKey && !e.metaKey && !e.altKey && e.key === 'Tab') {
+        e.preventDefault()
+        goPage((page + (e.shiftKey ? PAGE_COUNT - 1 : 1)) % PAGE_COUNT)
+        return
+      }
       if (e.metaKey || e.ctrlKey || e.altKey || typing) return
 
       // F2 = 포커스 패널의 제목 편집 — 사이드바 F2(세션 이름 변경)는 패널 선택 중엔 양보한다
@@ -1577,7 +1775,7 @@ function ActiveSession({
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [focusedSlot, count, expandedSlot])
+  }, [focusedSlot, count, expandedSlot, page])
 
   // ── 패널 위치 변경 — 헤더 빈 곳을 길게 누르면(0.35s) 집어 들고, 끌어서 놓는다 ──
   // 그리드 위임 한 곳에서 처리해 memo 패널(PanelView)엔 손대지 않는다. 드래그 중엔
@@ -1632,14 +1830,16 @@ function ActiveSession({
     if (!over || Number(over.dataset.slot) === d.slot) return
     const to = over.parentElement ? Array.prototype.indexOf.call(over.parentElement.children, over) : -1
     if (to < 0) return
-    setPromo(null) // 드래그로 정한 순서가 새 진실 — 다이얼 오버레이는 걷는다(★3.0.8)
+    setPromos((prev) => prev.map((x, i) => (i === page ? null : x))) // 드래그로 정한 순서가 새 진실 — 다이얼 오버레이는 걷는다(★3.0.8)
+    // ★3.3 칸 번호(to)는 그리드 = 현재 페이지 부분열 안의 위치 — 그 부분열에서만 옮기고 되끼운다
     setPanelOrder((prev) => {
-      const from = prev.indexOf(d.slot)
-      if (from < 0 || to >= prev.length || from === to) return prev
-      const next = [...prev]
+      const sub = orderOfPage(prev, page)
+      const from = sub.indexOf(d.slot)
+      if (from < 0 || to >= sub.length || from === to) return prev
+      const next = [...sub]
       next.splice(from, 1)
       next.splice(to, 0, d.slot)
-      return next
+      return mergePageOrder(prev, page, next)
     })
   })
   const onGridPointerDown = useEvent((e: React.PointerEvent) => {
@@ -1807,7 +2007,7 @@ function ActiveSession({
     const state: PanelPopState = {
       panelId,
       slot,
-      num: visibleSlots.indexOf(slot) + 1,
+      num: numOf(slot),
       title: m.title,
       custom: m.custom,
       locked: m.locked,
@@ -1864,7 +2064,7 @@ function ActiveSession({
     const m = metas[slot]
     const dir = m.cwd || sess.state.session?.cwd || ''
     const seed = btwForkOf(sess.state.session, dir, pk.engine === 'codex' ? 'codex' : 'claude')
-    const num = visibleSlots.indexOf(slot) + 1
+    const num = numOf(slot)
     window.api
       .btwOpen({
         origin: chan(sessionId, slot),
@@ -2176,7 +2376,13 @@ function ActiveSession({
   const lr3 = useManagedLimitResume(lrOptsFor(3, s3), chan(sessionId, 3))
   const lr4 = useManagedLimitResume(lrOptsFor(4, s4), chan(sessionId, 4))
   const lr5 = useManagedLimitResume(lrOptsFor(5, s5), chan(sessionId, 5))
-  const lrs = [lr0, lr1, lr2, lr3, lr4, lr5]
+  const lr6 = useManagedLimitResume(lrOptsFor(6, s6), chan(sessionId, 6))
+  const lr7 = useManagedLimitResume(lrOptsFor(7, s7), chan(sessionId, 7))
+  const lr8 = useManagedLimitResume(lrOptsFor(8, s8), chan(sessionId, 8))
+  const lr9 = useManagedLimitResume(lrOptsFor(9, s9), chan(sessionId, 9))
+  const lr10 = useManagedLimitResume(lrOptsFor(10, s10), chan(sessionId, 10))
+  const lr11 = useManagedLimitResume(lrOptsFor(11, s11), chan(sessionId, 11))
+  const lrs = [lr0, lr1, lr2, lr3, lr4, lr5, lr6, lr7, lr8, lr9, lr10, lr11]
   const onCancelHold = useEvent((slot: number) => lrs[slot].setHold(null))
   // ★R28c RCAP — 「이어가기」. 자동 재발사를 접은 표(`autoPaused`)의 유일한 출구다.
   const onResumeHold = useEvent((slot: number) => lrs[slot].resumeNow())
@@ -2298,7 +2504,7 @@ function ActiveSession({
         anchorKey={chan(sessionId, slot) + (expanded ? '::exp' : '')}
         // ★M9 — 구독 주소는 껍데기와 무관하게 하나다(앵커에 붙는 `::exp`는 빼고 준다).
         panelId={chan(sessionId, slot)}
-        num={visibleSlots.indexOf(slot) + 1}
+        num={numOf(slot)}
         // ★ n1(IDE 크롬)에서는 이 패널의 헤더가 곧 TopBar다 — 다이얼·접힘 배지·탐색기
         // 토글·창 컨트롤이 여기 얹힌다(줄을 하나 더 쌓지 않는다, §2.1)
         topbar={soloReal && slot === soloSlot && !expanded ? topBar : undefined}
@@ -2364,15 +2570,18 @@ function ActiveSession({
   // 시그니처가 바뀔 때만 보고한다 — 스트리밍 토큰마다 App을 다시 그리면 안 된다
   // (메시지 수는 시그니처에 없다: 상태·제목·자리만 사이드바에 보인다).
   const panelInfos: PanelSummary[] = SLOTS.map((slot) => {
-    const pos = visibleSlots.indexOf(slot)
-    const fold = foldedSlots.indexOf(slot)
+    const p = pageOf(slot)
+    const pos = pageVisible[p].indexOf(slot)
+    const fold = pageOrders[p].slice(counts[p]).indexOf(slot)
     return {
       slot,
       panelId: chan(sessionId, slot),
       title: metas[slot].title,
       status: effectiveStatus(sessions[slot].state),
       pos: pos >= 0 ? pos + 1 : null,
-      fold: fold >= 0 ? count + fold + 1 : null,
+      fold: fold >= 0 ? counts[p] + fold + 1 : null,
+      page: p,
+      shown: pos >= 0 && p === page,
       color: metas[slot].color || defaultTag(slot),
       popped: !!popped[slot],
       ask: !!(sessions[slot].state.pendingPermission || sessions[slot].state.pendingQuestion),
@@ -2393,7 +2602,9 @@ function ActiveSession({
   useEffect(() => {
     if (!countSeed || countSeed.seq === seedSeqRef.current) return
     seedSeqRef.current = countSeed.seq
-    applyCount(countSeed.n)
+    // ★3.3 일반 채팅 크롬의 다이얼은 1페이지 것 — 그 페이지로 넘긴 뒤 적용
+    goPage(0)
+    applyCount(countSeed.n, 0)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [countSeed])
   // 사이드바에서 접힌 대화를 눌렀다 — 같은 raiseSlot 관문을 탄다(자리 수는 안 바뀐다)
@@ -2425,6 +2636,9 @@ function ActiveSession({
           {t(`접힌 자리 실행 ${foldedRunning}`, `${foldedRunning} running while folded`)}
         </span>
       )}
+      {/* ★3.3 페이지 [1][2] — 다이얼 왼쪽. 숨은 페이지에 응답 대기(승인/질문)가 있으면 파란 점,
+          실행 중이면 노란 점 — 안 보이는 페이지의 일을 놓치지 않게 */}
+      <PageSeg page={page} dots={PAGES.map((p) => (p === page ? '' : pageDot(p)))} onPick={goPage} />
       <PanelDial count={count} onPick={applyCount} />
       <FoldBadge rows={foldRows} onRaise={raiseSlot} />
       {/* ★ R2 — 찾기. 스펙 §3.1/§2.1의 TopBar 목록과 목업 `chat-unify-collapse`에 다
@@ -2734,13 +2948,26 @@ export function useMultiSessions() {
       title: prev?.title ?? '',
       custom: prev?.custom ?? false,
       count: payload.count,
+      count2: payload.count2,
+      page: payload.page,
       panelOrder: payload.panelOrder,
       // null도 그대로 싣는다 — 저장 쪽(legacy_bridge)은 키가 없을 때만 지난 값을 쓰므로, 걷은 오버레이가 되살아나지 않는다
       promo: payload.promo,
+      promo2: payload.promo2,
       panels: payload.panels
     }
     scheduleSave()
   })
+  // ── ★3.3 알림 토스트 클릭 → 패널 착지 (App.onNotifyJump) — 세션을 활성화하고(unloaded면
+  // 되읽기) 요청을 걸어 둔다. ActiveSession이 마운트/갱신 때 제 세션 것이면 소비한다.
+  const [jump, setJump] = useState<PanelJump | null>(null)
+  const jumpSeq = useRef(0)
+  const jumpToPanel = useEvent((id: string, slot: number) => {
+    if (!dataRef.current[id]) return // 지워진 세션의 늦은 토스트
+    if (id !== activeId) activate(id)
+    setJump({ id, slot, seq: ++jumpSeq.current })
+  })
+  const clearJump = useEvent((seq: number) => setJump((j) => (j && j.seq === seq ? null : j)))
   const onFirstPrompt = useEvent((sid: string, prompt: string) => {
     setTimes((t) => ({ ...t, [sid]: Date.now() }))
     // 업데이터 파라미터 t가 i18n t를 가리므로 번역은 밖에서 미리 평가한다
@@ -2802,7 +3029,16 @@ export function useMultiSessions() {
         const s = raw as PersistedSession | null
         dataRef.current[id] =
           s && typeof s === 'object' && Array.isArray(s.panels)
-            ? { ...d, count: s.count ?? d.count, panelOrder: s.panelOrder ?? d.panelOrder, panels: s.panels, unloaded: undefined, panelStatuses: undefined }
+            ? {
+                ...d,
+                count: s.count ?? d.count,
+                count2: s.count2 ?? d.count2,
+                page: s.page ?? d.page,
+                panelOrder: s.panelOrder ?? d.panelOrder,
+                panels: s.panels,
+                unloaded: undefined,
+                panelStatuses: undefined
+              }
             : { ...blankSession(id), title: d.title, custom: d.custom } // 파일에 없던 세션(비정상) — 빈 세션으로나마 착지
         setActiveId(id)
       })
@@ -2899,10 +3135,13 @@ export function useMultiSessions() {
       // ★3.0.8 — 순서 규칙(`lib/panelLayout.ts`)을 레코드에도 적용한다. 마운트 전(일반 채팅 크롬에서
       // 2‥6을 고름)에는 이 레코드가 곧 `initial`이라, 여기서 안 되돌리면 접힌 채 굳은 오버레이가 남는다.
       // 마운트돼 있으면 ActiveSession의 applyCount(포커스 기준)가 같은 규칙으로 다시 계산해 커밋으로 덮는다.
+      // ★3.3 일반 채팅 크롬의 다이얼은 **1페이지** 것 — 1페이지 부분열에만 규칙을 적용하고 그 페이지로 연다
       const cur = sanitizePanelOrder(d.panelOrder)
-      const r = resizeLayout({ order: cur, count: clampCount(d.count), promo: sanitizePromo(d.promo, SLOT_COUNT) }, v, cur[0])
+      const sub = orderOfPage(cur, 0)
+      const r = resizeLayout({ order: sub, count: clampCount(d.count), promo: sanitizePromoIn(d.promo, PAGE_SLOTS[0]) }, v, sub[0])
       d.count = v
-      d.panelOrder = r.order
+      d.page = 0
+      d.panelOrder = mergePageOrder(cur, 0, r.order)
       d.promo = r.promo
     }
     setCountSeed((c) => ({ n: v, seq: (c?.seq ?? 0) + 1 }))
@@ -2917,9 +3156,13 @@ export function useMultiSessions() {
     // (크리틱 M-UX R1 §2-④ `side.raise-from-single`). 레코드가 곧 `initial.panelOrder`다.
     const d = dataRef.current[activeId]
     if (d) {
+      // ★3.3 그 슬롯의 페이지 안에서 맨 앞으로, 그리고 그 페이지를 보게 (마운트 전이면 이 레코드가 곧 initial)
+      const p = pageOf(slot)
       const cur = sanitizePanelOrder(d.panelOrder)
-      d.panelOrder = [slot, ...cur.filter((s) => s !== slot)]
-      d.promo = null // 손으로 올린 순서가 새 진실(★3.0.8)
+      d.panelOrder = mergePageOrder(cur, p, [slot, ...orderOfPage(cur, p).filter((s) => s !== slot)])
+      d.page = p
+      if (p === 0) d.promo = null // 손으로 올린 순서가 새 진실(★3.0.8)
+      else d.promo2 = null
     }
     setRaiseSeed((r) => ({ slot, seq: (r?.seq ?? 0) + 1 }))
   })
@@ -2944,7 +3187,10 @@ export function useMultiSessions() {
     initialOf,
     onFirstPrompt,
     onStatus,
-    onCommit
+    onCommit,
+    jump,
+    jumpToPanel,
+    clearJump
   }
 }
 export type MultiSessions = ReturnType<typeof useMultiSessions>
@@ -3005,6 +3251,8 @@ export function MultiWorkspace({
       raiseSeed={multi.raiseSeed}
       explorerHidden={explorerHidden}
       onToggleExplorer={onToggleExplorer}
+      jump={multi.jump}
+      onJumpDone={multi.clearJump}
     />
   )
 }

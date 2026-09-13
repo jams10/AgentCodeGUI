@@ -432,6 +432,13 @@ export const IconMoon = (p: IconProps) => (
     <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" />
   </Icon>
 )
+// ★3.3 겹친 창 두 장 — 멀티 헤더 페이지 세그먼트([1][2])의 라벨 아이콘
+export const IconPages = (p: IconProps) => (
+  <Icon {...p}>
+    <rect x={3} y={7} width={14} height={14} rx={2} />
+    <path d="M7 3h12a2 2 0 0 1 2 2v12" />
+  </Icon>
+)
 // 2×2 panel grid — the multi-agent mode glyph
 export const IconGrid = (p: IconProps) => (
   <Icon {...p}>
