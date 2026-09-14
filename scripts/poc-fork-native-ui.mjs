@@ -17,7 +17,7 @@ const record = { id: 'fixture-gen', runId: 'r1', toolId: 't1', service: 'Tripo',
 const snapshot = { status: 'done', messages: [{ kind: 'msg', id: 'm1', role: 'assistant', text: '저장된 결과: `' + fixture + '`', animate: false, time: '10:00' }], todos: [], files: [], diffs: {}, subagents: [], bgTasks: [], session: null, result: null, spentUsd: 0, tokenTotals: {}, seq: 3, shownNotices: [], generations: [record], workFolders: [fixture] }
 json(path.join(home, 'profile.json'), { nickname: 'Fork verification', color: '#0EA5E9' })
 json(path.join(home, 'engine-auto-update.json'), { enabled: false })
-json(path.join(home, 'ui-prefs.json'), { 'workspace.mode': 'single', 'whatsnew.seenVersion': '3.2.5', 'ui.lang': 'ko', 'sidebar.autohide': false })
+json(path.join(home, 'ui-prefs.json'), { 'workspace.mode': 'single', 'whatsnew.seenVersion': '3.3.0', 'ui.lang': 'ko', 'sidebar.autohide': false })
 json(path.join(home, 'chats/index.json'), { version: 1, order: ['fork-fixture'], activeChatId: 'fork-fixture' })
 json(path.join(home, 'chats/fork-fixture.json'), { id: 'fork-fixture', title: '커스텀 복원 검증', custom: true, manualCwd: fixture, picker: { model: 'haiku', effort: 'minimal', mode: 'bypass' }, updatedAt: Date.now(), snapshot })
 let child, cdp, dismissTimer, checks = 0
@@ -61,7 +61,7 @@ function stop() {
 }
 try {
   await launch()
-  check('native app reports upstream version 3.2.5',await ev(`window.api.app.getVersion()`)==='3.2.5')
+  check('native app reports upstream version 3.3.0',await ev(`window.api.app.getVersion()`)==='3.3.0')
   console.log('custom IPC probe', await ev(`window.api.work.inspectPaths(${JSON.stringify(fixture)},[${JSON.stringify(fixture)}]).then(v=>({paths:v.length}),e=>({error:e.message}))`))
   check('legacy snapshot migrated with generation records', (await ev(`window.api.loadChat('fork-fixture')`)).snapshot.generations[0].prompt === record.prompt)
   await wait(`document.querySelector('.work-history-toggle')?.textContent.includes('1')`)
@@ -106,7 +106,7 @@ try {
   check('native restart preserves custom snapshot', (await ev(`window.api.loadChat('fork-fixture')`)).snapshot.generations[0].jobIds[0] === 'fixture-job')
   check('native restart preserves disabled MCP state', (await ev(`window.api.mcp.list(${JSON.stringify(fixture)})`)).some(row => row.name === 'fork-ui-probe' && !row.enabled))
   check('renderer has no uncaught exceptions', errors.length === 0)
-  json(path.join(home, 'results.json'), { passed: checks, version: '3.2.5', exe, home, realCredentials: false, generatedAssets: 0, errors })
+  json(path.join(home, 'results.json'), { passed: checks, version: '3.3.0', exe, home, realCredentials: false, generatedAssets: 0, errors })
   console.log(JSON.stringify({ passed: checks, home }))
 } catch (error) {
   if(cdp) {

@@ -1,6 +1,6 @@
-# 커스텀 포크 3.2.5
+# 커스텀 포크 3.3.0
 
-원본 `UnrealFactory/AgentCodeGUI`의 3.2.5(`e70a64c`)에 이 포크의 ComfyCloud, Tripo, MCP·Keys 관리, 서비스 잔액, 생성 작업 기록을 이식했습니다. 원본의 Tauri/Rust 전환과 새 대화·계정·외부 도구 기능을 함께 사용합니다. 원본 GitHub에서 받는 설치 파일에는 포크 기능이 없으므로, 이 소스로 빌드한 설치 파일을 사용하세요.
+원본 `UnrealFactory/AgentCodeGUI`의 3.3.0(`c4dd55e`)에 이 포크의 ComfyCloud, Tripo, MCP·Keys 관리, 서비스 잔액, 생성 작업 기록을 이식했습니다. 원본의 Tauri/Rust 전환과 새 대화·계정·외부 도구 기능을 함께 사용합니다. 원본 GitHub에서 받는 설치 파일에는 포크 기능이 없으므로, 이 소스로 빌드한 설치 파일을 사용하세요.
 
 ## 실행과 데이터
 
@@ -23,7 +23,7 @@ npm ci --ignore-scripts
 npm run tauri:build:unsigned
 ```
 
-`target/release/bundle/nsis/AgentCodeGUI3_3.2.5_x64-setup.exe`가 생성됩니다. 로컬 설치용이며 원본의 업데이트 서명 키를 사용하지 않습니다. 원본 설치 파일이 커스텀 기능을 덮어쓰지 않도록 이 포크는 원본 자동 업데이트를 차단하고 설정에서 포크 저장소를 안내합니다. 이후 원본 변경도 소스로 병합하고 검증해서 배포해야 합니다. 별도 서명된 포크 업데이트 채널은 아직 구성하지 않았습니다.
+`target/release/bundle/nsis/AgentCodeGUI3_3.3.0_x64-setup.exe`가 생성됩니다. 로컬 설치용이며 원본의 업데이트 서명 키를 사용하지 않습니다. 원본 설치 파일이 커스텀 기능을 덮어쓰지 않도록 이 포크는 원본 자동 업데이트를 차단하고 설정에서 포크 저장소를 안내합니다. 이후 원본 변경도 소스로 병합하고 검증해서 배포해야 합니다. 별도 서명된 포크 업데이트 채널은 아직 구성하지 않았습니다.
 
 루트 `package.json`과 `npm run dev`는 원본에 남아 있는 Electron 개발 경로입니다. 3.x 화면은 `app/src`, 네이티브 앱은 `src-tauri`, 개발 실행은 리소스를 준비한 뒤 `npm run tauri:dev`를 사용합니다. `npm run app:build`가 커스텀 서비스도 함께 빌드합니다.
 
@@ -59,3 +59,20 @@ node scripts/poc-fork-tripo-package.mjs "<설치 폴더>"
 Tripo 공식 CLI의 모든 실행 의존성도 설치 파일에 포함합니다. 설치 디렉터리에서 5개 도구와 리소스 목록 호환성을 검사해 개발 폴더의 `node_modules`에 우연히 의존하지 않는지 확인합니다.
 
 설치 리소스 경로의 Windows `\\?\` 접두사는 Node 진입점에서 오류를 일으켜 정상 경로로 변환했습니다. JSON IPC가 선택 인자의 `undefined`를 `null`로 바꾸는 차이도 서비스 경계에서 처리합니다. 이런 배포 차이는 TypeScript 타입 검사만으로 잡히지 않으므로 설치본 화면 검증을 유지합니다.
+
+## 원본 릴리스 추종
+
+포크 소스는 `custom/main` 브랜치(origin `jams10/AgentCodeGUI`)에 있고, 원본은 `upstream` 리모트(`UnrealFactory/AgentCodeGUI`)의 `vX.Y.Z` 태그로 받습니다. 새 원본 릴리스마다 다음을 반복합니다.
+
+```powershell
+git fetch upstream --tags
+git merge vX.Y.Z              # 충돌 시 해결 후 커밋
+npm run typecheck:app; npm run typecheck:node
+cargo test -p ccg-engine --lib --locked
+cargo test -p agentcodegui --bin agentcodegui --locked --features custom-protocol
+node scripts/poc-fork-services.mjs
+node scripts/poc-fork-native-ui.mjs
+npm run tauri:build:unsigned  # target/release/bundle/nsis/AgentCodeGUI3_X.Y.Z_x64-setup.exe
+```
+
+`scripts/poc-fork-native-ui.mjs`의 기대 버전 문자열과 이 문서의 버전 표기는 병합할 때 함께 올립니다. 커스텀 코드는 새 파일(`src/custom/`, `src-tauri/src/custom.rs`, `src/main/comfy*`·`tripo*`·`mcp*`·`secrets.ts`·`serviceCredits.ts`, 커스텀 설정 화면 컴포넌트)에 두고 원본 파일은 연결 지점만 건드리는 원칙을 유지해야 병합 충돌이 적습니다. 저장소는 `.gitattributes`로 텍스트 파일을 LF로 보관합니다(원본과 동일). 이 포크에는 3.3.0 병합이 충돌 없이 들어갔습니다.
