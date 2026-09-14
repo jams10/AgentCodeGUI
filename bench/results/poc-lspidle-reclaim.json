@@ -1,0 +1,351 @@
+{
+  "harness": "poc-lspidle-reclaim",
+  "at": "2026-09-01T01:08:54.378Z",
+  "ttlMs": 6000,
+  "sweepMs": 1000,
+  "home": "C:\\Users\\User\\AppData\\Local\\Temp\\ccg-lspidle-home",
+  "work": "C:\\Users\\User\\AppData\\Local\\Temp\\ccg-lspidle-work",
+  "numbers": {
+    "prewarmMs": 0.343,
+    "cachedBeforeOpen": {
+      "ms": 15.136,
+      "hit": false,
+      "n": 0
+    },
+    "readyMs": 905.089,
+    "liveTokensMs": 707.387,
+    "reclaimMs": 4808.491,
+    "procGoneAfterReclaimMs": 0,
+    "repaintFromCacheMs": 0.729,
+    "repaintHit": true,
+    "reviveMs": 580.676,
+    "procsWhileOpen": 2,
+    "procsAfterReclaim": 0,
+    "conhostSteady": [
+      0,
+      0
+    ],
+    "procsSteady": [
+      2,
+      2
+    ],
+    "transientConhostAtOpen": 0,
+    "transientProcsAtOpen": 2
+  },
+  "checks": [
+    {
+      "name": "프로브가 정상 종료",
+      "ok": true,
+      "detail": "exit=0"
+    },
+    {
+      "name": "시작 시 서버 0",
+      "ok": true,
+      "detail": "{\"live\":0,\"pids\":[],\"reclaimed\":0,\"revivals\":0,\"tracked\":0,\"grace\":0}"
+    },
+    {
+      "name": "★프리웜이 서버를 안 띄운다(온디맨드)",
+      "ok": true,
+      "detail": "live=0 자손=0 ()"
+    },
+    {
+      "name": "열람하면 뜬다",
+      "ok": true,
+      "detail": "status=ready readyMs=905.089 자손=2"
+    },
+    {
+      "name": "★정상 상태에 conhost가 없다",
+      "ok": true,
+      "detail": "liveTokens: 자손 2(node.exe,node.exe) · revived: 자손 2(node.exe,node.exe)"
+    },
+    {
+      "name": "★서버 세트가 프로세스 2개다(node 2 · conhost 0)",
+      "ok": true,
+      "detail": "liveTokens=2 · revived=2"
+    },
+    {
+      "name": "★TTL 뒤 서버 프로세스 0",
+      "ok": true,
+      "detail": "회수 판정 4808.491ms · 프로세스 소멸까지 +0ms · live=0 자손=0"
+    },
+    {
+      "name": "회수가 「회수됨」으로 기록된다",
+      "ok": true,
+      "detail": "reclaimed=1"
+    },
+    {
+      "name": "★회수 뒤에도 캐시로 즉시 칠한다",
+      "ok": true,
+      "detail": "캐시 0.729ms · n=22560 · 그 순간 서버 live=0"
+    },
+    {
+      "name": "★재열람이 새 PID로 되살린다",
+      "ok": true,
+      "detail": "revivals=1 전 pids=[27576] 후 pids=[15828]"
+    },
+    {
+      "name": "되살아난 토큰이 처음과 같은 양",
+      "ok": true,
+      "detail": "처음 22560 → 되살림 22560"
+    },
+    {
+      "name": "접은 뒤 좀비 원장이 비었다",
+      "ok": true,
+      "detail": "tracked=0 자손=0"
+    }
+  ],
+  "phases": [
+    {
+      "phase": "boot",
+      "lifecycle": {
+        "live": 0,
+        "pids": [],
+        "reclaimed": 0,
+        "revivals": 0,
+        "tracked": 0,
+        "grace": 0
+      },
+      "projectStatus": {
+        "state": "idle",
+        "percent": null
+      },
+      "cwd": "C:\\Users\\User\\AppData\\Local\\Temp\\ccg-lspidle-work",
+      "rel": "src/big.ts",
+      "ttlMs": 6000,
+      "procs": [],
+      "procCount": 0,
+      "conhost": 0,
+      "conhostOwners": [],
+      "tree": []
+    },
+    {
+      "phase": "prewarmed",
+      "lifecycle": {
+        "live": 0,
+        "pids": [],
+        "reclaimed": 0,
+        "revivals": 0,
+        "tracked": 0,
+        "grace": 0
+      },
+      "projectStatus": {
+        "state": "idle",
+        "percent": null
+      },
+      "prewarmMs": 0.343,
+      "procs": [],
+      "procCount": 0,
+      "conhost": 0,
+      "conhostOwners": [],
+      "tree": []
+    },
+    {
+      "phase": "cachedBeforeOpen",
+      "lifecycle": {
+        "live": 0,
+        "pids": [],
+        "reclaimed": 0,
+        "revivals": 0,
+        "tracked": 0,
+        "grace": 0
+      },
+      "projectStatus": {
+        "state": "idle",
+        "percent": null
+      },
+      "ms": 15.136,
+      "hit": false,
+      "n": 0,
+      "procs": [],
+      "procCount": 0,
+      "conhost": 0,
+      "conhostOwners": [],
+      "tree": []
+    },
+    {
+      "phase": "opened",
+      "lifecycle": {
+        "live": 1,
+        "pids": [
+          27576
+        ],
+        "reclaimed": 0,
+        "revivals": 0,
+        "tracked": 1,
+        "grace": 0
+      },
+      "projectStatus": {
+        "state": "ready",
+        "percent": null
+      },
+      "status": "ready",
+      "readyMs": 905.089,
+      "procs": [
+        "node.exe",
+        "node.exe"
+      ],
+      "procCount": 2,
+      "conhost": 0,
+      "conhostOwners": [],
+      "tree": [
+        {
+          "pid": 27576,
+          "ppid": 21652,
+          "name": "node.exe",
+          "cmd": "\"C:\\Code\\AgentCodeGUI\\target-lspidle\\release\\node.exe\" C:\\Code\\AgentCodeGUI\\target-lspidle\\release\\node_modules\\typescri"
+        },
+        {
+          "pid": 29316,
+          "ppid": 27576,
+          "name": "node.exe",
+          "cmd": "C:\\Code\\AgentCodeGUI\\target-lspidle\\release\\node.exe --max-old-space-size=3072 C:\\Code\\AgentCodeGUI\\target-lspidle\\relea"
+        }
+      ]
+    },
+    {
+      "phase": "liveTokens",
+      "lifecycle": {
+        "live": 1,
+        "pids": [
+          27576
+        ],
+        "reclaimed": 0,
+        "revivals": 0,
+        "tracked": 1,
+        "grace": 0
+      },
+      "projectStatus": {
+        "state": "ready",
+        "percent": null
+      },
+      "ms": 707.387,
+      "n": 22560,
+      "procs": [
+        "node.exe",
+        "node.exe"
+      ],
+      "procCount": 2,
+      "conhost": 0,
+      "conhostOwners": [],
+      "tree": [
+        {
+          "pid": 27576,
+          "ppid": 21652,
+          "name": "node.exe",
+          "cmd": "\"C:\\Code\\AgentCodeGUI\\target-lspidle\\release\\node.exe\" C:\\Code\\AgentCodeGUI\\target-lspidle\\release\\node_modules\\typescri"
+        },
+        {
+          "pid": 29316,
+          "ppid": 27576,
+          "name": "node.exe",
+          "cmd": "C:\\Code\\AgentCodeGUI\\target-lspidle\\release\\node.exe --max-old-space-size=3072 C:\\Code\\AgentCodeGUI\\target-lspidle\\relea"
+        }
+      ]
+    },
+    {
+      "phase": "reclaimed",
+      "lifecycle": {
+        "live": 0,
+        "pids": [],
+        "reclaimed": 1,
+        "revivals": 0,
+        "tracked": 1,
+        "grace": 0
+      },
+      "projectStatus": {
+        "state": "idle",
+        "percent": null
+      },
+      "ms": 4808.491,
+      "budgetMs": 24000,
+      "procs": [],
+      "procCount": 0,
+      "conhost": 0,
+      "conhostOwners": [],
+      "tree": []
+    },
+    {
+      "phase": "repaintFromCache",
+      "lifecycle": {
+        "live": 0,
+        "pids": [],
+        "reclaimed": 1,
+        "revivals": 0,
+        "tracked": 0,
+        "grace": 0
+      },
+      "projectStatus": {
+        "state": "idle",
+        "percent": null
+      },
+      "ms": 0.729,
+      "hit": true,
+      "n": 22560,
+      "procs": [],
+      "procCount": 0,
+      "conhost": 0,
+      "conhostOwners": [],
+      "tree": []
+    },
+    {
+      "phase": "revived",
+      "lifecycle": {
+        "live": 1,
+        "pids": [
+          15828
+        ],
+        "reclaimed": 0,
+        "revivals": 1,
+        "tracked": 1,
+        "grace": 0
+      },
+      "projectStatus": {
+        "state": "ready",
+        "percent": null
+      },
+      "ms": 580.676,
+      "n": 22560,
+      "procs": [
+        "node.exe",
+        "node.exe"
+      ],
+      "procCount": 2,
+      "conhost": 0,
+      "conhostOwners": [],
+      "tree": [
+        {
+          "pid": 15828,
+          "ppid": 21652,
+          "name": "node.exe",
+          "cmd": "\"C:\\Code\\AgentCodeGUI\\target-lspidle\\release\\node.exe\" C:\\Code\\AgentCodeGUI\\target-lspidle\\release\\node_modules\\typescri"
+        },
+        {
+          "pid": 8920,
+          "ppid": 15828,
+          "name": "node.exe",
+          "cmd": "C:\\Code\\AgentCodeGUI\\target-lspidle\\release\\node.exe --max-old-space-size=3072 C:\\Code\\AgentCodeGUI\\target-lspidle\\relea"
+        }
+      ]
+    },
+    {
+      "phase": "disposed",
+      "lifecycle": {
+        "live": 0,
+        "pids": [],
+        "reclaimed": 0,
+        "revivals": 0,
+        "tracked": 0,
+        "grace": 0
+      },
+      "projectStatus": {
+        "state": "idle",
+        "percent": null
+      },
+      "procs": [],
+      "procCount": 0,
+      "conhost": 0,
+      "conhostOwners": [],
+      "tree": []
+    }
+  ]
+}

@@ -1,0 +1,67 @@
+{
+  "app": "tauri-3.0.0",
+  "panels": 4,
+  "itemsPerPanel": 120,
+  "gridPanels": 4,
+  "at": "2026-08-22T08:49:02.573Z",
+  "idleGrid": {
+    "totalWsMB": 491.2,
+    "totalPrivMB": 337.4,
+    "procs": 7
+  },
+  "idleWithWindows": {
+    "totalWsMB": 511.4,
+    "totalPrivMB": 344.4,
+    "procs": 7
+  },
+  "windowCost": {
+    "wsMBPerWindow": 10.1,
+    "procsAdded": 0
+  },
+  "scrollInPanel": {
+    "frames": 356,
+    "avgFps": 60,
+    "p95Ms": 16.8,
+    "worstMs": 16.9,
+    "droppedPct": 0,
+    "longTaskMs": 0
+  },
+  "procDetail": [
+    {
+      "name": "agentcodegui.exe",
+      "wsMB": 34.1,
+      "privMB": 15.6
+    },
+    {
+      "name": "msedgewebview2.exe",
+      "wsMB": 137.1,
+      "privMB": 49.5
+    },
+    {
+      "name": "msedgewebview2.exe",
+      "wsMB": 19.3,
+      "privMB": 3.4
+    },
+    {
+      "name": "msedgewebview2.exe",
+      "wsMB": 90.5,
+      "privMB": 124.4
+    },
+    {
+      "name": "msedgewebview2.exe",
+      "wsMB": 43.7,
+      "privMB": 13.7
+    },
+    {
+      "name": "msedgewebview2.exe",
+      "wsMB": 21.5,
+      "privMB": 9.4
+    },
+    {
+      "name": "msedgewebview2.exe",
+      "wsMB": 189.8,
+      "privMB": 137.8
+    }
+  ],
+  "arm": "최종 채택 세트에서 CCG_GPU_PROCESS=1로 --in-process-gpu만 뺀 팔. 이 파일 vs run1/run2가 그 레버의 A/B다."
+}

@@ -1,0 +1,209 @@
+{
+  "app": "tauri",
+  "version": "3.0.0-beta.1",
+  "at": "2026-08-23T22:29:48.425Z",
+  "work": "C:\\Users\\User\\AppData\\Local\\Temp\\ccg-m6-repo",
+  "checks": [
+    {
+      "id": "explorer-tree",
+      "ok": true,
+      "ms": 377,
+      "detail": {
+        "rows": 28,
+        "first": [
+          ".github",
+          "app",
+          "bench",
+          "crates",
+          "docs",
+          "progress",
+          "scripts",
+          "src"
+        ]
+      }
+    },
+    {
+      "id": "explorer-git-strip",
+      "ok": true,
+      "ms": 1,
+      "detail": {
+        "branch": "feature/3.0.0-beta",
+        "pills": [
+          "●65",
+          "↑1"
+        ]
+      }
+    },
+    {
+      "id": "viewer-code-read",
+      "ok": true,
+      "ms": 1665,
+      "detail": {
+        "cmLines": 36,
+        "head": [
+          "{",
+          "\"name\": \"agent-code-gui\",",
+          "\"version\": \"2.6.2\","
+        ]
+      }
+    },
+    {
+      "id": "viewer-markdown",
+      "ok": true,
+      "ms": 1287,
+      "detail": {
+        "chars": 6543
+      }
+    },
+    {
+      "id": "git-changes",
+      "ok": true,
+      "ms": 741,
+      "detail": {
+        "rows": 0,
+        "sample": [
+          "Git",
+          "feature/3.0.0-beta",
+          "↑1",
+          "C:\\Users\\User\\AppData\\Local\\Temp\\ccg-m6-repo",
+          "갱신하기",
+          "당겨오기",
+          "올리기 ↑1",
+          "보기",
+          "변경",
+          "65",
+          "히스토리",
+          "브랜치"
+        ]
+      }
+    },
+    {
+      "id": "git-history",
+      "ok": true,
+      "ms": 189,
+      "detail": {
+        "commits": 100
+      }
+    },
+    {
+      "id": "git-commit-detail",
+      "ok": true,
+      "ms": 220,
+      "detail": {
+        "chars": 227,
+        "head": "진행 페이지 — R25 착지(M10 난스 제거·8/8 방어·M7 4언어 완료) + R26 종반 착수"
+      }
+    },
+    {
+      "id": "big-diff-thousands",
+      "ok": true,
+      "ms": 74,
+      "detail": {
+        "add": 500,
+        "del": 500,
+        "lines": 8500,
+        "ms": 74
+      }
+    },
+    {
+      "id": "big-diff-cap-folds",
+      "ok": true,
+      "ms": 53,
+      "detail": {
+        "error": "파일이 너무 커요 — diff 표시는 1.5MB까지만"
+      }
+    },
+    {
+      "id": "alive-after-big-diff",
+      "ok": true,
+      "ms": 0,
+      "detail": {
+        "treeRows": 28
+      }
+    },
+    {
+      "id": "channel-surface",
+      "ok": true,
+      "ms": 114,
+      "detail": {
+        "listDir": 30,
+        "dirsFirst": true,
+        "listFiles": 1121,
+        "readChars": 3606,
+        "readErr": null,
+        "repo": true,
+        "branch": "feature/3.0.0-beta",
+        "changed": 65,
+        "hasRemote": true,
+        "repos": 1,
+        "branches": 1,
+        "logCommits": 5,
+        "logMore": true
+      }
+    },
+    {
+      "id": "file-ops-write-path",
+      "ok": true,
+      "ms": 114,
+      "detail": {
+        "made": true,
+        "wrote": true,
+        "back": "hello\nworld\n",
+        "renamed": true,
+        "dupRefused": true,
+        "moved": true,
+        "escapeRefused": true,
+        "gone": true,
+        "swept": true
+      }
+    },
+    {
+      "id": "delete-goes-to-recycle-bin",
+      "ok": true,
+      "ms": 1212,
+      "detail": {
+        "before": 118,
+        "after": 119,
+        "delta": 1,
+        "foundInBin": true,
+        "cleaned": true
+      }
+    },
+    {
+      "id": "channel-audit",
+      "ok": true,
+      "ms": 572,
+      "detail": {
+        "probed": 23,
+        "ok": 22,
+        "unimplemented": [
+          "git:ai-message=unimplemented"
+        ]
+      }
+    },
+    {
+      "id": "local-image-scheme",
+      "ok": true,
+      "ms": 8,
+      "detail": {
+        "ok": true,
+        "w": 1472,
+        "h": 991
+      }
+    },
+    {
+      "id": "lsp-status-m7-boundary",
+      "ok": true,
+      "ms": 2,
+      "detail": {
+        "status": "ready",
+        "note": "M7 착지 후(R1 기대값 unsupported는 폐기)"
+      }
+    }
+  ],
+  "summary": {
+    "total": 16,
+    "ok": 16,
+    "failed": 0
+  }
+}

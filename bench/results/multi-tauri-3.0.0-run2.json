@@ -1,0 +1,62 @@
+{
+  "app": "tauri-3.0.0",
+  "panels": 4,
+  "itemsPerPanel": 120,
+  "gridPanels": 4,
+  "at": "2026-08-22T08:43:32.515Z",
+  "idleGrid": {
+    "totalWsMB": 479.3,
+    "totalPrivMB": 252.5,
+    "procs": 6
+  },
+  "idleWithWindows": {
+    "totalWsMB": 522,
+    "totalPrivMB": 263.9,
+    "procs": 6
+  },
+  "windowCost": {
+    "wsMBPerWindow": 21.3,
+    "procsAdded": 0
+  },
+  "scrollInPanel": {
+    "frames": 358,
+    "avgFps": 60,
+    "p95Ms": 16.8,
+    "worstMs": 16.8,
+    "droppedPct": 0,
+    "longTaskMs": 0
+  },
+  "procDetail": [
+    {
+      "name": "agentcodegui.exe",
+      "wsMB": 33.1,
+      "privMB": 14.6
+    },
+    {
+      "name": "msedgewebview2.exe",
+      "wsMB": 221,
+      "privMB": 101.9
+    },
+    {
+      "name": "msedgewebview2.exe",
+      "wsMB": 19.1,
+      "privMB": 3.3
+    },
+    {
+      "name": "msedgewebview2.exe",
+      "wsMB": 43.7,
+      "privMB": 13.7
+    },
+    {
+      "name": "msedgewebview2.exe",
+      "wsMB": 21.1,
+      "privMB": 9
+    },
+    {
+      "name": "msedgewebview2.exe",
+      "wsMB": 212.3,
+      "privMB": 140.8
+    }
+  ],
+  "arm": "최종 채택 세트(=제품 기본값) 반복 2/3. 3/3은 multi-tauri-3.0.0.json."
+}

@@ -75,6 +75,7 @@ const api: WindowApi = {
     login: (useConsole?: boolean) => ipcRenderer.invoke(IPC.authLogin, useConsole),
     cancelLogin: () => ipcRenderer.invoke(IPC.authLoginCancel),
     onLoginUrl: (cb: (url: string) => void) => subscribe(IPC.authLoginUrl, cb),
+    onAccountRefreshed: (cb: (email: string) => void) => subscribe(IPC.authAccountRefreshed, cb),
     listAccounts: () => ipcRenderer.invoke(IPC.authListAccounts),
     setDefaultAccount: (email: string) => ipcRenderer.invoke(IPC.authSetDefaultAccount, email),
     removeAccount: (email: string) => ipcRenderer.invoke(IPC.authRemoveAccount, email),
@@ -88,9 +89,16 @@ const api: WindowApi = {
     setDefaultAccount: (email: string) => ipcRenderer.invoke(IPC.codexSetDefaultAccount, email),
     cancelLogin: () => ipcRenderer.invoke(IPC.codexLoginCancel),
     reorderAccounts: (emails: string[]) => ipcRenderer.invoke(IPC.codexReorderAccounts, emails),
-    accountsUsage: () => ipcRenderer.invoke(IPC.codexAccountsUsage)
+    accountsUsage: (fresh?: boolean) => ipcRenderer.invoke(IPC.codexAccountsUsage, fresh),
+    consumeResetCredit: (email: string, idempotencyKey: string) => ipcRenderer.invoke(IPC.codexResetCreditConsume, email, idempotencyKey),
+    refreshAccount: (email: string) => ipcRenderer.invoke(IPC.codexRefreshAccount, email),
+    onAccountRefreshed: (cb: (email: string) => void) => subscribe(IPC.codexAccountRefreshed, cb)
   },
   engineAutoUpdate: (enabled?: boolean) => ipcRenderer.invoke(IPC.engineAutoUpdate, enabled),
+  codexContext: {
+    get: () => ipcRenderer.invoke(IPC.codexContextGet),
+    save: (settings) => ipcRenderer.invoke(IPC.codexContextSave, settings)
+  },
   engineUpdate: {
     status: () => ipcRenderer.invoke(IPC.engineUpdateStatus),
     onEvent: (cb: (s: EngineUpdateStatus) => void) => subscribe(IPC.engineUpdateEvent, cb)
@@ -116,6 +124,7 @@ const api: WindowApi = {
   onUiLangChanged: (cb) => subscribe(IPC.uiLangChanged, cb),
   openPath: (cwd, relPath) => ipcRenderer.invoke(IPC.shellOpenPath, { cwd, relPath }),
   revealPath: (cwd, relPath) => ipcRenderer.invoke(IPC.shellRevealPath, { cwd, relPath }),
+  openExternal: (url) => ipcRenderer.invoke(IPC.shellOpenExternal, url),
   renamePath: (cwd, relPath, newName) => ipcRenderer.invoke(IPC.fsRename, { cwd, relPath, newName }),
   deletePath: (cwd, relPath) => ipcRenderer.invoke(IPC.fsDelete, { cwd, relPath }),
   createPath: (cwd, relPath, dir) => ipcRenderer.invoke(IPC.fsCreate, { cwd, relPath, dir }),

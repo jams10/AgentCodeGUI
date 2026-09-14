@@ -1,0 +1,348 @@
+{
+  "arm": "default",
+  "recovery": true,
+  "how": "pid",
+  "rounds": 2,
+  "extraEnv": {},
+  "bin": {
+    "exe": "C:\\Code\\AgentCodeGUI\\target\\release\\agentcodegui.exe",
+    "exeMtime": "2026-08-22T12:32:03.800Z",
+    "exeSize": 3835392,
+    "exeSha256": "ffb01a4ed1db0115",
+    "gitHead": "ce1c735",
+    "gitDirty": true
+  },
+  "armEnv": {
+    "CCG_HOME": "C:\\Code\\AgentCodeGUI\\.bench-home-crash",
+    "CCG_CDP_PORT": "9461"
+  },
+  "env": {
+    "ramGB": 63.8,
+    "cpu": "13th Gen Intel(R) Core(TM) i7-13700KF",
+    "os": "Microsoft Windows 11 Home 26200"
+  },
+  "at": "2026-08-22T12:32:32.083Z",
+  "attempts": [
+    {
+      "round": 1,
+      "at": "2026-08-22T12:32:45.131Z",
+      "before": {
+        "procs": 6,
+        "roles": [
+          "browser",
+          "browser",
+          "crashpad-handler",
+          "utility",
+          "utility",
+          "renderer"
+        ],
+        "windows": [
+          "576x729 추가 채팅 — AgentCodeGUI",
+          "576x729 추가 채팅 — AgentCodeGUI",
+          "1336x889 AgentCodeGUI3"
+        ],
+        "cdpPages": 3,
+        "visibleWindows": 3
+      },
+      "killed": {
+        "how": "taskkill /PID",
+        "role": "renderer",
+        "pids": [
+          6984
+        ]
+      },
+      "after": {
+        "hostAlive": true,
+        "procs": 6,
+        "roles": [
+          "browser",
+          "browser",
+          "crashpad-handler",
+          "utility",
+          "utility",
+          "renderer"
+        ],
+        "windows": [
+          "576x729 추가 채팅 — AgentCodeGUI",
+          "576x729 추가 채팅 — AgentCodeGUI",
+          "1336x889 AgentCodeGUI3"
+        ],
+        "visibleWindows": 3,
+        "mainPageRemounted": true,
+        "pagesMounted": [
+          {
+            "url": "index.html#session",
+            "mounted": true
+          },
+          {
+            "url": "index.html#session",
+            "mounted": true
+          },
+          {
+            "url": "",
+            "mounted": true
+          }
+        ],
+        "allPagesMounted": true,
+        "recoveryMs": 479
+      },
+      "verdict": "복구됨"
+    },
+    {
+      "round": 2,
+      "at": "2026-08-22T12:32:53.386Z",
+      "before": {
+        "procs": 6,
+        "roles": [
+          "browser",
+          "browser",
+          "crashpad-handler",
+          "utility",
+          "utility",
+          "renderer"
+        ],
+        "windows": [
+          "576x729 추가 채팅 — AgentCodeGUI",
+          "576x729 추가 채팅 — AgentCodeGUI",
+          "1336x889 AgentCodeGUI3"
+        ],
+        "cdpPages": 3,
+        "visibleWindows": 3
+      },
+      "killed": {
+        "how": "taskkill /PID",
+        "role": "renderer",
+        "pids": [
+          13568
+        ]
+      },
+      "after": {
+        "hostAlive": true,
+        "procs": 6,
+        "roles": [
+          "browser",
+          "browser",
+          "crashpad-handler",
+          "utility",
+          "utility",
+          "renderer"
+        ],
+        "windows": [
+          "576x729 추가 채팅 — AgentCodeGUI",
+          "576x729 추가 채팅 — AgentCodeGUI",
+          "1336x889 AgentCodeGUI3"
+        ],
+        "visibleWindows": 3,
+        "mainPageRemounted": true,
+        "pagesMounted": [
+          {
+            "url": "index.html#session",
+            "mounted": true
+          },
+          {
+            "url": "",
+            "mounted": true
+          },
+          {
+            "url": "index.html#session",
+            "mounted": true
+          }
+        ],
+        "allPagesMounted": true,
+        "recoveryMs": 474
+      },
+      "verdict": "복구됨"
+    }
+  ],
+  "shellLog": [
+    {
+      "at": 1787401950751,
+      "event": "armed",
+      "pid": 29896,
+      "detail": {
+        "label": "main",
+        "browserPid": 24472
+      }
+    },
+    {
+      "at": 1787401955188,
+      "event": "armed",
+      "pid": 29896,
+      "detail": {
+        "label": "session-1",
+        "browserPid": 24472
+      }
+    },
+    {
+      "at": 1787401958683,
+      "event": "armed",
+      "pid": 29896,
+      "detail": {
+        "label": "session-2",
+        "browserPid": 24472
+      }
+    },
+    {
+      "at": 1787401965812,
+      "event": "process-failed",
+      "pid": 29896,
+      "detail": {
+        "label": "main",
+        "kind": 1,
+        "exitCode": 1,
+        "desc": "",
+        "terminal": false,
+        "renderer": true
+      }
+    },
+    {
+      "at": 1787401965812,
+      "event": "recover-begin",
+      "pid": 29896,
+      "detail": {
+        "mode": "reload-all",
+        "n": 1
+      }
+    },
+    {
+      "at": 1787401965813,
+      "event": "reloaded",
+      "pid": 29896,
+      "detail": {
+        "label": "main"
+      }
+    },
+    {
+      "at": 1787401965813,
+      "event": "reloaded",
+      "pid": 29896,
+      "detail": {
+        "label": "session-1"
+      }
+    },
+    {
+      "at": 1787401965813,
+      "event": "reloaded",
+      "pid": 29896,
+      "detail": {
+        "label": "session-2"
+      }
+    },
+    {
+      "at": 1787401965816,
+      "event": "process-failed",
+      "pid": 29896,
+      "detail": {
+        "label": "session-1",
+        "kind": 1,
+        "exitCode": 1,
+        "desc": "",
+        "terminal": false,
+        "renderer": true
+      }
+    },
+    {
+      "at": 1787401965819,
+      "event": "process-failed",
+      "pid": 29896,
+      "detail": {
+        "label": "session-2",
+        "kind": 1,
+        "exitCode": 1,
+        "desc": "",
+        "terminal": false,
+        "renderer": true
+      }
+    },
+    {
+      "at": 1787401968313,
+      "event": "recover-done",
+      "pid": 29896,
+      "detail": {
+        "ms": 2501,
+        "n": 1
+      }
+    },
+    {
+      "at": 1787401974060,
+      "event": "process-failed",
+      "pid": 29896,
+      "detail": {
+        "label": "main",
+        "kind": 1,
+        "exitCode": 1,
+        "desc": "",
+        "terminal": false,
+        "renderer": true
+      }
+    },
+    {
+      "at": 1787401974061,
+      "event": "recover-begin",
+      "pid": 29896,
+      "detail": {
+        "mode": "reload-all",
+        "n": 2
+      }
+    },
+    {
+      "at": 1787401974061,
+      "event": "reloaded",
+      "pid": 29896,
+      "detail": {
+        "label": "session-1"
+      }
+    },
+    {
+      "at": 1787401974061,
+      "event": "reloaded",
+      "pid": 29896,
+      "detail": {
+        "label": "main"
+      }
+    },
+    {
+      "at": 1787401974062,
+      "event": "reloaded",
+      "pid": 29896,
+      "detail": {
+        "label": "session-2"
+      }
+    },
+    {
+      "at": 1787401974063,
+      "event": "process-failed",
+      "pid": 29896,
+      "detail": {
+        "label": "session-1",
+        "kind": 1,
+        "exitCode": 1,
+        "desc": "",
+        "terminal": false,
+        "renderer": true
+      }
+    },
+    {
+      "at": 1787401974067,
+      "event": "process-failed",
+      "pid": 29896,
+      "detail": {
+        "label": "session-2",
+        "kind": 1,
+        "exitCode": 1,
+        "desc": "",
+        "terminal": false,
+        "renderer": true
+      }
+    },
+    {
+      "at": 1787401976561,
+      "event": "recover-done",
+      "pid": 29896,
+      "detail": {
+        "ms": 2500,
+        "n": 2
+      }
+    }
+  ]
+}

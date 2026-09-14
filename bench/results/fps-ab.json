@@ -1,0 +1,802 @@
+{
+  "what": "교대(A-B-A-B) FPS 판정 — 세션 간 밴드 이동을 제거하고 부하 팔(4패널 동시 스크롤)을 추가",
+  "lever": "NetworkServiceInProcess2",
+  "rounds": 4,
+  "trials": 3,
+  "bin": {
+    "exe": "C:\\Code\\AgentCodeGUI\\target\\release\\agentcodegui.exe",
+    "exeMtime": "2026-08-22T12:32:03.800Z",
+    "exeSize": 3835392,
+    "exeSha256": "ffb01a4ed1db0115",
+    "gitHead": "307d94a",
+    "gitDirty": false
+  },
+  "env": {
+    "ramGB": 63.8,
+    "cpu": "13th Gen Intel(R) Core(TM) i7-13700KF",
+    "os": "Microsoft Windows 11 Home 26200"
+  },
+  "summary": {
+    "control": {
+      "simple": {
+        "trials": 12,
+        "medianAvgFps": 56,
+        "minAvgFps": 51.9,
+        "medianP95Ms": 24,
+        "worstFrameMs": 33.2,
+        "worstDroppedPct": 0.3,
+        "zeroDropTrials": 10,
+        "droppedFramesTotal": 2,
+        "perTrialAvgFps": [
+          58.3,
+          52.8,
+          58.3,
+          56.7,
+          57.7,
+          54.2,
+          57,
+          54.9,
+          51.9,
+          56.1,
+          54.8,
+          53.5
+        ]
+      },
+      "load": {
+        "trials": 12,
+        "medianAvgFps": 58,
+        "minAvgFps": 56.9,
+        "medianP95Ms": 21,
+        "worstFrameMs": 35,
+        "worstDroppedPct": 0.3,
+        "zeroDropTrials": 11,
+        "droppedFramesTotal": 1,
+        "perTrialAvgFps": [
+          58.6,
+          58,
+          58.1,
+          58.2,
+          58.2,
+          58.1,
+          58.4,
+          57,
+          57.8,
+          58.6,
+          56.9,
+          57.7
+        ]
+      }
+    },
+    "lever": {
+      "simple": {
+        "trials": 12,
+        "medianAvgFps": 56,
+        "minAvgFps": 52.4,
+        "medianP95Ms": 25,
+        "worstFrameMs": 34,
+        "worstDroppedPct": 0.6,
+        "zeroDropTrials": 9,
+        "droppedFramesTotal": 4,
+        "perTrialAvgFps": [
+          56.2,
+          56.2,
+          52.4,
+          56.4,
+          54.3,
+          53.4,
+          55.9,
+          55.8,
+          55.4,
+          56.7,
+          53.3,
+          54
+        ]
+      },
+      "load": {
+        "trials": 12,
+        "medianAvgFps": 58,
+        "minAvgFps": 53.4,
+        "medianP95Ms": 21,
+        "worstFrameMs": 35.3,
+        "worstDroppedPct": 0.3,
+        "zeroDropTrials": 11,
+        "droppedFramesTotal": 1,
+        "perTrialAvgFps": [
+          58,
+          56.4,
+          57.7,
+          58.9,
+          57.1,
+          53.4,
+          58.4,
+          57.9,
+          57.9,
+          58.4,
+          56.7,
+          55.9
+        ]
+      }
+    }
+  },
+  "pairedSimple": [
+    {
+      "round": 1,
+      "controlFps": 58.3,
+      "leverFps": 56.2,
+      "deltaFps": -2.1
+    },
+    {
+      "round": 2,
+      "controlFps": 56.7,
+      "leverFps": 54.3,
+      "deltaFps": -2.4
+    },
+    {
+      "round": 3,
+      "controlFps": 54.9,
+      "leverFps": 55.8,
+      "deltaFps": 0.9
+    },
+    {
+      "round": 4,
+      "controlFps": 54.8,
+      "leverFps": 54,
+      "deltaFps": -0.8
+    }
+  ],
+  "pairedLoad": [
+    {
+      "round": 1,
+      "controlFps": 58.1,
+      "leverFps": 57.7,
+      "deltaFps": -0.4
+    },
+    {
+      "round": 2,
+      "controlFps": 58.2,
+      "leverFps": 57.1,
+      "deltaFps": -1.1
+    },
+    {
+      "round": 3,
+      "controlFps": 57.8,
+      "leverFps": 57.9,
+      "deltaFps": 0.1
+    },
+    {
+      "round": 4,
+      "controlFps": 57.7,
+      "leverFps": 56.7,
+      "deltaFps": -1
+    }
+  ],
+  "perBoot": [
+    {
+      "round": 1,
+      "arm": "control",
+      "at": "2026-08-22T12:40:28.274Z",
+      "simple": [
+        {
+          "frames": 348,
+          "avgFps": 58.3,
+          "p95Ms": 21.4,
+          "worstMs": 30.9,
+          "droppedPct": 0,
+          "droppedFrames": 0,
+          "longTaskMs": 0
+        },
+        {
+          "frames": 315,
+          "avgFps": 52.8,
+          "p95Ms": 25.3,
+          "worstMs": 33.2,
+          "droppedPct": 0.3,
+          "droppedFrames": 1,
+          "longTaskMs": 0
+        },
+        {
+          "frames": 346,
+          "avgFps": 58.3,
+          "p95Ms": 19.9,
+          "worstMs": 27.7,
+          "droppedPct": 0,
+          "droppedFrames": 0,
+          "longTaskMs": 0
+        }
+      ],
+      "load": [
+        {
+          "frames": 347,
+          "avgFps": 58.6,
+          "p95Ms": 19.6,
+          "worstMs": 26,
+          "droppedPct": 0,
+          "droppedFrames": 0,
+          "longTaskMs": 0
+        },
+        {
+          "frames": 348,
+          "avgFps": 58,
+          "p95Ms": 19.1,
+          "worstMs": 26.4,
+          "droppedPct": 0,
+          "droppedFrames": 0,
+          "longTaskMs": 0
+        },
+        {
+          "frames": 347,
+          "avgFps": 58.1,
+          "p95Ms": 20.8,
+          "worstMs": 29.9,
+          "droppedPct": 0,
+          "droppedFrames": 0,
+          "longTaskMs": 0
+        }
+      ],
+      "procs": 6,
+      "roles": [
+        "browser",
+        "browser",
+        "crashpad-handler",
+        "renderer",
+        "utility:NetworkService",
+        "utility:StorageService"
+      ],
+      "wsMB": 446.5,
+      "privMB": 243.3,
+      "glRenderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 Ti (0x00002782) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "panels": 4
+    },
+    {
+      "round": 1,
+      "arm": "lever",
+      "at": "2026-08-22T12:41:26.917Z",
+      "simple": [
+        {
+          "frames": 334,
+          "avgFps": 56.2,
+          "p95Ms": 24.3,
+          "worstMs": 34,
+          "droppedPct": 0.3,
+          "droppedFrames": 1,
+          "longTaskMs": 0
+        },
+        {
+          "frames": 335,
+          "avgFps": 56.2,
+          "p95Ms": 24.1,
+          "worstMs": 28.3,
+          "droppedPct": 0,
+          "droppedFrames": 0,
+          "longTaskMs": 0
+        },
+        {
+          "frames": 312,
+          "avgFps": 52.4,
+          "p95Ms": 26.7,
+          "worstMs": 34,
+          "droppedPct": 0.6,
+          "droppedFrames": 2,
+          "longTaskMs": 0
+        }
+      ],
+      "load": [
+        {
+          "frames": 347,
+          "avgFps": 58,
+          "p95Ms": 19.6,
+          "worstMs": 28.5,
+          "droppedPct": 0,
+          "droppedFrames": 0,
+          "longTaskMs": 0
+        },
+        {
+          "frames": 338,
+          "avgFps": 56.4,
+          "p95Ms": 23.6,
+          "worstMs": 29.5,
+          "droppedPct": 0,
+          "droppedFrames": 0,
+          "longTaskMs": 0
+        },
+        {
+          "frames": 346,
+          "avgFps": 57.7,
+          "p95Ms": 21.6,
+          "worstMs": 30.6,
+          "droppedPct": 0,
+          "droppedFrames": 0,
+          "longTaskMs": 0
+        }
+      ],
+      "procs": 5,
+      "roles": [
+        "browser",
+        "browser",
+        "crashpad-handler",
+        "renderer",
+        "utility:StorageService"
+      ],
+      "wsMB": 411,
+      "privMB": 230.6,
+      "glRenderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 Ti (0x00002782) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "panels": 4
+    },
+    {
+      "round": 2,
+      "arm": "control",
+      "at": "2026-08-22T12:42:25.563Z",
+      "simple": [
+        {
+          "frames": 338,
+          "avgFps": 56.7,
+          "p95Ms": 23.2,
+          "worstMs": 31.4,
+          "droppedPct": 0,
+          "droppedFrames": 0,
+          "longTaskMs": 0
+        },
+        {
+          "frames": 343,
+          "avgFps": 57.7,
+          "p95Ms": 21.5,
+          "worstMs": 29.5,
+          "droppedPct": 0,
+          "droppedFrames": 0,
+          "longTaskMs": 0
+        },
+        {
+          "frames": 323,
+          "avgFps": 54.2,
+          "p95Ms": 24.7,
+          "worstMs": 32.5,
+          "droppedPct": 0,
+          "droppedFrames": 0,
+          "longTaskMs": 0
+        }
+      ],
+      "load": [
+        {
+          "frames": 353,
+          "avgFps": 58.2,
+          "p95Ms": 20.5,
+          "worstMs": 32.6,
+          "droppedPct": 0,
+          "droppedFrames": 0,
+          "longTaskMs": 0
+        },
+        {
+          "frames": 353,
+          "avgFps": 58.2,
+          "p95Ms": 20.8,
+          "worstMs": 26.9,
+          "droppedPct": 0,
+          "droppedFrames": 0,
+          "longTaskMs": 0
+        },
+        {
+          "frames": 353,
+          "avgFps": 58.1,
+          "p95Ms": 21.1,
+          "worstMs": 27.5,
+          "droppedPct": 0,
+          "droppedFrames": 0,
+          "longTaskMs": 0
+        }
+      ],
+      "procs": 6,
+      "roles": [
+        "browser",
+        "browser",
+        "crashpad-handler",
+        "renderer",
+        "utility:NetworkService",
+        "utility:StorageService"
+      ],
+      "wsMB": 445.4,
+      "privMB": 243.5,
+      "glRenderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 Ti (0x00002782) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "panels": 4
+    },
+    {
+      "round": 2,
+      "arm": "lever",
+      "at": "2026-08-22T12:43:24.574Z",
+      "simple": [
+        {
+          "frames": 336,
+          "avgFps": 56.4,
+          "p95Ms": 23.6,
+          "worstMs": 31.8,
+          "droppedPct": 0,
+          "droppedFrames": 0,
+          "longTaskMs": 0
+        },
+        {
+          "frames": 325,
+          "avgFps": 54.3,
+          "p95Ms": 25.1,
+          "worstMs": 31,
+          "droppedPct": 0,
+          "droppedFrames": 0,
+          "longTaskMs": 0
+        },
+        {
+          "frames": 317,
+          "avgFps": 53.4,
+          "p95Ms": 25.2,
+          "worstMs": 33.1,
+          "droppedPct": 0.3,
+          "droppedFrames": 1,
+          "longTaskMs": 0
+        }
+      ],
+      "load": [
+        {
+          "frames": 355,
+          "avgFps": 58.9,
+          "p95Ms": 18.9,
+          "worstMs": 25.3,
+          "droppedPct": 0,
+          "droppedFrames": 0,
+          "longTaskMs": 0
+        },
+        {
+          "frames": 341,
+          "avgFps": 57.1,
+          "p95Ms": 22,
+          "worstMs": 26.2,
+          "droppedPct": 0,
+          "droppedFrames": 0,
+          "longTaskMs": 0
+        },
+        {
+          "frames": 318,
+          "avgFps": 53.4,
+          "p95Ms": 25.2,
+          "worstMs": 30.1,
+          "droppedPct": 0,
+          "droppedFrames": 0,
+          "longTaskMs": 0
+        }
+      ],
+      "procs": 5,
+      "roles": [
+        "browser",
+        "browser",
+        "crashpad-handler",
+        "renderer",
+        "utility:StorageService"
+      ],
+      "wsMB": 414.8,
+      "privMB": 230.7,
+      "glRenderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 Ti (0x00002782) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "panels": 4
+    },
+    {
+      "round": 3,
+      "arm": "control",
+      "at": "2026-08-22T12:44:23.105Z",
+      "simple": [
+        {
+          "frames": 339,
+          "avgFps": 57,
+          "p95Ms": 22.7,
+          "worstMs": 31.9,
+          "droppedPct": 0,
+          "droppedFrames": 0,
+          "longTaskMs": 0
+        },
+        {
+          "frames": 326,
+          "avgFps": 54.9,
+          "p95Ms": 24.7,
+          "worstMs": 32.3,
+          "droppedPct": 0,
+          "droppedFrames": 0,
+          "longTaskMs": 0
+        },
+        {
+          "frames": 310,
+          "avgFps": 51.9,
+          "p95Ms": 25,
+          "worstMs": 31.9,
+          "droppedPct": 0,
+          "droppedFrames": 0,
+          "longTaskMs": 0
+        }
+      ],
+      "load": [
+        {
+          "frames": 350,
+          "avgFps": 58.4,
+          "p95Ms": 19.4,
+          "worstMs": 25.3,
+          "droppedPct": 0,
+          "droppedFrames": 0,
+          "longTaskMs": 0
+        },
+        {
+          "frames": 339,
+          "avgFps": 57,
+          "p95Ms": 23,
+          "worstMs": 29.1,
+          "droppedPct": 0,
+          "droppedFrames": 0,
+          "longTaskMs": 0
+        },
+        {
+          "frames": 349,
+          "avgFps": 57.8,
+          "p95Ms": 20.7,
+          "worstMs": 26,
+          "droppedPct": 0,
+          "droppedFrames": 0,
+          "longTaskMs": 0
+        }
+      ],
+      "procs": 6,
+      "roles": [
+        "browser",
+        "browser",
+        "crashpad-handler",
+        "renderer",
+        "utility:NetworkService",
+        "utility:StorageService"
+      ],
+      "wsMB": 442.9,
+      "privMB": 241,
+      "glRenderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 Ti (0x00002782) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "panels": 4
+    },
+    {
+      "round": 3,
+      "arm": "lever",
+      "at": "2026-08-22T12:45:21.793Z",
+      "simple": [
+        {
+          "frames": 332,
+          "avgFps": 55.9,
+          "p95Ms": 24.5,
+          "worstMs": 32.4,
+          "droppedPct": 0,
+          "droppedFrames": 0,
+          "longTaskMs": 0
+        },
+        {
+          "frames": 332,
+          "avgFps": 55.8,
+          "p95Ms": 24.3,
+          "worstMs": 30.2,
+          "droppedPct": 0,
+          "droppedFrames": 0,
+          "longTaskMs": 0
+        },
+        {
+          "frames": 332,
+          "avgFps": 55.4,
+          "p95Ms": 24.5,
+          "worstMs": 32.7,
+          "droppedPct": 0,
+          "droppedFrames": 0,
+          "longTaskMs": 0
+        }
+      ],
+      "load": [
+        {
+          "frames": 355,
+          "avgFps": 58.4,
+          "p95Ms": 19.8,
+          "worstMs": 26,
+          "droppedPct": 0,
+          "droppedFrames": 0,
+          "longTaskMs": 0
+        },
+        {
+          "frames": 348,
+          "avgFps": 57.9,
+          "p95Ms": 19.6,
+          "worstMs": 25.9,
+          "droppedPct": 0,
+          "droppedFrames": 0,
+          "longTaskMs": 0
+        },
+        {
+          "frames": 345,
+          "avgFps": 57.9,
+          "p95Ms": 20.4,
+          "worstMs": 27.6,
+          "droppedPct": 0,
+          "droppedFrames": 0,
+          "longTaskMs": 0
+        }
+      ],
+      "procs": 5,
+      "roles": [
+        "browser",
+        "browser",
+        "crashpad-handler",
+        "renderer",
+        "utility:StorageService"
+      ],
+      "wsMB": 411.9,
+      "privMB": 228,
+      "glRenderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 Ti (0x00002782) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "panels": 4
+    },
+    {
+      "round": 4,
+      "arm": "control",
+      "at": "2026-08-22T12:46:20.441Z",
+      "simple": [
+        {
+          "frames": 334,
+          "avgFps": 56.1,
+          "p95Ms": 23.3,
+          "worstMs": 28.1,
+          "droppedPct": 0,
+          "droppedFrames": 0,
+          "longTaskMs": 0
+        },
+        {
+          "frames": 327,
+          "avgFps": 54.8,
+          "p95Ms": 24.3,
+          "worstMs": 33.2,
+          "droppedPct": 0.3,
+          "droppedFrames": 1,
+          "longTaskMs": 0
+        },
+        {
+          "frames": 318,
+          "avgFps": 53.5,
+          "p95Ms": 24.6,
+          "worstMs": 30.4,
+          "droppedPct": 0,
+          "droppedFrames": 0,
+          "longTaskMs": 0
+        }
+      ],
+      "load": [
+        {
+          "frames": 348,
+          "avgFps": 58.6,
+          "p95Ms": 18.8,
+          "worstMs": 35,
+          "droppedPct": 0.3,
+          "droppedFrames": 1,
+          "longTaskMs": 0
+        },
+        {
+          "frames": 342,
+          "avgFps": 56.9,
+          "p95Ms": 22.4,
+          "worstMs": 27.4,
+          "droppedPct": 0,
+          "droppedFrames": 0,
+          "longTaskMs": 0
+        },
+        {
+          "frames": 351,
+          "avgFps": 57.7,
+          "p95Ms": 22.7,
+          "worstMs": 28,
+          "droppedPct": 0,
+          "droppedFrames": 0,
+          "longTaskMs": 0
+        }
+      ],
+      "procs": 6,
+      "roles": [
+        "browser",
+        "browser",
+        "crashpad-handler",
+        "renderer",
+        "utility:NetworkService",
+        "utility:StorageService"
+      ],
+      "wsMB": 445.4,
+      "privMB": 240.3,
+      "glRenderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 Ti (0x00002782) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "panels": 4
+    },
+    {
+      "round": 4,
+      "arm": "lever",
+      "at": "2026-08-22T12:47:18.931Z",
+      "simple": [
+        {
+          "frames": 339,
+          "avgFps": 56.7,
+          "p95Ms": 23,
+          "worstMs": 28.3,
+          "droppedPct": 0,
+          "droppedFrames": 0,
+          "longTaskMs": 0
+        },
+        {
+          "frames": 318,
+          "avgFps": 53.3,
+          "p95Ms": 24.6,
+          "worstMs": 31.6,
+          "droppedPct": 0,
+          "droppedFrames": 0,
+          "longTaskMs": 0
+        },
+        {
+          "frames": 322,
+          "avgFps": 54,
+          "p95Ms": 25,
+          "worstMs": 30.1,
+          "droppedPct": 0,
+          "droppedFrames": 0,
+          "longTaskMs": 0
+        }
+      ],
+      "load": [
+        {
+          "frames": 349,
+          "avgFps": 58.4,
+          "p95Ms": 21.1,
+          "worstMs": 28.5,
+          "droppedPct": 0,
+          "droppedFrames": 0,
+          "longTaskMs": 0
+        },
+        {
+          "frames": 338,
+          "avgFps": 56.7,
+          "p95Ms": 23.2,
+          "worstMs": 27.2,
+          "droppedPct": 0,
+          "droppedFrames": 0,
+          "longTaskMs": 0
+        },
+        {
+          "frames": 336,
+          "avgFps": 55.9,
+          "p95Ms": 23.4,
+          "worstMs": 35.3,
+          "droppedPct": 0.3,
+          "droppedFrames": 1,
+          "longTaskMs": 0
+        }
+      ],
+      "procs": 5,
+      "roles": [
+        "browser",
+        "browser",
+        "crashpad-handler",
+        "renderer",
+        "utility:StorageService"
+      ],
+      "wsMB": 415.5,
+      "privMB": 231.3,
+      "glRenderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 Ti (0x00002782) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "panels": 4
+    }
+  ],
+  "at": "2026-08-22T12:48:19.038Z",
+  "verdict": {
+    "controlSimple": {
+      "fps60": false,
+      "drop0": false,
+      "minAvgFps": 51.9
+    },
+    "controlLoad": {
+      "fps60": false,
+      "drop0": false,
+      "minAvgFps": 56.9
+    },
+    "leverSimple": {
+      "fps60": false,
+      "drop0": false,
+      "minAvgFps": 52.4
+    },
+    "leverLoad": {
+      "fps60": false,
+      "drop0": false,
+      "minAvgFps": 53.4
+    }
+  }
+}

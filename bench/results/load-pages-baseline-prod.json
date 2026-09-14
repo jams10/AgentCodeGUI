@@ -1,0 +1,595 @@
+{
+ "at": "2026-09-13T10:14:28.645Z",
+ "tag": "baseline-prod",
+ "exe": "C:\\Code\\AgentCodeGUI\\target\\debug\\agentcodegui.exe",
+ "secs": 15,
+ "hz": 25,
+ "profileTop": [
+  {
+   "fn": "(idle) @ :-1",
+   "ms": 6300,
+   "pct": 39.5
+  },
+  {
+   "fn": "(program) @ :-1",
+   "ms": 3576,
+   "pct": 22.4
+  },
+  {
+   "fn": "get scrollHeight @ :-1",
+   "ms": 651,
+   "pct": 4.1
+  },
+  {
+   "fn": "Wk @ index-y2k3N3sO.js:31",
+   "ms": 253,
+   "pct": 1.6
+  },
+  {
+   "fn": "r @ index-y2k3N3sO.js:33",
+   "ms": 228,
+   "pct": 1.4
+  },
+  {
+   "fn": "y @ index-y2k3N3sO.js:39",
+   "ms": 212,
+   "pct": 1.3
+  },
+  {
+   "fn": "j @ index-y2k3N3sO.js:256",
+   "ms": 207,
+   "pct": 1.3
+  },
+  {
+   "fn": "h @ index-y2k3N3sO.js:39",
+   "ms": 194,
+   "pct": 1.2
+  },
+  {
+   "fn": "set webkitSpeechRecognitionEvent @ :-1",
+   "ms": 184,
+   "pct": 1.2
+  },
+  {
+   "fn": "m_ @ index-y2k3N3sO.js:31",
+   "ms": 180,
+   "pct": 1.1
+  },
+  {
+   "fn": "(garbage collector) @ :-1",
+   "ms": 157,
+   "pct": 1
+  },
+  {
+   "fn": "j @ index-y2k3N3sO.js:31",
+   "ms": 144,
+   "pct": 0.9
+  },
+  {
+   "fn": "hj @ index-y2k3N3sO.js:8",
+   "ms": 136,
+   "pct": 0.9
+  },
+  {
+   "fn": "se @ index-y2k3N3sO.js:31",
+   "ms": 128,
+   "pct": 0.8
+  },
+  {
+   "fn": "U5 @ index-y2k3N3sO.js:31",
+   "ms": 98,
+   "pct": 0.6
+  },
+  {
+   "fn": "D6 @ index-y2k3N3sO.js:33",
+   "ms": 85,
+   "pct": 0.5
+  },
+  {
+   "fn": "T @ index-y2k3N3sO.js:31",
+   "ms": 80,
+   "pct": 0.5
+  },
+  {
+   "fn": "h @ index-y2k3N3sO.js:31",
+   "ms": 75,
+   "pct": 0.5
+  },
+  {
+   "fn": "Sm @ index-y2k3N3sO.js:8",
+   "ms": 67,
+   "pct": 0.4
+  },
+  {
+   "fn": "S @ index-y2k3N3sO.js:31",
+   "ms": 66,
+   "pct": 0.4
+  },
+  {
+   "fn": "(anon) @ index-y2k3N3sO.js:256",
+   "ms": 61,
+   "pct": 0.4
+  },
+  {
+   "fn": "xt @ index-y2k3N3sO.js:8",
+   "ms": 58,
+   "pct": 0.4
+  },
+  {
+   "fn": "Z @ index-y2k3N3sO.js:8",
+   "ms": 58,
+   "pct": 0.4
+  },
+  {
+   "fn": "Ea @ index-y2k3N3sO.js:31",
+   "ms": 57,
+   "pct": 0.4
+  },
+  {
+   "fn": "fm @ index-y2k3N3sO.js:8",
+   "ms": 57,
+   "pct": 0.4
+  },
+  {
+   "fn": "Ij @ index-y2k3N3sO.js:9",
+   "ms": 55,
+   "pct": 0.3
+  },
+  {
+   "fn": "_ @ index-y2k3N3sO.js:31",
+   "ms": 53,
+   "pct": 0.3
+  },
+  {
+   "fn": "fetch @ :-1",
+   "ms": 50,
+   "pct": 0.3
+  },
+  {
+   "fn": "N @ index-y2k3N3sO.js:31",
+   "ms": 50,
+   "pct": 0.3
+  },
+  {
+   "fn": "m @ index-y2k3N3sO.js:31",
+   "ms": 48,
+   "pct": 0.3
+  },
+  {
+   "fn": "AL @ index-y2k3N3sO.js:270",
+   "ms": 48,
+   "pct": 0.3
+  },
+  {
+   "fn": "s @ index-y2k3N3sO.js:31",
+   "ms": 47,
+   "pct": 0.3
+  },
+  {
+   "fn": "p @ index-y2k3N3sO.js:43",
+   "ms": 47,
+   "pct": 0.3
+  },
+  {
+   "fn": "T6 @ index-y2k3N3sO.js:33",
+   "ms": 45,
+   "pct": 0.3
+  },
+  {
+   "fn": "hd @ index-y2k3N3sO.js:8",
+   "ms": 45,
+   "pct": 0.3
+  },
+  {
+   "fn": "sm @ index-y2k3N3sO.js:8",
+   "ms": 43,
+   "pct": 0.3
+  },
+  {
+   "fn": "s @ index-y2k3N3sO.js:39",
+   "ms": 43,
+   "pct": 0.3
+  },
+  {
+   "fn": "o @ index-y2k3N3sO.js:33",
+   "ms": 40,
+   "pct": 0.3
+  },
+  {
+   "fn": "o0 @ index-y2k3N3sO.js:31",
+   "ms": 39,
+   "pct": 0.2
+  },
+  {
+   "fn": "o @ index-y2k3N3sO.js:31",
+   "ms": 39,
+   "pct": 0.2
+  }
+ ],
+ "profileTotalMs": 15950,
+ "profileCat": {
+  "program": 3576,
+  "js": 5917,
+  "gc": 157,
+  "idle": 6300
+ },
+ "cpuPct": 20,
+ "frames": {
+  "frames": 906,
+  "workP50": 3.3,
+  "workP75": 5,
+  "workP95": 19.3,
+  "workP99": 31.7,
+  "workMax": 57.1,
+  "workMean": 5.32,
+  "over69Pct": 19.4,
+  "over166Pct": 7.3,
+  "over33Pct": 0.9,
+  "rafP50": 16.7,
+  "rafP95": 16.8,
+  "rafMax": 50.1,
+  "avgFps": 57.3,
+  "droppedPct": 3.8,
+  "droppedFrames": 34,
+  "longTaskMs": 0,
+  "loaf": {
+   "n": 5,
+   "maxMs": 86.2,
+   "maxBlockingMs": 3.5,
+   "maxRenderMs": 8.9,
+   "top": [
+    {
+     "d": 86.19999998807907,
+     "blocking": 0,
+     "renderMs": 0.800000011920929,
+     "styleLayoutMs": 0.30000001192092896,
+     "scripts": []
+    },
+    {
+     "d": 66.60000002384186,
+     "blocking": 3.5,
+     "renderMs": 8.900000035762787,
+     "styleLayoutMs": 8.5,
+     "scripts": [
+      {
+       "n": "script",
+       "d": 12
+      },
+      {
+       "n": "script",
+       "d": 43
+      }
+     ]
+    },
+    {
+     "d": 57.200000047683716,
+     "blocking": 0,
+     "renderMs": 7,
+     "styleLayoutMs": 6.600000023841858,
+     "scripts": [
+      {
+       "n": "script",
+       "d": 11
+      },
+      {
+       "n": "script",
+       "d": 38
+      }
+     ]
+    }
+   ]
+  },
+  "worstFramesMs": [
+   57.1,
+   47.2,
+   40,
+   37.3,
+   36.5,
+   36,
+   34.5,
+   33.1
+  ],
+  "hist": [
+   8,
+   51,
+   99,
+   88,
+   69,
+   73,
+   98,
+   98,
+   57,
+   34,
+   24,
+   9,
+   14,
+   9,
+   11,
+   10,
+   6,
+   9,
+   8,
+   9,
+   5,
+   4,
+   4,
+   6,
+   4,
+   4,
+   3,
+   4,
+   2,
+   4,
+   3,
+   6,
+   6,
+   2,
+   6,
+   6,
+   4,
+   2,
+   2,
+   5,
+   1,
+   1,
+   3,
+   2,
+   3,
+   4,
+   1,
+   1,
+   0,
+   0,
+   3,
+   2,
+   1,
+   3,
+   1,
+   4,
+   0,
+   0,
+   0,
+   0,
+   0,
+   10
+  ]
+ },
+ "switchMs": [
+  {
+   "dom": 33,
+   "painted": 56
+  },
+  {
+   "dom": 37,
+   "painted": 61
+  },
+  {
+   "dom": 33,
+   "painted": 44
+  },
+  {
+   "dom": 40,
+   "painted": 70
+  },
+  {
+   "dom": 35,
+   "painted": 52
+  },
+  {
+   "dom": 46,
+   "painted": 73
+  },
+  {
+   "dom": 48,
+   "painted": 66
+  },
+  {
+   "dom": 40,
+   "painted": 67
+  }
+ ],
+ "typeMs": [
+  29.8,
+  28.3,
+  29,
+  21.7,
+  26.5,
+  25.7,
+  25.8,
+  16,
+  21,
+  28.9,
+  27.1,
+  12.6
+ ],
+ "heapMB": 55,
+ "mem": {
+  "totalPrivMB": 446.3,
+  "totalWsMB": 910.1,
+  "procs": [
+   {
+    "pid": 41676,
+    "name": "agentcodegui.exe",
+    "privMB": 26.9,
+    "wsMB": 66.5
+   },
+   {
+    "pid": 40684,
+    "name": "msedgewebview2.exe",
+    "privMB": 98.3,
+    "wsMB": 256
+   },
+   {
+    "pid": 19620,
+    "name": "claude.exe",
+    "privMB": 0.9,
+    "wsMB": 5.1
+   },
+   {
+    "pid": 32836,
+    "name": "claude.exe",
+    "privMB": 0.9,
+    "wsMB": 5.1
+   },
+   {
+    "pid": 13220,
+    "name": "claude.exe",
+    "privMB": 0.9,
+    "wsMB": 5.1
+   },
+   {
+    "pid": 20184,
+    "name": "claude.exe",
+    "privMB": 0.9,
+    "wsMB": 5.1
+   },
+   {
+    "pid": 14112,
+    "name": "claude.exe",
+    "privMB": 0.9,
+    "wsMB": 5.1
+   },
+   {
+    "pid": 23228,
+    "name": "claude.exe",
+    "privMB": 0.9,
+    "wsMB": 5.1
+   },
+   {
+    "pid": 16024,
+    "name": "claude.exe",
+    "privMB": 0.9,
+    "wsMB": 5.1
+   },
+   {
+    "pid": 5792,
+    "name": "claude.exe",
+    "privMB": 0.9,
+    "wsMB": 5.1
+   },
+   {
+    "pid": 36996,
+    "name": "claude.exe",
+    "privMB": 0.9,
+    "wsMB": 5.1
+   },
+   {
+    "pid": 5464,
+    "name": "claude.exe",
+    "privMB": 0.9,
+    "wsMB": 5.1
+   },
+   {
+    "pid": 37716,
+    "name": "claude.exe",
+    "privMB": 0.9,
+    "wsMB": 5.1
+   },
+   {
+    "pid": 38644,
+    "name": "claude.exe",
+    "privMB": 0.9,
+    "wsMB": 5.1
+   },
+   {
+    "pid": 26116,
+    "name": "msedgewebview2.exe",
+    "privMB": 2.6,
+    "wsMB": 12
+   },
+   {
+    "pid": 43168,
+    "name": "msedgewebview2.exe",
+    "privMB": 8.8,
+    "wsMB": 21
+   },
+   {
+    "pid": 31424,
+    "name": "msedgewebview2.exe",
+    "privMB": 284.7,
+    "wsMB": 409.5
+   },
+   {
+    "pid": 28056,
+    "name": "conhost.exe",
+    "privMB": 1.2,
+    "wsMB": 7
+   },
+   {
+    "pid": 41488,
+    "name": "conhost.exe",
+    "privMB": 1.2,
+    "wsMB": 7
+   },
+   {
+    "pid": 18204,
+    "name": "conhost.exe",
+    "privMB": 1.2,
+    "wsMB": 7
+   },
+   {
+    "pid": 18964,
+    "name": "conhost.exe",
+    "privMB": 1.2,
+    "wsMB": 7
+   },
+   {
+    "pid": 36036,
+    "name": "conhost.exe",
+    "privMB": 1.2,
+    "wsMB": 7
+   },
+   {
+    "pid": 28848,
+    "name": "conhost.exe",
+    "privMB": 1.2,
+    "wsMB": 7
+   },
+   {
+    "pid": 15108,
+    "name": "conhost.exe",
+    "privMB": 1.2,
+    "wsMB": 7
+   },
+   {
+    "pid": 27836,
+    "name": "conhost.exe",
+    "privMB": 1.2,
+    "wsMB": 7
+   },
+   {
+    "pid": 37224,
+    "name": "conhost.exe",
+    "privMB": 1.2,
+    "wsMB": 7
+   },
+   {
+    "pid": 41800,
+    "name": "conhost.exe",
+    "privMB": 1.2,
+    "wsMB": 7
+   },
+   {
+    "pid": 29088,
+    "name": "conhost.exe",
+    "privMB": 1.2,
+    "wsMB": 7
+   },
+   {
+    "pid": 2880,
+    "name": "conhost.exe",
+    "privMB": 1.2,
+    "wsMB": 7
+   }
+  ]
+ },
+ "after": {
+  "page": "1",
+  "panels": 6,
+  "busy": 0,
+  "dots": [
+   "ma-page-dot busy"
+  ],
+  "overlays": 0
+ }
+}

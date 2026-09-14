@@ -1,0 +1,386 @@
+{
+ "at": "2026-09-13T10:29:03.839Z",
+ "tag": "opt4",
+ "exe": "C:\\Code\\AgentCodeGUI\\target\\debug\\agentcodegui.exe",
+ "secs": 15,
+ "hz": 25,
+ "cpuPct": 9.1,
+ "frames": {
+  "frames": 934,
+  "workP50": 1.6,
+  "workP75": 3.6,
+  "workP95": 5.6,
+  "workP99": 8.6,
+  "workMax": 14.8,
+  "workMean": 2.37,
+  "over69Pct": 1.7,
+  "over166Pct": 0,
+  "over33Pct": 0,
+  "rafP50": 16.7,
+  "rafP95": 16.8,
+  "rafMax": 50,
+  "avgFps": 59.6,
+  "droppedPct": 0.5,
+  "droppedFrames": 5,
+  "longTaskMs": 0,
+  "loaf": {
+   "n": 3,
+   "maxMs": 62.7,
+   "maxBlockingMs": 0,
+   "maxRenderMs": 7.9,
+   "top": [
+    {
+     "d": 62.69999998807907,
+     "blocking": 0,
+     "renderMs": 6.199999988079071,
+     "styleLayoutMs": 5.899999976158142,
+     "scripts": [
+      {
+       "n": "script",
+       "d": 13
+      },
+      {
+       "n": "script",
+       "d": 41
+      }
+     ]
+    },
+    {
+     "d": 54.299999952316284,
+     "blocking": 0,
+     "renderMs": 7.899999976158142,
+     "styleLayoutMs": 7.599999964237213,
+     "scripts": [
+      {
+       "n": "script",
+       "d": 31
+      }
+     ]
+    },
+    {
+     "d": 52.09999996423721,
+     "blocking": 0,
+     "renderMs": 7.699999988079071,
+     "styleLayoutMs": 7.5,
+     "scripts": [
+      {
+       "n": "script",
+       "d": 35
+      }
+     ]
+    }
+   ]
+  },
+  "worstFramesMs": [
+   14.8,
+   14,
+   13.4,
+   13.1,
+   12.9,
+   12.8,
+   12.5,
+   9.5
+  ],
+  "hist": [
+   67,
+   215,
+   125,
+   103,
+   38,
+   51,
+   81,
+   75,
+   48,
+   50,
+   29,
+   18,
+   15,
+   3,
+   2,
+   3,
+   1,
+   2,
+   0,
+   1,
+   0,
+   0,
+   0,
+   0,
+   0,
+   3,
+   2,
+   0,
+   1,
+   1,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0
+  ]
+ },
+ "switchMs": [
+  {
+   "dom": 28,
+   "painted": 43
+  },
+  {
+   "dom": 37,
+   "painted": 63
+  },
+  {
+   "dom": 28,
+   "painted": 42
+  },
+  {
+   "dom": 33,
+   "painted": 53
+  },
+  {
+   "dom": 30,
+   "painted": 45
+  },
+  {
+   "dom": 37,
+   "painted": 63
+  },
+  {
+   "dom": 32,
+   "painted": 56
+  },
+  {
+   "dom": 43,
+   "painted": 71
+  }
+ ],
+ "typeMs": [
+  24.7,
+  33.5,
+  25.7,
+  25.7,
+  30.5,
+  28.1,
+  25.3,
+  32.1,
+  26.2,
+  23.4,
+  23.9,
+  37.5
+ ],
+ "heapMB": 23,
+ "mem": {
+  "totalPrivMB": 403.6,
+  "totalWsMB": 837.9,
+  "procs": [
+   {
+    "pid": 36228,
+    "name": "agentcodegui.exe",
+    "privMB": 24.8,
+    "wsMB": 62.5
+   },
+   {
+    "pid": 34884,
+    "name": "msedgewebview2.exe",
+    "privMB": 95.5,
+    "wsMB": 240.6
+   },
+   {
+    "pid": 6008,
+    "name": "claude.exe",
+    "privMB": 0.9,
+    "wsMB": 5.1
+   },
+   {
+    "pid": 39092,
+    "name": "claude.exe",
+    "privMB": 0.9,
+    "wsMB": 5.1
+   },
+   {
+    "pid": 19620,
+    "name": "claude.exe",
+    "privMB": 0.9,
+    "wsMB": 5.1
+   },
+   {
+    "pid": 15552,
+    "name": "claude.exe",
+    "privMB": 0.9,
+    "wsMB": 5.1
+   },
+   {
+    "pid": 17620,
+    "name": "claude.exe",
+    "privMB": 0.9,
+    "wsMB": 5.1
+   },
+   {
+    "pid": 13424,
+    "name": "claude.exe",
+    "privMB": 0.9,
+    "wsMB": 5.1
+   },
+   {
+    "pid": 24264,
+    "name": "claude.exe",
+    "privMB": 0.9,
+    "wsMB": 5.1
+   },
+   {
+    "pid": 6200,
+    "name": "claude.exe",
+    "privMB": 0.9,
+    "wsMB": 5.1
+   },
+   {
+    "pid": 17060,
+    "name": "claude.exe",
+    "privMB": 0.9,
+    "wsMB": 5.1
+   },
+   {
+    "pid": 29440,
+    "name": "claude.exe",
+    "privMB": 0.9,
+    "wsMB": 5.1
+   },
+   {
+    "pid": 24560,
+    "name": "claude.exe",
+    "privMB": 0.9,
+    "wsMB": 5.1
+   },
+   {
+    "pid": 37356,
+    "name": "claude.exe",
+    "privMB": 0.9,
+    "wsMB": 5.1
+   },
+   {
+    "pid": 9708,
+    "name": "msedgewebview2.exe",
+    "privMB": 2.6,
+    "wsMB": 12
+   },
+   {
+    "pid": 16632,
+    "name": "msedgewebview2.exe",
+    "privMB": 8.4,
+    "wsMB": 20.7
+   },
+   {
+    "pid": 14096,
+    "name": "msedgewebview2.exe",
+    "privMB": 247.2,
+    "wsMB": 357
+   },
+   {
+    "pid": 36432,
+    "name": "conhost.exe",
+    "privMB": 1.2,
+    "wsMB": 7
+   },
+   {
+    "pid": 28576,
+    "name": "conhost.exe",
+    "privMB": 1.2,
+    "wsMB": 7
+   },
+   {
+    "pid": 40588,
+    "name": "conhost.exe",
+    "privMB": 1.2,
+    "wsMB": 7
+   },
+   {
+    "pid": 36312,
+    "name": "conhost.exe",
+    "privMB": 1.2,
+    "wsMB": 7
+   },
+   {
+    "pid": 24404,
+    "name": "conhost.exe",
+    "privMB": 1.2,
+    "wsMB": 7
+   },
+   {
+    "pid": 43984,
+    "name": "conhost.exe",
+    "privMB": 1.2,
+    "wsMB": 7
+   },
+   {
+    "pid": 21424,
+    "name": "conhost.exe",
+    "privMB": 1.2,
+    "wsMB": 7
+   },
+   {
+    "pid": 548,
+    "name": "conhost.exe",
+    "privMB": 1.2,
+    "wsMB": 7
+   },
+   {
+    "pid": 29700,
+    "name": "conhost.exe",
+    "privMB": 1.2,
+    "wsMB": 7
+   },
+   {
+    "pid": 37800,
+    "name": "conhost.exe",
+    "privMB": 1.2,
+    "wsMB": 7
+   },
+   {
+    "pid": 2572,
+    "name": "conhost.exe",
+    "privMB": 1.2,
+    "wsMB": 7
+   },
+   {
+    "pid": 38596,
+    "name": "conhost.exe",
+    "privMB": 1.2,
+    "wsMB": 7
+   }
+  ]
+ },
+ "after": {
+  "page": "1",
+  "panels": 6,
+  "busy": 0,
+  "dots": [],
+  "overlays": 0,
+  "dotClearedMs": 787
+ }
+}

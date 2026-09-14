@@ -32,6 +32,66 @@ Thumbs.db
 # 홍보 영상 렌더 작업장 (프레임 렌더러+스크린샷 텍스처+렌더 출력 — 대부분 재생성물, 34MB급)
 promo/
 
-# dev 격리 홈 (CCG_HOME)
+# dev 격리 홈 (CCG_HOME) — flags 스윕 등 벤치 홈 변형 전부
 .devhome/
 .dev-home/
+.dev-subscriptions/
+.bench-home*/
+# ★크리틱·PoC가 레포 안에 만든 격리 홈. 2026-08-26에 10MB짜리
+# `.crit-home-m10r6b-r28h1halt-off/`가 루트에 남아 있었고 그 안에 `accounts.json`이
+# 있었다(합성 계정뿐이라 유출은 없었다). 이 줄이 없으면 `git add -A` 한 번에 들어간다 —
+# 홈은 %TEMP%에 만드는 것이 규약이지만, 레포 안에 만들더라도 커밋은 막는다.
+.crit-home*/
+.ccg-home*/
+
+# A/B 화면 캡처 — PNG 바이너리는 커밋하지 않는다(수백 장·수십 MB, 매 실행 재생성).
+# 단 report.json(도달 성공/실패 기록)은 파리티 판정의 근거라 커밋 대상.
+bench/shots/**
+!bench/shots/
+!bench/shots/*/
+!bench/shots/*/report.json
+# 뷰어 화면용 스크래치 파일 (ab.mjs가 매 실행 재생성)
+bench/scratch/
+# 크리틱/유리 조사 캡처 PNG — 수치 판정은 docs/critic/*.json에 있고, 캡처는
+# docs/critic/tools/·scripts/poc-glass/로 재생성 가능
+docs/critic/shots/
+docs/design/glass-shots/
+# poc-glass 실험대 PID·Chromium 프로필 스크래치
+scripts/poc-glass/.pid-*
+scripts/poc-glass/**/.userdata/
+scripts/poc-glass/**/shots/
+# tauri-glass PoC의 정적 프런트는 전역 dist/ 제외에서 되살린다(1파일짜리 실험대)
+!scripts/poc-glass/tauri-glass/dist/
+
+# 3.0 (Tauri/Rust) 산출물
+target/
+app/dist/
+src-tauri/gen/
+.poc-home-tauri/
+
+scripts/poc-rs/target/
+.poc-home-chats/
+# ★R28 — 갈래별 격리 산출물. 공용 `target/`의 exe가 옆 갈래가 띄워 둔 앱에 잠기면
+# (EBUSY) 각자 `CARGO_TARGET_DIR=target-<갈래>`로 빌드하고 하네스에 `--exe=`로 지목한다.
+# 격리 홈도 하네스마다 하나씩 판다(`.poc-home-<갈래>`). 둘 다 수 GB / 수백 MB다.
+target-*/
+.poc-home-*/
+
+# ★LSPDIST R2 — 설치기에 싣는 LSP용 Node 런타임(판 고정 + sha256 검증 스테이징).
+# 93MB짜리 바이너리라 커밋하지 않는다. 만드는 사람은 `scripts/tauri-build.mjs`이고
+# 판·해시는 그 파일의 NODE_PIN에 박혀 있다 — 지워도 다음 빌드가 다시 받아 검증한다.
+src-tauri/lsp-runtime/
+
+# ★LSPIDLE R1 — 설치기에 싣는 LSP 모듈의 **거른 사본**(유령 바이트 14.8MB를 뺀 것).
+# 레포의 node_modules에서 매 빌드 새로 만든다(`scripts/tauri-build.mjs::stageLspModules`) —
+# 지워도 되고, 지우는 편이 안전하다(남은 사본을 재활용하면 뺀 파일이 되살아난다).
+src-tauri/lsp-modules/
+
+# AgentMonitoring 도구가 레포 안에 쓰는 작업 기록(bugs/worklogs/notes) — 코드가 아니다
+AgentMonitoring/
+
+# Local identity of the independent external-tool example.
+examples/external-tool-lab/.instance-id
+
+# Local MCP server paths for this workstation.
+.codex/config.toml
