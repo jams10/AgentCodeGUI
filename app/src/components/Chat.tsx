@@ -43,6 +43,7 @@ import { noteLanding, putAnchor, takeAnchor } from '../lib/threadAnchor'
 import type { EngineHold } from '../lib/resumeOwner'
 import { settleText, useSettledReason } from '../lib/settled'
 import { ToolActivityRow, type OpenToolFile } from './ToolActivity'
+import { advanceStreamHead, EMPTY_HEAD, type StreamHead } from '../lib/streamSplit'
 import { getPref, setPref } from '../lib/prefs'
 import { loadRecentDirs, loadFavDirs, toggleFavDir, removeRecentDir } from '../lib/recentDirs'
 import { Markdown } from './Markdown'
@@ -478,6 +479,23 @@ const REVEAL_LIMIT = 24_000
 //   대부분을 번다. 위험을 지는 자리가 이득의 5%뿐이면 그 자리는 안 건드리는 게 맞다.
 const MIN_COMMIT_MS = 10
 
+// ★3.3 — **동시에 공개 중인 말풍선 수**에 따른 커밋 바닥. 멀티 12패널(2페이지)에서 화면의
+// 스트리밍 패널 N개가 각자 매 프레임 재파싱하면 파싱이 N배다 — 실측(bench/load-pages.mjs,
+// 6패널 가시 + 6패널 은닉 스트리밍, 릴리즈 번들): 렌더러 JS 시간의 47%가 micromark/mdast였고
+// 프레임 작업 p95 19ms·16.6ms 초과 7%. 혼자 공개할 땐 바닥이 그대로(10ms = 오늘과 동일)이고,
+// N개가 겹치면 각자 N×8ms 간격으로 접는다(6개 = 48ms ≈ 초당 20커밋) — 총 커밋 수의 상한이
+// 패널 수와 무관해진다. 커서는 매 프레임 전진하므로 공개 총 시간은 같고 한 커밋의 글자만 커진다.
+const REVEAL_SHARE_MS = 8
+const REVEAL_FLOOR_MAX_MS = 50
+const activeReveals = new Set<object>()
+function revealFloorMs(): number {
+  return Math.max(MIN_COMMIT_MS, Math.min(REVEAL_FLOOR_MAX_MS, activeReveals.size * REVEAL_SHARE_MS))
+}
+// ※ "프레임당 커밋 수 예산"(한 프레임에 최대 2패널만 커밋, 나머지는 다음 프레임)은 실측으로 **기각**했다
+//   (bench/load-pages.mjs 60토큰/s: p50 2.1→4.0ms · p95 9.3→15.4ms). 같은 프레임에 겹친 커밋은 React가
+//   한 번에 조정하고 레이아웃·페인트도 한 패스로 끝나는데, 프레임에 흩뿌리면 그 고정 비용이 프레임마다
+//   든다. 겹침이 오히려 싸다.
+
 function SmoothMarkdown({ text, running, cwd, onOpenFile }: { text: string; running: boolean; cwd?: string; onOpenFile?: OpenToolFile }) {
   const [shown, setShown] = useState(() => (running ? 0 : text.length))
   const targetRef = useRef(text)
@@ -486,6 +504,7 @@ function SmoothMarkdown({ text, running, cwd, onOpenFile }: { text: string; runn
   const velRef = useRef(0) // current reveal velocity (chars/sec), eased
   const lastT = useRef(0)
   const lastCommit = useRef(0) // 마지막으로 setShown을 커밋한 시각 (파싱 스로틀)
+  const revealId = useRef({}) // activeReveals 등록 키 — 이 말풍선의 공개 루프가 도는 동안만 들어 있다
 
   useEffect(() => {
     // 다 드러난 메시지는 루프를 아예 세운다 — 따라잡은 뒤에도 rAF를 재예약하면 화면의
@@ -497,6 +516,8 @@ function SmoothMarkdown({ text, running, cwd, onOpenFile }: { text: string; runn
     }
     let raf = 0
     let alive = true
+    const me = revealId.current
+    activeReveals.add(me)
     const tick = (now: number): void => {
       if (!alive) return
       if (lastT.current === 0) lastT.current = now
@@ -512,6 +533,7 @@ function SmoothMarkdown({ text, running, cwd, onOpenFile }: { text: string; runn
           setShown(target)
         }
         velRef.current = 0
+        activeReveals.delete(me)
         return // 다 보였다 — 루프 정지, 다음 청크가 재기동
       }
       if (cur < target) {
@@ -531,7 +553,7 @@ function SmoothMarkdown({ text, running, cwd, onOpenFile }: { text: string; runn
         // 따라잡은 순간엔 즉시 커밋 — plain→하이라이트 전환이 스로틀에 걸리지 않게.
         // `MIN_COMMIT_MS` 바닥은 **표시율 분리**다(위 주석): 60Hz에선 매 프레임이라
         // 오늘과 같고, 144Hz에선 초당 커밋(=재파싱) 수가 60Hz 때와 같아진다.
-        if (cur >= target || now - lastCommit.current >= Math.max(MIN_COMMIT_MS, Math.min(50, cur / 400))) {
+        if (cur >= target || now - lastCommit.current >= Math.max(revealFloorMs(), Math.min(50, cur / 400))) {
           lastCommit.current = now
           setShown(Math.floor(cur))
         }
@@ -539,18 +561,51 @@ function SmoothMarkdown({ text, running, cwd, onOpenFile }: { text: string; runn
         return
       }
       velRef.current = 0 // caught up — park; the next chunk's [text] effect re-arms
+      activeReveals.delete(me)
     }
     raf = requestAnimationFrame(tick)
     return () => {
       alive = false
       lastT.current = 0
       cancelAnimationFrame(raf)
+      activeReveals.delete(me)
     }
   }, [text])
 
   // colorize only once the run finished AND the reveal caught up (avoids flicker)
   const plain = running || shown < text.length
-  return <Markdown text={text.slice(0, shown)} plain={plain} cwd={cwd} onOpenFile={onOpenFile} />
+  const visible = text.slice(0, shown)
+  if (!plain) return <Markdown text={visible} plain={false} cwd={cwd} onOpenFile={onOpenFile} />
+  return <StreamingMarkdown text={visible} cwd={cwd} onOpenFile={onOpenFile} />
+}
+
+// ── ★3.3 스트리밍 공개 중의 머리/꼬리 분할 ─────────────────────────────────────────
+// 공개 커밋마다 지금까지 보인 글 **전체**를 remark가 다시 파싱하고 React가 그 트리를 통째로
+// 다시 조정했다 — 비용이 글 길이에 비례해 커져(20KB 답변이면 커밋당 수 ms), 12패널에선 그게
+// 프레임을 먹는 주범이었다(bench/load-pages.mjs 프로파일: JS의 47%가 파서). 글의 앞부분은
+// 이미 굳은 문단이라 다시 파싱할 이유가 없다. 그래서 공개 중엔 **머리**(굳은 앞부분)와
+// **꼬리**(마지막 문단 근처)를 따로 그린다: 머리는 memo Markdown이 자기 문자열이 바뀔 때만
+// 파싱하고, 매 커밋 파싱되는 건 짧은 꼬리뿐이다. 최종본(공개 끝·실행 끝)은 예전처럼 한 덩어리로
+// 그리므로 완성된 화면은 한 글자도 다르지 않다.
+//
+// 분할점 규칙 — 블록 경계(빈 줄 `\n\n`) 중 꼬리 최소 길이 밖에 있는 마지막 것. 단
+//   · 열린 코드 펜스 안은 안 된다(``` / ~~~ 줄 수가 짝수여야 그 지점이 펜스 밖이다)
+//   · 목록 항목 사이는 안 된다(두 목록으로 갈라지면 여백이 달라 보인다)
+//   · 머리는 뒤로만 늘고 앞으로 되돌아오지 않는다(안정성 — 이미 굳은 DOM은 그대로)
+// 경계를 못 찾으면 통째로 꼬리다(= 오늘과 같다).
+// 규칙 자체는 `lib/streamSplit.ts`(순수 함수 — bench/scratch/streamsplit-test.mjs가 검사한다).
+function StreamingMarkdown({ text, cwd, onOpenFile }: { text: string; cwd?: string; onOpenFile?: OpenToolFile }) {
+  // 머리 길이·머리까지의 펜스 줄 수 — 단조 증가 캐시(렌더 중 갱신하지만 같은 입력엔 같은 답, 멱등)
+  const headRef = useRef<StreamHead>(EMPTY_HEAD)
+  headRef.current = advanceStreamHead(text, headRef.current)
+  const head = headRef.current.len
+  if (head === 0) return <Markdown text={text} plain cwd={cwd} onOpenFile={onOpenFile} />
+  return (
+    <>
+      <Markdown text={text.slice(0, head)} plain cwd={cwd} onOpenFile={onOpenFile} />
+      <Markdown text={text.slice(head)} plain cwd={cwd} onOpenFile={onOpenFile} />
+    </>
+  )
 }
 
 // memoized so typing in the composer (which re-renders the app) doesn't re-parse
@@ -2092,6 +2147,14 @@ export function useThreadFollow(scrollEl: HTMLElement | null, busy: boolean) {
       }
     }
     const onScroll = (e: Event): void => {
+      // ★3.3 따라가는 중(래치 on)엔 기하를 읽지 않는다 — 스트리밍 성장이 프레임마다 scroll 이벤트를
+      // 내는데, 레이아웃이 더러운 순간의 scrollHeight/scrollTop 읽기는 전부 강제 레이아웃이다
+      // (12패널 부하 프로파일에서 `get scrollHeight`가 남은 JS의 3%). 래치 on이면 답이 정해져 있다:
+      // 점프 버튼 off, 복원 위치는 바닥(마운트 effect가 래치로 분기), 재고정은 이미 고정.
+      if (stickRef.current) {
+        setShowJump(false)
+        return
+      }
       lastTopRef.current = el.scrollTop
       const fromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
       setShowJump(fromBottom > FOLLOW_JUMP_SHOW_PX)
@@ -2145,6 +2208,21 @@ export function useThreadFollow(scrollEl: HTMLElement | null, busy: boolean) {
   // a continuous flow (not a jump on each delta). Paused while the latch is off.
   useEffect(() => {
     if (!busy || !scrollEl) return
+    // ★3.3 — 매 프레임 `scrollTop = scrollHeight`는 프레임마다 강제 레이아웃 읽기다. 패널 하나면
+    //   싸지만 12패널 부하(6 가시 스트리밍)에선 `get scrollHeight` 하나가 렌더러 JS 시간의 4%였다
+    //   (bench/load-pages.mjs 프로파일). 내용 높이가 **실제로 바뀐 순간**에만 붙이면 같은 결과를
+    //   0 유휴 비용으로 얻는다: ResizeObserver는 레이아웃 뒤에 울리므로 읽기가 레이아웃을 강제하지
+    //   않고, 커밋(=성장)마다 정확히 한 번 붙는다(성장 없는 프레임엔 아무 일도 없다). 스크롤러
+    //   자체 크기 변화(창 리사이즈)도 같은 관찰자가 받는다. RO가 없는 환경만 옛 루프.
+    const content = (scrollEl.querySelector('.thread') as HTMLElement | null) ?? (scrollEl.firstElementChild as HTMLElement | null)
+    if (content && typeof ResizeObserver !== 'undefined') {
+      const ro = new ResizeObserver(() => {
+        if (stickRef.current) scrollEl.scrollTop = scrollEl.scrollHeight
+      })
+      ro.observe(content)
+      ro.observe(scrollEl)
+      return () => ro.disconnect()
+    }
     let raf = 0
     let alive = true
     // ★ 여기에 시간 바닥을 걸지 않는다(FPS144 R2에서 R1의 캡을 걷어냈다).
@@ -5256,7 +5334,10 @@ function WorkflowCard({
   )
 }
 
-export function Composer({
+// ★3.3 memo — 멀티 패널에선 스트리밍 델타마다 PanelView가 다시 그려지는데, 그때마다 이 큰 컴포저
+// (칩·팔레트·멘션·첨부·예약 큐)까지 재조정되던 것을 막는다. PanelView는 콜백을 useEvent로 고정해
+// 넘긴다. 본채팅·추가 채팅 창은 인라인 콜백이라 memo가 그냥 통과한다(무해).
+export const Composer = memo(function Composer({
   value,
   onChange,
   history,
@@ -5316,6 +5397,7 @@ export function Composer({
   // ★R28 ACCT §3 — 계정 picker가 「사용 중」 역인덱스에서 자기 자리를 뺄 때 쓴다.
   chatId?: string
 }) {
+  useLang() // 언어 전환 재렌더 구독 — memo 컴포넌트라 루트 재렌더가 여기까지 오지 않는다
   const [focus, setFocus] = useState(false)
   // true while an image is being dragged over the composer → shows the drop hint overlay.
   // a counter, not a bool: dragenter/leave fire per child element, so a plain flag flickers
@@ -6019,4 +6101,4 @@ export function Composer({
       </div>
     </div>
   )
-}
+})

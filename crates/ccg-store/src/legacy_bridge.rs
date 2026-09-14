@@ -487,12 +487,15 @@ pub fn sanitize_promo(v: Option<&Value>) -> Option<Value> {
         .iter()
         .map(|x| x.as_u64().map(|x| x as usize))
         .collect::<Option<Vec<_>>>()?;
-    if base.len() != SLOT_COUNT || base.iter().any(|&b| b >= SLOT_COUNT) {
+    // ★3.3 `base`는 승격 자리가 사는 **페이지 슬롯 묶음**(0‥5 또는 6‥11)의 순열
+    let lo = crate::boards::page_of(slot) * crate::boards::PAGE_SIZE;
+    let hi = lo + crate::boards::PAGE_SIZE;
+    if base.len() != crate::boards::PAGE_SIZE || base.iter().any(|&b| b < lo || b >= hi) {
         return None;
     }
-    let mut seen = [false; SLOT_COUNT];
+    let mut seen = [false; crate::boards::PAGE_SIZE];
     for &b in &base {
-        seen[b] = true;
+        seen[b - lo] = true;
     }
     if !seen.iter().all(|s| *s) {
         return None;
@@ -529,11 +532,24 @@ fn session_from_board(board: &Value, chats: &std::collections::HashMap<String, V
     o.insert("title".into(), board.get("title").cloned().unwrap_or(json!("")));
     o.insert("custom".into(), board.get("custom").cloned().unwrap_or(json!(false)));
     o.insert("count".into(), board.get("count").cloned().unwrap_or(json!(1)));
-    o.insert("panelOrder".into(), board.get("order").cloned().unwrap_or(json!([0, 1, 2, 3, 4, 5])));
+    o.insert(
+        "panelOrder".into(),
+        board.get("order").cloned().unwrap_or_else(|| json!((0..SLOT_COUNT).collect::<Vec<_>>())),
+    );
+    // ★3.3 페이지 — 2페이지 자리 수·보던 페이지는 있을 때만 싣는다(없으면 렌더러가 count·1페이지로 폴백)
+    if let Some(c) = board.get("count2") {
+        o.insert("count2".into(), c.clone());
+    }
+    if let Some(pg) = board.get("page") {
+        o.insert("page".into(), pg.clone());
+    }
     // ★3.0.8 — 다이얼을 줄이며 끌어올린 자리의 오버레이(승격 자리 + 승격 전 순서). 렌더러가 늘릴 때
     // 되돌리는 근거라 표시 순서(`order`)와 함께 살아야 한다(`app/src/lib/panelLayout.ts`).
     if let Some(p) = sanitize_promo(board.get("promo")) {
         o.insert("promo".into(), p);
+    }
+    if let Some(p) = sanitize_promo(board.get("promo2")) {
+        o.insert("promo2".into(), p);
     }
     if let Some(u) = board.get("updatedAt") {
         o.insert("updatedAt".into(), u.clone());
@@ -679,10 +695,23 @@ pub fn ma_save(data: &Value) -> Vec<String> {
             )),
         );
         b.insert("slots".into(), Value::Array(slots));
+        // ★3.3 페이지 — count와 같은 규칙(세션 값 → 지난 보드 값 → 기본). count2 기본은 count.
+        let count1 = b.get("count").cloned().unwrap_or(json!(1));
+        b.insert(
+            "count2".into(),
+            s.get("count2").cloned().or_else(|| prev.and_then(|x| x.get("count2").cloned())).unwrap_or(count1),
+        );
+        b.insert(
+            "page".into(),
+            s.get("page").cloned().or_else(|| prev.and_then(|x| x.get("page").cloned())).unwrap_or(json!(0)),
+        );
         // ★3.0.8 — 키가 **없을 때만** 지난 값을 쓴다. 렌더러는 걷은 오버레이를 `null`로 실어 보내므로
         // 그때는 지난 값이 되살아나면 안 된다(늘렸는데 옛 승격이 되돌아오는 사고).
         if let Some(p) = sanitize_promo(s.get("promo").or_else(|| prev.and_then(|x| x.get("promo")))) {
             b.insert("promo".into(), p);
+        }
+        if let Some(p) = sanitize_promo(s.get("promo2").or_else(|| prev.and_then(|x| x.get("promo2")))) {
+            b.insert("promo2".into(), p);
         }
         if let Some(u) = s.get("updatedAt") {
             b.insert("updatedAt".into(), u.clone());

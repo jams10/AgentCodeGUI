@@ -18,7 +18,7 @@ import { shellAuthored, verdictNote, verdictLine } from './lib/verdict'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { Sidebar, type ChatSummary, type SidebarSection } from './components/Sidebar'
 import { pushRecentDir, seedRecentDirs } from './lib/recentDirs'
-import { FoldSlotHold, MultiWorkspace, PanelDial, useMultiSessions, type MultiExplorerInfo, type PanelSummary } from './components/MultiAgent'
+import { FoldSlotHold, MultiWorkspace, PageSegHold, PanelDial, useMultiSessions, type MultiExplorerInfo, type PanelSummary } from './components/MultiAgent'
 // ★ 3.0 M-UX — WindowApi에 없는 통합 채널들(§6.1·§6.2). 계약면(src/shared)은 안 건드린다.
 import {
   closeChatWindow,
@@ -875,12 +875,14 @@ function MainApp({ user }: { user: AppUser }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeChatId])
 
-  // auto-stick to bottom when new messages/thinking arrive — but only while the
+  // auto-stick to bottom when new messages arrive — but only while the
   // follow latch is on (scrolling up to read history pauses this)
+  // ★3.3 키는 메시지 수·상태 — 델타마다 새 배열인 `state.messages`로 걸면 커밋마다 강제 레이아웃
+  // (멀티 패널과 같은 처방; 스트리밍 성장은 useThreadFollow의 ResizeObserver가 붙인다)
   useEffect(() => {
     follow.snapIfStuck()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.messages, state.thinkingText])
+  }, [state.messages.length, state.status])
 
   // 대화 스레드 ↑/↓ 제스처 — ↑는 스트리밍 중 rAF 바닥 고정이 도로 끌어내리지 않게 고정을
   // 풀고(재고정 150ms 가드도 무장), ↓는 '맨 아래로' 버튼과 같은 규칙으로 다시 고정한다
@@ -919,7 +921,11 @@ function MainApp({ user }: { user: AppUser }) {
   const onNotifyJump = useEvent((t: NotifyTarget) => {
     if (t.surface === 'multi') {
       if (mode !== 'multi') switchMode('multi')
-      multi.selectSession(t.id)
+      // ★3.3 sub=슬롯 — 그 자리가 2페이지에 있거나 접혀 있으면 페이지·자리까지 넘겨 포커스한다
+      // (1페이지를 보고 있어도 알림을 누른 패널이 바로 보이게). 슬롯이 없는 옛 토스트는 세션만.
+      const slot = t.sub != null ? Number(t.sub) : NaN
+      if (Number.isInteger(slot)) multi.jumpToPanel(t.id, slot)
+      else multi.selectSession(t.id)
     } else if (t.surface === 'single') {
       if (mode !== 'single') switchMode('single')
       if (t.id && t.id !== activeChatId) selectChat(t.id)
@@ -2239,7 +2245,8 @@ function MainApp({ user }: { user: AppUser }) {
       // chat:verdict 착지). 여기서 토스트를 또 내면 같은 사고를 두 곳에서 말하게 되고,
       // 사용자에겐 "보고 있는 패널의 사유가 화면 반대편 구석에 뜨는" 이상한 위치로 보인다.
       // 판별 키는 셸이 실어 준 자리 별칭(panelId) — 와이어의 chatId는 자리 화면에 배선이 없다.
-      if (modeRef.current === 'multi' && panelId && panelInfosRef.current.some((p) => p.panelId === panelId && p.pos != null && !p.popped)) return
+      // ★3.3 `shown` — 보이는 자리라도 다른 페이지면 화면에 없다(pos만으론 모자란다)
+      if (modeRef.current === 'multi' && panelId && panelInfosRef.current.some((p) => p.panelId === panelId && p.shown && !p.popped)) return
       // 자리 밖 대화 — 지금 창에 한 줄 띄우고(놓치면 다시 못 본다) 그 대화에도 접어 둔다
       setVerdictToasts((cur) =>
         [...cur, { id: `${id}:${note.key}:${Date.now()}`, chatId: id, title: note.title, text: note.text, detail: note.detail }].slice(-3)
@@ -2462,6 +2469,8 @@ function MainApp({ user }: { user: AppUser }) {
                안 그러면 보드 크롬에만 있는 배지 폭만큼 이 화면의 다이얼이 오른쪽으로 간다 */
             dial={
               <>
+                {/* ★3.3 페이지 세그먼트 자리도 예약 — 보드 크롬의 [1][2] 폭만큼 다이얼이 밀리지 않게 */}
+                <PageSegHold />
                 <PanelDial count={1} onPick={onDialPick} />
                 <FoldSlotHold />
               </>

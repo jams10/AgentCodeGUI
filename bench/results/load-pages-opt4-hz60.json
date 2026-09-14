@@ -1,0 +1,594 @@
+{
+ "at": "2026-09-13T10:28:37.512Z",
+ "tag": "opt4-hz60",
+ "exe": "C:\\Code\\AgentCodeGUI\\target\\debug\\agentcodegui.exe",
+ "secs": 15,
+ "hz": 60,
+ "profileTop": [
+  {
+   "fn": "(idle) @ :-1",
+   "ms": 7416,
+   "pct": 46.6
+  },
+  {
+   "fn": "(program) @ :-1",
+   "ms": 4165,
+   "pct": 26.2
+  },
+  {
+   "fn": "get scrollHeight @ :-1",
+   "ms": 281,
+   "pct": 1.8
+  },
+  {
+   "fn": "(garbage collector) @ :-1",
+   "ms": 182,
+   "pct": 1.1
+  },
+  {
+   "fn": "y @ index-DDaMUvoq.js:46",
+   "ms": 167,
+   "pct": 1.1
+  },
+  {
+   "fn": "h @ index-DDaMUvoq.js:46",
+   "ms": 160,
+   "pct": 1
+  },
+  {
+   "fn": "Jk @ index-DDaMUvoq.js:38",
+   "ms": 146,
+   "pct": 0.9
+  },
+  {
+   "fn": "r @ index-DDaMUvoq.js:40",
+   "ms": 145,
+   "pct": 0.9
+  },
+  {
+   "fn": "bj @ index-DDaMUvoq.js:8",
+   "ms": 140,
+   "pct": 0.9
+  },
+  {
+   "fn": "j @ index-DDaMUvoq.js:38",
+   "ms": 121,
+   "pct": 0.8
+  },
+  {
+   "fn": "set toTemporalInstant @ :-1",
+   "ms": 103,
+   "pct": 0.6
+  },
+  {
+   "fn": "(anon) @ index-DDaMUvoq.js:263",
+   "ms": 88,
+   "pct": 0.6
+  },
+  {
+   "fn": "se @ index-DDaMUvoq.js:38",
+   "ms": 85,
+   "pct": 0.5
+  },
+  {
+   "fn": "V5 @ index-DDaMUvoq.js:38",
+   "ms": 75,
+   "pct": 0.5
+  },
+  {
+   "fn": "me @ index-DDaMUvoq.js:8",
+   "ms": 67,
+   "pct": 0.4
+  },
+  {
+   "fn": "qL @ index-DDaMUvoq.js:277",
+   "ms": 63,
+   "pct": 0.4
+  },
+  {
+   "fn": "q6 @ index-DDaMUvoq.js:40",
+   "ms": 63,
+   "pct": 0.4
+  },
+  {
+   "fn": "E_ @ index-DDaMUvoq.js:38",
+   "ms": 60,
+   "pct": 0.4
+  },
+  {
+   "fn": "Bj @ index-DDaMUvoq.js:9",
+   "ms": 60,
+   "pct": 0.4
+  },
+  {
+   "fn": "S @ index-DDaMUvoq.js:38",
+   "ms": 52,
+   "pct": 0.3
+  },
+  {
+   "fn": "Ix @ index-DDaMUvoq.js:8",
+   "ms": 48,
+   "pct": 0.3
+  },
+  {
+   "fn": "gt @ index-DDaMUvoq.js:8",
+   "ms": 48,
+   "pct": 0.3
+  },
+  {
+   "fn": "hm @ index-DDaMUvoq.js:8",
+   "ms": 47,
+   "pct": 0.3
+  },
+  {
+   "fn": "jm @ index-DDaMUvoq.js:8",
+   "ms": 46,
+   "pct": 0.3
+  },
+  {
+   "fn": "fetch @ :-1",
+   "ms": 45,
+   "pct": 0.3
+  },
+  {
+   "fn": "m @ index-DDaMUvoq.js:50",
+   "ms": 41,
+   "pct": 0.3
+  },
+  {
+   "fn": "pd @ index-DDaMUvoq.js:8",
+   "ms": 41,
+   "pct": 0.3
+  },
+  {
+   "fn": "s @ index-DDaMUvoq.js:46",
+   "ms": 36,
+   "pct": 0.2
+  },
+  {
+   "fn": "s @ index-DDaMUvoq.js:38",
+   "ms": 36,
+   "pct": 0.2
+  },
+  {
+   "fn": "T @ index-DDaMUvoq.js:38",
+   "ms": 36,
+   "pct": 0.2
+  },
+  {
+   "fn": "p @ index-DDaMUvoq.js:50",
+   "ms": 36,
+   "pct": 0.2
+  },
+  {
+   "fn": "h @ index-DDaMUvoq.js:38",
+   "ms": 36,
+   "pct": 0.2
+  },
+  {
+   "fn": "am @ index-DDaMUvoq.js:8",
+   "ms": 34,
+   "pct": 0.2
+  },
+  {
+   "fn": "N @ index-DDaMUvoq.js:38",
+   "ms": 33,
+   "pct": 0.2
+  },
+  {
+   "fn": "_ @ index-DDaMUvoq.js:38",
+   "ms": 31,
+   "pct": 0.2
+  },
+  {
+   "fn": "x @ index-DDaMUvoq.js:38",
+   "ms": 31,
+   "pct": 0.2
+  },
+  {
+   "fn": "c0 @ index-DDaMUvoq.js:38",
+   "ms": 31,
+   "pct": 0.2
+  },
+  {
+   "fn": "L @ index-DDaMUvoq.js:38",
+   "ms": 31,
+   "pct": 0.2
+  },
+  {
+   "fn": "(anon) @ :0",
+   "ms": 29,
+   "pct": 0.2
+  },
+  {
+   "fn": "m @ index-DDaMUvoq.js:38",
+   "ms": 29,
+   "pct": 0.2
+  }
+ ],
+ "profileTotalMs": 15907,
+ "profileCat": {
+  "program": 4165,
+  "js": 4144,
+  "gc": 182,
+  "idle": 7416
+ },
+ "cpuPct": 9.8,
+ "frames": {
+  "frames": 908,
+  "workP50": 1.9,
+  "workP75": 4.6,
+  "workP95": 10.2,
+  "workP99": 26.3,
+  "workMax": 40.8,
+  "workMean": 3.43,
+  "over69Pct": 12,
+  "over166Pct": 1.3,
+  "over33Pct": 0.3,
+  "rafP50": 16.7,
+  "rafP95": 16.8,
+  "rafMax": 66.7,
+  "avgFps": 57.6,
+  "droppedPct": 3,
+  "droppedFrames": 27,
+  "longTaskMs": 50,
+  "loaf": {
+   "n": 10,
+   "maxMs": 97.6,
+   "maxBlockingMs": 8.9,
+   "maxRenderMs": 9.4,
+   "top": [
+    {
+     "d": 97.59999996423721,
+     "blocking": 0,
+     "renderMs": 1,
+     "styleLayoutMs": 0.7999999523162842,
+     "scripts": []
+    },
+    {
+     "d": 80,
+     "blocking": 8.9,
+     "renderMs": 8.5,
+     "styleLayoutMs": 8,
+     "scripts": [
+      {
+       "n": "script",
+       "d": 21
+      },
+      {
+       "n": "script",
+       "d": 49
+      }
+     ]
+    },
+    {
+     "d": 73,
+     "blocking": 5.5,
+     "renderMs": 8.299999952316284,
+     "styleLayoutMs": 7.699999988079071,
+     "scripts": [
+      {
+       "n": "script",
+       "d": 17
+      },
+      {
+       "n": "script",
+       "d": 46
+      }
+     ]
+    }
+   ]
+  },
+  "worstFramesMs": [
+   40.8,
+   39,
+   33.4,
+   30.2,
+   30.1,
+   29.7,
+   28.1,
+   27.6
+  ],
+  "hist": [
+   26,
+   183,
+   145,
+   107,
+   78,
+   39,
+   32,
+   33,
+   30,
+   15,
+   33,
+   35,
+   23,
+   21,
+   12,
+   14,
+   9,
+   8,
+   12,
+   3,
+   9,
+   4,
+   2,
+   7,
+   5,
+   3,
+   3,
+   2,
+   1,
+   0,
+   1,
+   0,
+   1,
+   0,
+   1,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   1,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   1,
+   0,
+   1,
+   1,
+   1,
+   0,
+   0,
+   1,
+   2,
+   3
+  ]
+ },
+ "switchMs": [
+  {
+   "dom": 29,
+   "painted": 47
+  },
+  {
+   "dom": 37,
+   "painted": 60
+  },
+  {
+   "dom": 34,
+   "painted": 46
+  },
+  {
+   "dom": 36,
+   "painted": 68
+  },
+  {
+   "dom": 38,
+   "painted": 53
+  },
+  {
+   "dom": 48,
+   "painted": 69
+  },
+  {
+   "dom": 40,
+   "painted": 55
+  },
+  {
+   "dom": 51,
+   "painted": 76
+  }
+ ],
+ "typeMs": [
+  27,
+  31.3,
+  23.9,
+  16.6,
+  33.4,
+  26.6,
+  34.7,
+  20.5,
+  21.2,
+  21.8,
+  16,
+  35.1
+ ],
+ "heapMB": 33,
+ "mem": {
+  "totalPrivMB": 537.4,
+  "totalWsMB": 975.1,
+  "procs": [
+   {
+    "pid": 31260,
+    "name": "agentcodegui.exe",
+    "privMB": 26.8,
+    "wsMB": 66
+   },
+   {
+    "pid": 39840,
+    "name": "msedgewebview2.exe",
+    "privMB": 95.6,
+    "wsMB": 240.8
+   },
+   {
+    "pid": 40992,
+    "name": "claude.exe",
+    "privMB": 1,
+    "wsMB": 5.2
+   },
+   {
+    "pid": 35404,
+    "name": "claude.exe",
+    "privMB": 1,
+    "wsMB": 5.2
+   },
+   {
+    "pid": 35784,
+    "name": "claude.exe",
+    "privMB": 1,
+    "wsMB": 5.2
+   },
+   {
+    "pid": 21952,
+    "name": "claude.exe",
+    "privMB": 1,
+    "wsMB": 5.2
+   },
+   {
+    "pid": 28768,
+    "name": "claude.exe",
+    "privMB": 1,
+    "wsMB": 5.2
+   },
+   {
+    "pid": 18912,
+    "name": "claude.exe",
+    "privMB": 1,
+    "wsMB": 5.2
+   },
+   {
+    "pid": 3384,
+    "name": "claude.exe",
+    "privMB": 1,
+    "wsMB": 5.2
+   },
+   {
+    "pid": 43112,
+    "name": "claude.exe",
+    "privMB": 1,
+    "wsMB": 5.2
+   },
+   {
+    "pid": 20580,
+    "name": "claude.exe",
+    "privMB": 1,
+    "wsMB": 5.2
+   },
+   {
+    "pid": 9424,
+    "name": "claude.exe",
+    "privMB": 1,
+    "wsMB": 5.2
+   },
+   {
+    "pid": 42028,
+    "name": "claude.exe",
+    "privMB": 1,
+    "wsMB": 5.2
+   },
+   {
+    "pid": 36500,
+    "name": "claude.exe",
+    "privMB": 1,
+    "wsMB": 5.2
+   },
+   {
+    "pid": 7756,
+    "name": "msedgewebview2.exe",
+    "privMB": 2.6,
+    "wsMB": 12
+   },
+   {
+    "pid": 25416,
+    "name": "msedgewebview2.exe",
+    "privMB": 8.4,
+    "wsMB": 20.7
+   },
+   {
+    "pid": 11672,
+    "name": "msedgewebview2.exe",
+    "privMB": 377.5,
+    "wsMB": 489.1
+   },
+   {
+    "pid": 32088,
+    "name": "conhost.exe",
+    "privMB": 1.2,
+    "wsMB": 7
+   },
+   {
+    "pid": 38980,
+    "name": "conhost.exe",
+    "privMB": 1.2,
+    "wsMB": 7
+   },
+   {
+    "pid": 7524,
+    "name": "conhost.exe",
+    "privMB": 1.2,
+    "wsMB": 7
+   },
+   {
+    "pid": 17856,
+    "name": "conhost.exe",
+    "privMB": 1.2,
+    "wsMB": 7
+   },
+   {
+    "pid": 41728,
+    "name": "conhost.exe",
+    "privMB": 1.2,
+    "wsMB": 7
+   },
+   {
+    "pid": 23464,
+    "name": "conhost.exe",
+    "privMB": 1.2,
+    "wsMB": 7
+   },
+   {
+    "pid": 36688,
+    "name": "conhost.exe",
+    "privMB": 1.2,
+    "wsMB": 7
+   },
+   {
+    "pid": 36068,
+    "name": "conhost.exe",
+    "privMB": 1.2,
+    "wsMB": 7
+   },
+   {
+    "pid": 21896,
+    "name": "conhost.exe",
+    "privMB": 1.2,
+    "wsMB": 7
+   },
+   {
+    "pid": 43256,
+    "name": "conhost.exe",
+    "privMB": 1.2,
+    "wsMB": 7
+   },
+   {
+    "pid": 13232,
+    "name": "conhost.exe",
+    "privMB": 1.2,
+    "wsMB": 7
+   },
+   {
+    "pid": 27792,
+    "name": "conhost.exe",
+    "privMB": 1.2,
+    "wsMB": 7
+   }
+  ]
+ },
+ "after": {
+  "page": "1",
+  "panels": 6,
+  "busy": 0,
+  "dots": [],
+  "overlays": 0,
+  "dotClearedMs": 837
+ }
+}

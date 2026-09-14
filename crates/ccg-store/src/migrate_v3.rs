@@ -358,7 +358,7 @@ pub fn migrate(backup: bool) -> Value {
             slots[i] = json!(new_id);
             ma_panel_count += 1;
         }
-        let count = sess.get("count").and_then(Value::as_u64).unwrap_or(1).clamp(1, crate::boards::SLOT_COUNT as u64);
+        let count = sess.get("count").and_then(Value::as_u64).unwrap_or(1).clamp(1, crate::boards::PAGE_SIZE as u64);
         let mut bo = Map::new();
         bo.insert("id".into(), json!(sid));
         bo.insert("title".into(), json!(s(sess, "title")));
@@ -469,7 +469,7 @@ pub fn migrate(backup: bool) -> Value {
         .or_else(|| sessions.last())
         .and_then(|(_, s)| s.get("count").and_then(Value::as_u64))
         .unwrap_or(1)
-        .clamp(1, crate::boards::SLOT_COUNT as u64);
+        .clamp(1, crate::boards::PAGE_SIZE as u64);
     let def_count = if ws_multi { last_count } else { 1 };
     let mut def_slots: Vec<Value> = vec![Value::Null; crate::boards::SLOT_COUNT];
     if !active_chat_id.is_empty() {

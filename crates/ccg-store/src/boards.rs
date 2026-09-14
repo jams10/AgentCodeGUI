@@ -17,7 +17,22 @@ use serde_json::{json, Map, Value};
 use crate::fanout::{safe_id, version_or_1, Fanout};
 
 pub const DIR: &str = "boards";
-pub const SLOT_COUNT: usize = 6;
+/// ★3.3 페이지 — 자리 12개를 6개씩 두 페이지로 본다(렌더러 `MultiAgent.tsx` PAGE_SIZE/PAGE_COUNT와 짝).
+/// 슬롯 0‥5 = 1페이지(`count`·`promo`), 6‥11 = 2페이지(`count2`·`promo2`). `page` = 마지막으로 보던 페이지.
+pub const PAGE_SIZE: usize = 6;
+pub const PAGE_COUNT: usize = 2;
+pub const SLOT_COUNT: usize = PAGE_SIZE * PAGE_COUNT;
+
+pub fn page_of(slot: usize) -> usize {
+    slot / PAGE_SIZE
+}
+
+/// 보드의 페이지 `p` 자리 수 — 1페이지는 `count`, 2페이지는 `count2`(없으면 count를 따른다). 1‥PAGE_SIZE.
+pub fn page_count(board: &Value, p: usize) -> usize {
+    let c1 = board.get("count").and_then(Value::as_u64).unwrap_or(1);
+    let c = if p == 0 { c1 } else { board.get("count2").and_then(Value::as_u64).unwrap_or(c1) };
+    c.clamp(1, PAGE_SIZE as u64) as usize
+}
 
 static STORE: Fanout = Fanout::new(DIR, &["index.json"]);
 
@@ -71,39 +86,53 @@ pub fn visible_chat_ids() -> Vec<String> {
     let Some(index) = STORE.read_index() else { return vec![] };
     let Some(active) = index.get("activeBoardId").and_then(Value::as_str) else { return vec![] };
     let Some(board) = STORE.stored(active) else { return vec![] };
-    let count = board.get("count").and_then(Value::as_u64).unwrap_or(1).clamp(1, SLOT_COUNT as u64) as usize;
     let empty = vec![];
     let slots = board.get("slots").and_then(Value::as_array).unwrap_or(&empty);
-    let order: Vec<usize> = board
-        .get("order")
-        .and_then(Value::as_array)
-        .map(|a| a.iter().filter_map(Value::as_u64).map(|v| v as usize).collect())
-        .unwrap_or_else(|| (0..SLOT_COUNT).collect());
+    let order = sanitize_order(board.get("order"));
     let mut out = Vec::new();
-    for slot in order.into_iter().take(count) {
-        if let Some(Value::String(id)) = slots.get(slot) {
-            if !id.is_empty() {
-                out.push(id.clone());
+    // ★3.3 페이지마다 "그 페이지 부분열의 앞 count개" — 숨은 페이지의 보이는 자리도 돌 수 있으니 포함
+    for p in 0..PAGE_COUNT {
+        let count = page_count(&board, p);
+        for slot in order.iter().copied().filter(|s| page_of(*s) == p).take(count) {
+            if let Some(Value::String(id)) = slots.get(slot) {
+                if !id.is_empty() {
+                    out.push(id.clone());
+                }
             }
         }
     }
     out
 }
 
-/// 자리 순열 위생 — 0..5의 순열이 아니면 기본 순서(2.6.2 `sanitizePanelOrder` 파리티).
+fn is_permutation(got: &[usize], n: usize) -> bool {
+    if got.len() != n {
+        return false;
+    }
+    let mut seen = vec![false; n];
+    for &i in got {
+        if i >= n || seen[i] {
+            return false;
+        }
+        seen[i] = true;
+    }
+    true
+}
+
+/// 자리 순열 위생 — 0..SLOT_COUNT의 순열이 아니면 기본 순서(2.6.2 `sanitizePanelOrder` 파리티).
+/// ★3.3 1페이지만 있던 구 저장본(0..PAGE_SIZE의 순열)은 뒤에 2페이지 슬롯을 기본 순서로 이어 붙인다.
 pub fn sanitize_order(v: Option<&Value>) -> Vec<usize> {
     let def: Vec<usize> = (0..SLOT_COUNT).collect();
     let Some(a) = v.and_then(Value::as_array) else { return def };
-    let got: Vec<usize> = a.iter().filter_map(Value::as_u64).map(|x| x as usize).filter(|x| *x < SLOT_COUNT).collect();
-    let mut seen = [false; SLOT_COUNT];
-    for i in &got {
-        seen[*i] = true;
+    let got: Vec<usize> = a.iter().filter_map(Value::as_u64).map(|x| x as usize).collect();
+    if is_permutation(&got, SLOT_COUNT) {
+        return got;
     }
-    if got.len() == SLOT_COUNT && seen.iter().all(|b| *b) {
-        got
-    } else {
-        def
+    if is_permutation(&got, PAGE_SIZE) {
+        let mut out = got;
+        out.extend(PAGE_SIZE..SLOT_COUNT);
+        return out;
     }
+    def
 }
 
 #[cfg(test)]
@@ -153,9 +182,29 @@ mod tests {
 
     #[test]
     fn order_sanitizer_rejects_anything_that_is_not_a_permutation() {
-        assert_eq!(sanitize_order(Some(&json!([5, 4, 3, 2, 1, 0]))), vec![5, 4, 3, 2, 1, 0]);
-        assert_eq!(sanitize_order(Some(&json!([0, 0, 1, 2, 3, 4]))), vec![0, 1, 2, 3, 4, 5]);
-        assert_eq!(sanitize_order(Some(&json!([0, 1, 2]))), vec![0, 1, 2, 3, 4, 5]);
-        assert_eq!(sanitize_order(None), vec![0, 1, 2, 3, 4, 5]);
+        let def: Vec<usize> = (0..SLOT_COUNT).collect();
+        // ★3.3 구 저장본(1페이지 6칸 순열)은 2페이지 슬롯을 기본 순서로 이어 붙인다
+        assert_eq!(sanitize_order(Some(&json!([5, 4, 3, 2, 1, 0]))), vec![5, 4, 3, 2, 1, 0, 6, 7, 8, 9, 10, 11]);
+        assert_eq!(sanitize_order(Some(&json!([11, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]))), vec![11, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        assert_eq!(sanitize_order(Some(&json!([0, 0, 1, 2, 3, 4]))), def);
+        assert_eq!(sanitize_order(Some(&json!([0, 1, 2]))), def);
+        assert_eq!(sanitize_order(None), def);
+    }
+
+    #[test]
+    fn visible_chat_ids_covers_the_second_page_with_its_own_count() {
+        let h = temp_home("boards-visible-page2");
+        h.write(
+            "boards/b1.json",
+            &json!({ "id": "b1", "count": 1, "count2": 2, "chrome": "grid",
+                     "order": [0, 1, 2, 3, 4, 5, 7, 6, 8, 9, 10, 11],
+                     "slots": ["c-a", "c-b", Value::Null, Value::Null, Value::Null, Value::Null,
+                               "c-g", "c-h", "c-i", Value::Null, Value::Null, Value::Null] })
+            .to_string(),
+        );
+        h.write("boards/index.json", r#"{"version":1,"order":["b1"],"activeBoardId":"b1"}"#);
+        invalidate();
+        // 1페이지 앞 1개(자리 0) + 2페이지 앞 2개(자리 7, 6) — 접힌 c-b·c-i는 제외
+        assert_eq!(visible_chat_ids(), vec!["c-a".to_string(), "c-h".to_string(), "c-g".to_string()]);
     }
 }

@@ -4200,13 +4200,24 @@ body.rzm-resizing, body.rzm-resizing *{ user-select:none !important; }
 .ma-p-folder.has-tip::after{ bottom:auto; top:100%; left:auto; right:0; margin-bottom:0; margin-top:8px; transform:translate(0, -3px); }
 .ma-p-folder.has-tip:hover::after{ transform:translate(0, 0); }
 
-.ma-count{ display:flex; gap:2px; margin-left:4px; padding:3px; background:var(--inset); border:1px solid var(--line); border-radius:9px; }
+.ma-count{ display:flex; align-items:center; gap:2px; margin-left:4px; padding:3px; background:var(--inset); border:1px solid var(--line); border-radius:9px; }
 .ma-count-btn{
-  width:26px; height:24px; border-radius:6px; font-family:var(--font-mono); font-size:12px; font-weight:600;
+  position:relative; width:26px; height:24px; border-radius:6px; font-family:var(--font-mono); font-size:12px; font-weight:600;
   color:var(--text-3); transition:background .12s, color .12s;
 }
 .ma-count-btn:hover{ color:var(--text); background:var(--surface-2); }
 .ma-count-btn.on{ background:var(--accent); color:var(--on-accent); }
+/* ★3.3 세그먼트 라벨 아이콘 — 글자 대신 겹친 창(페이지)·격자(자리 수)가 뜻을 말한다 */
+.ma-seg-ico{ width:20px; height:24px; display:grid; place-items:center; color:var(--text-4); margin-right:1px; }
+/* 페이지 [1][2] — 두 칸이라 살짝 넓게. 숨은 페이지의 상태 점: 응답 대기=파랑, 실행 중=노랑
+   (자기 페이지엔 안 뜬다 — 눈앞의 패널이 이미 말한다). .hold = 일반 채팅 크롬의 폭 예약(안 보임) */
+.ma-pages .ma-count-btn{ width:30px; display:inline-grid; place-items:center; }
+.ma-pages.hold{ visibility:hidden; }
+.ma-page-dot{
+  position:absolute; top:3px; right:3px; width:5px; height:5px; border-radius:99px; pointer-events:none;
+  background:var(--amber); box-shadow:0 0 0 2px var(--chat-bg);
+}
+.ma-page-dot.ask{ background:var(--blue); }
 
 /* the panel grid */
 /* 배치(PoC): 2·3=한 줄, 4=2×2, 5=3+2(6칼럼 스팬 — 아랫줄 둘이 더 넓게), 6=3×2 */
@@ -4393,6 +4404,12 @@ body.rzm-resizing, body.rzm-resizing *{ user-select:none !important; }
    폭을 넘는 내용이 있을 때 스레드가 가로 스크롤러가 된다. 넓은 내용은 각자 자기 안에서
    해결한다(코드블록·표는 자체 overflow-x:auto, 이미지는 max-width) */
 .ma-p-thread{ flex:1; min-height:0; overflow-y:auto; overflow-x:hidden; }
+/* ★3.3 스레드 스크롤러 격리 — 안의 글이 자라도 레이아웃·페인트가 이 상자 밖으로 번지지 않는다고
+   브라우저에 못 박는다(12패널 스트리밍에서 남은 비용의 절반이 네이티브 레이아웃·페인트였다).
+   이미 overflow로 잘리는 상자라 보이는 결과는 같다. 패널(.ma-panel) 자체에는 걸지 않는다 —
+   패널은 팝오버·툴팁이 상자 밖으로 나가야 하는 규약(overflow 없음)이라 paint 격리가 그걸 자르고,
+   layout 격리는 position:fixed 자손의 기준을 바꾼다(지금 팝오버들은 포털이지만 보증 범위 밖). */
+.chat-scroll, .ma-p-thread{ contain:content; }
 .ma-grid .ma-panel .ma-p-thread{ zoom:.8; }
 /* WorkBar 칩(할 일·서브에이전트…)·컴포저는 스레드보다 살짝 크게 — .8은 칩 글자가
    안 읽힌다는 피드백. 스레드 글자는 Ctrl+휠(multi.zoom, 기본 120%)이 따로 키운다 */

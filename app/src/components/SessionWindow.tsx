@@ -551,11 +551,12 @@ export function SessionWindow(): React.ReactElement {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [busy, wfAlive])
 
-  // 새 메시지/생각 갱신 — 래치가 켜져 있을 때만 바닥 고정 (본채팅과 동일)
+  // 새 메시지·실행 종료 — 래치가 켜져 있을 때만 바닥 고정 (본채팅과 동일)
+  // ★3.3 키는 메시지 수·상태 — 델타마다 새 배열인 `state.messages`로 걸면 커밋마다 강제 레이아웃
   useEffect(() => {
     follow.snapIfStuck()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.messages, state.thinkingText])
+  }, [state.messages.length, state.status])
 
   // ── attachments (same as 채팅) ───────────────────────────────
   const addImagePaths = (paths: string[]): void => {

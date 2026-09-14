@@ -37,6 +37,22 @@ export function sanitizePromo(v: unknown, n: number): LayoutPromo | null {
   return { slot: p.slot, base: [...p.base] }
 }
 
+/** `v`가 `slots` 집합의 순열인가(길이·구성원) — 페이지처럼 0부터 시작하지 않는 슬롯 묶음용. */
+export function isPermutationOf(v: unknown, slots: number[]): v is number[] {
+  if (!Array.isArray(v) || v.length !== slots.length) return false
+  for (const s of slots) if (!v.includes(s)) return false
+  return true
+}
+
+/** 페이지(슬롯 묶음) 안의 `promo` 위생 — 승격 자리가 그 묶음에 있고 `base`가 그 묶음의 순열일 때만. */
+export function sanitizePromoIn(v: unknown, slots: number[]): LayoutPromo | null {
+  if (!v || typeof v !== 'object') return null
+  const p = v as { slot?: unknown; base?: unknown }
+  if (typeof p.slot !== 'number' || !slots.includes(p.slot)) return null
+  if (!isPermutationOf(p.base, slots)) return null
+  return { slot: p.slot, base: [...p.base] }
+}
+
 /**
  * 자리 수를 `next`로 바꿀 때의 순서와 오버레이.
  * `keep` = 1분할에서 볼 자리(포커스). 순서에 없으면 첫 자리를 쓴다.
