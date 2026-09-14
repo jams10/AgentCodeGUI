@@ -1,0 +1,3 @@
+# Store text files with LF in the repository (matches upstream, which has no CRLF blobs).
+# Working-tree line endings follow each developer's core.autocrlf / core.eol.
+* text=auto
