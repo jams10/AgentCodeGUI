@@ -15,29 +15,43 @@ export interface Archiver {
 }
 
 const EXT: Record<string, string> = { image: '.png', video: '.mp4', model: '.glb', audio: '.wav', other: '.bin' }
+const MIME_EXT: Record<string, string> = {
+  'image/png': '.png',
+  'image/jpeg': '.jpg',
+  'image/webp': '.webp',
+  'image/gif': '.gif',
+  'video/mp4': '.mp4',
+  'video/webm': '.webm',
+  'model/gltf-binary': '.glb',
+  'audio/wav': '.wav',
+  'audio/mpeg': '.mp3'
+}
 
-/** 곧 만료되는 결과만 로컬로 받는다(기본 1시간 이내 만료) */
+/**
+ * 모든 결과를 완료 즉시 로컬로 받는다. 서비스마다 보관 기간이 짧거나(Tripo 5분 링크 · Comfy 파트너 노드 24시간)
+ * 정책이 분명하지 않아서, 클라우드 저장소(R2)를 붙이기 전까지는 전부 이 PC에 둔다.
+ * 확장자: 주소에 있으면 그것, 없으면(Comfy …/content) 응답 형식 → 결과 종류 순.
+ */
 export class LocalArchiver implements Archiver {
   private readonly dir: string
-  private readonly withinMs: number
 
-  constructor(dir: string, withinMs = 60 * 60 * 1000) {
+  constructor(dir: string) {
     this.dir = dir
-    this.withinMs = withinMs
   }
 
-  wants(o: OutputRecord, now: number): boolean {
-    return o.storageKey == null && o.expiresAt != null && o.expiresAt - now < this.withinMs
+  wants(o: OutputRecord): boolean {
+    return o.storageKey == null
   }
 
   async archive(o: OutputRecord, url: string): Promise<string> {
-    const clean = new URL(url).pathname
-    const ext = /^\.[a-z0-9]{2,5}$/i.test(extname(clean)) ? extname(clean).toLowerCase() : EXT[o.kind] ?? '.bin'
+    const res = await fetch(url, { signal: AbortSignal.timeout(10 * 60 * 1000) })
+    if (!res.ok || !res.body) throw new Error(`결과 다운로드 실패 (HTTP ${res.status})`)
+    const fromUrl = extname(new URL(url).pathname).toLowerCase()
+    const type = (res.headers.get('content-type') ?? o.mime ?? '').split(';')[0].trim().toLowerCase()
+    const ext = /^\.[a-z0-9]{2,5}$/.test(fromUrl) ? fromUrl : MIME_EXT[type] ?? EXT[o.kind] ?? '.bin'
     const rel = join(o.jobId, `${o.id}${ext}`)
     const dest = join(this.dir, rel)
     await mkdir(join(this.dir, o.jobId), { recursive: true })
-    const res = await fetch(url, { signal: AbortSignal.timeout(10 * 60 * 1000) })
-    if (!res.ok || !res.body) throw new Error(`결과 다운로드 실패 (HTTP ${res.status})`)
     const tmp = `${dest}.part`
     try {
       await pipeline(Readable.fromWeb(res.body as import('node:stream/web').ReadableStream), createWriteStream(tmp))

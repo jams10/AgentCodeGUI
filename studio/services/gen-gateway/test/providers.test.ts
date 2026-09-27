@@ -288,7 +288,7 @@ test('Comfy: 결과 링크는 302 Location(서명 URL)을 돌려준다', async (
 })
 
 // ── 결과 보관 ───────────────────────────────────────────
-test('곧 만료되는 결과는 완료 즉시 로컬에 보관하고 저장 키를 남긴다', async () => {
+test('결과는 완료 즉시 로컬에 보관하고 저장 키를 남긴다(곧 만료되는 결과)', async () => {
   const srv = createServer((_q, r) => {
     r.writeHead(200, { 'content-type': 'model/gltf-binary' })
     r.end(Buffer.from('glTF-bytes'))
@@ -309,6 +309,31 @@ test('곧 만료되는 결과는 완료 즉시 로컬에 보관하고 저장 키
     const [o] = gw.outputs(job.id)
     assert.match(o.storageKey ?? '', /^local:.+\.glb$/)
     assert.equal(readFileSync(join(dir, o.storageKey!.slice(6))).toString(), 'glTF-bytes')
+  } finally {
+    srv.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('만료 시각이 없는 결과도 보관하고, 주소에 확장자가 없으면 응답 형식으로 정한다(Comfy …/content)', async () => {
+  const srv = createServer((_q, r) => {
+    r.writeHead(200, { 'content-type': 'image/webp' })
+    r.end(Buffer.from('webp-bytes'))
+  })
+  await new Promise<void>((ok) => srv.listen(0, '127.0.0.1', ok))
+  const port = (srv.address() as { port: number }).port
+  const dir = mkdtempSync(join(tmpdir(), 'gw-archive-'))
+  try {
+    const fake = new FakeProvider({ id: 'comfy' })
+    fake.status = async () => ({ state: 'succeeded', outputs: [{ kind: 'image', url: `http://127.0.0.1:${port}/api/v2/assets/a/content`, expiresAt: null }], cost: null })
+    const ledger = new Ledger(':memory:')
+    const gw = new Gateway({ ledger, providers: [fake], routes: [{ capability: 'image', model: 'm', providers: ['comfy'] }], pollMs: 1, archiver: new LocalArchiver(dir) })
+    const job = await gw.quote({ capability: 'image', model: 'm' })
+    await gw.approve(job.id)
+    assert.equal((await gw.waitFor(job.id, 3000)).state, 'succeeded')
+    const [o] = gw.outputs(job.id)
+    assert.match(o.storageKey ?? '', /^local:.+\.webp$/)
+    assert.equal(readFileSync(join(dir, o.storageKey!.slice(6))).toString(), 'webp-bytes')
   } finally {
     srv.close()
     rmSync(dir, { recursive: true, force: true })

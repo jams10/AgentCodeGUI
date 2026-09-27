@@ -374,7 +374,7 @@ export class Gateway {
     this.emit(this.ledger.update(id, { state: st.state === 'canceled' ? 'canceled' : 'failed', error: st.error ?? null }))
   }
 
-  /** 곧 사라질 결과를 보관한다 — 실패해도 작업은 성공으로 두고 경고만 남긴다 */
+  /** 결과를 보관한다(보관 대상은 Archiver가 정한다) — 실패해도 작업은 성공으로 두고 경고만 남긴다 */
   private async archiveOutputs(p: Provider, outputs: OutputRecord[]): Promise<string[]> {
     const a = this.archiver
     if (!a) return []

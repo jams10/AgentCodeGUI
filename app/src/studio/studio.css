@@ -305,6 +305,15 @@ button.st-pill:hover{ background:linear-gradient(180deg, rgba(255,255,255,.4), r
 .st-art-thumbs{ display:flex; gap:6px; padding:0 10px 10px; }
 .st-art-thumbs button{ min-width:36px; height:30px; border-radius:10px; background:rgba(255,255,255,.12); font-size:12px; }
 .st-art-thumbs button.on{ background:var(--st-gloss); color:var(--st-on-gloss); }
+.st-art-thumbs button{ padding:0 10px; }
+/* 3D 모델 결과 — 미리보기 이미지 + 아래 안내 줄 */
+.st-art-model3d{ position:relative; flex:1; min-height:0; display:flex; flex-direction:column; }
+.st-art-model3d > .st-art-mediabox{ flex:1; min-height:0; }
+.st-art-model3d-bar{ display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 14px; margin:8px 10px 0; border-radius:14px; background:var(--st-well); }
+.st-art-model3d-bar div{ display:flex; flex-direction:column; gap:2px; min-width:0; }
+.st-art-model3d-bar b{ font-size:13.5px; font-weight:400; }
+.st-art-model3d-bar span{ font-size:11.5px; color:var(--st-text-dim); }
+.st-art-model3d-bar .st-gen-go{ flex-shrink:0; padding:8px 16px; font-size:13px; }
 .st-art-detail-info{ display:flex; flex-direction:column; gap:12px; overflow:auto; }
 .st-art-actions{ display:flex; flex-wrap:wrap; gap:8px; margin-top:auto; }
 /* 오른쪽 열 — [만들기 | 어시스턴트] 탭 + 본문 */

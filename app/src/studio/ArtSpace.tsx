@@ -36,6 +36,8 @@ interface Entry {
   preview: LibraryItem['output'] | null
 }
 
+const KIND_RANK: Record<string, number> = { image: 0, video: 1, model: 2, audio: 3 }
+
 function group(items: LibraryItem[]): Entry[] {
   const by = new Map<string, Entry>()
   for (const it of items) {
@@ -43,7 +45,11 @@ function group(items: LibraryItem[]): Entry[] {
     e.outputs.push(it.output)
     by.set(it.job.id, e)
   }
-  for (const e of by.values()) e.preview = e.outputs.find((o) => o.kind === 'image') ?? e.outputs.find((o) => o.kind === 'video') ?? null
+  for (const e of by.values()) {
+    // 볼 수 있는 결과(이미지 · 영상)를 앞에 — 3D 작업은 미리보기 이미지가 먼저 보이게
+    e.outputs.sort((a, b) => (KIND_RANK[a.kind] ?? 9) - (KIND_RANK[b.kind] ?? 9))
+    e.preview = e.outputs.find((o) => o.kind === 'image') ?? e.outputs.find((o) => o.kind === 'video') ?? null
+  }
   return [...by.values()].sort((a, b) => b.job.createdAt - a.job.createdAt)
 }
 
@@ -135,6 +141,23 @@ function Detail({ e, model, styles, onStyle, onClose, onReuse }: { e: Entry; mod
       })
       .catch(() => {})
   }
+  // 3D 모델 파일은 기본 앱(Windows에 연결된 3D 뷰어 · Blender 등)으로 연다
+  const openModel = (): void => {
+    if (!o) return
+    void outputUrl(o.id)
+      .then((r) => {
+        if (!r.localPath) return window.api.openExternal(r.url).then(() => undefined)
+        const i = Math.max(r.localPath.lastIndexOf('\\'), r.localPath.lastIndexOf('/'))
+        return window.api.openPath(r.localPath.slice(0, i), r.localPath.slice(i + 1))
+      })
+      .catch(() => {})
+  }
+  const thumbLabel = (x: LibraryItem['output'], i: number): string => {
+    if (x.kind === 'model') return '3D 모델'
+    if (x.kind === 'video') return '영상'
+    if (e.job.capability === 'model3d') return '미리보기'
+    return `${i + 1}`
+  }
   const [copied, setCopied] = useState(false)
   const j = e.job
   const negative = j.params?.negative_prompt
@@ -146,12 +169,28 @@ function Detail({ e, model, styles, onStyle, onClose, onReuse }: { e: Entry; mod
     <div className="st-veil" onMouseDown={(ev) => ev.target === ev.currentTarget && onClose()}>
       <div className="st-art-detail" role="dialog" aria-modal="true" aria-label="결과 자세히 보기">
         <div className="st-art-detail-media">
-          <Media key={o?.id} o={o} big />
+          {o?.kind === 'model' ? (
+            // 앱 안 3D 보기는 아직 없다 — 미리보기 이미지 위에 모델 파일 안내와 열기 버튼
+            <div className="st-art-model3d">
+              {e.preview && <Media key={e.preview.id} o={e.preview} big />}
+              <div className="st-art-model3d-bar">
+                <div>
+                  <b>3D 모델 파일 (.glb)</b>
+                  <span>앱 안에서 돌려 보는 3D 보기는 아직 없어요 — 기본 앱으로 열어 확인해요</span>
+                </div>
+                <button type="button" className="st-gloss st-gen-go" onClick={openModel}>
+                  3D 모델 열기
+                </button>
+              </div>
+            </div>
+          ) : (
+            <Media key={o?.id} o={o} big />
+          )}
           {e.outputs.length > 1 && (
             <div className="st-art-thumbs">
               {e.outputs.map((x, i) => (
-                <button key={x.id} type="button" className={i === idx ? 'on' : ''} onClick={() => setIdx(i)} aria-label={`결과 ${i + 1}`}>
-                  {x.kind === 'model' ? '3D' : x.kind === 'video' ? '영상' : `${i + 1}`}
+                <button key={x.id} type="button" className={i === idx ? 'on' : ''} onClick={() => setIdx(i)} aria-label={thumbLabel(x, i)}>
+                  {thumbLabel(x, i)}
                 </button>
               ))}
             </div>
