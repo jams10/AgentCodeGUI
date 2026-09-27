@@ -6,6 +6,7 @@ import { createReadStream, existsSync, mkdirSync, rmSync, statSync, writeFileSyn
 import { dirname, extname, resolve } from 'node:path'
 import type { ModelInfo } from './models.ts'
 import { pathToFileURL } from 'node:url'
+import { findBlender, MODEL_EXTS, openInBlender } from './blender.ts'
 import { Gateway, GatewayError, type GatewayEvent } from './gateway.ts'
 import type { Ledger } from './ledger.ts'
 import type { KeyStore } from './secrets.ts'
@@ -283,8 +284,24 @@ export async function startServer(d: ServerDeps): Promise<RunningServer> {
           const params = b.params && typeof b.params === 'object' && !Array.isArray(b.params) ? (b.params as Record<string, unknown>) : undefined
           return send(res, 200, await gw.revise(id, { prompt: typeof b.prompt === 'string' ? b.prompt : undefined, params }))
         }
+        if (req.method === 'POST' && seg[2] === 'delete') return send(res, 200, await gw.deleteJob(id))
         if (req.method === 'POST' && seg[2] === 'reject') return send(res, 200, gw.reject(id))
         if (req.method === 'POST' && seg[2] === 'cancel') return send(res, 200, await gw.cancel(id))
+      }
+      // ── Blender로 3D 모델 열기 — 이 PC에 보관된 모델 파일만 연다 ──
+      if (req.method === 'GET' && path === '/blender') return send(res, 200, await findBlender())
+      if (req.method === 'POST' && seg[0] === 'outputs' && seg[1] && seg[2] === 'open-in-blender') {
+        const o = d.ledger.output(seg[1])
+        if (!o) return send(res, 404, { error: 'not_found' })
+        if (!o.storageKey?.startsWith('local:') || !d.outputsDir) return send(res, 409, { error: 'not_local', message: '이 PC에 보관된 모델 파일이 없어요' })
+        const abs = resolve(d.outputsDir, o.storageKey.slice('local:'.length))
+        if (!abs.startsWith(resolve(d.outputsDir)) || !existsSync(abs)) return send(res, 404, { error: 'not_found', message: '보관된 파일을 찾지 못했어요' })
+        if (!MODEL_EXTS.includes(extname(abs).toLowerCase())) return send(res, 400, { error: 'not_model', message: 'Blender로 열 수 있는 3D 파일이 아니에요' })
+        try {
+          return send(res, 200, await openInBlender(abs))
+        } catch (e) {
+          return send(res, 409, { error: 'no_blender', message: (e as Error).message })
+        }
       }
       if (req.method === 'GET' && seg[0] === 'outputs' && seg[1] && seg[2] === 'url') {
         const o = d.ledger.output(seg[1])

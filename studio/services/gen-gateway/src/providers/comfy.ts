@@ -10,7 +10,7 @@ import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { basename, extname } from 'node:path'
 import { requestJson, num, type FetchLike } from '../http.ts'
-import type { Balance, Estimate, GenerationRequest, OutputKind, Provider, ProviderOutput, RemoteStatus } from '../types.ts'
+import type { Balance, Estimate, GenerationRequest, OutputKind, OutputRecord, Provider, ProviderOutput, RemoteStatus } from '../types.ts'
 
 const BASE = 'https://cloud.comfy.org'
 const CREDITS_PER_USD = 211
@@ -191,6 +191,15 @@ export class ComfyProvider implements Provider {
     })
     if (!job.id) throw new Error('응답에 작업 id가 없어요')
     return { remoteId: job.id }
+  }
+
+  /** ComfyCloud 자산 삭제 — DELETE /api/assets/{id}(X-API-Key). 결과 주소(…/assets/{id}/content)에서 id를 꺼낸다 */
+  async deleteOutput(o: OutputRecord): Promise<boolean> {
+    const m = /\/api\/(?:v2\/)?assets\/([0-9a-f-]{36})(?:\/|$)/i.exec(o.url)
+    if (!m) return false
+    const res = await this.fetchImpl(`${BASE}/api/assets/${m[1]}`, { method: 'DELETE', headers: { 'X-API-Key': this.k() }, signal: AbortSignal.timeout(15000) })
+    if (res.ok || res.status === 404) return true
+    throw new Error(`ComfyCloud 결과 삭제 실패 (HTTP ${res.status})`)
   }
 
   async status(remoteId: string): Promise<RemoteStatus> {

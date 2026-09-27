@@ -132,6 +132,8 @@ export class Ledger {
     // 이전 기록부에는 style_id가 없다 — 한 번만 열을 더한다
     const cols = (this.db.prepare('pragma table_info(jobs)').all() as Row[]).map((c) => c.name)
     if (!cols.includes('style_id')) this.db.exec('alter table jobs add column style_id text')
+    // 결과를 지운 작업 — 비용 기록은 남기고(사용액 합계) 결과 행만 지운다
+    if (!cols.includes('deleted_at')) this.db.exec('alter table jobs add column deleted_at integer')
   }
 
   close(): void {
@@ -223,6 +225,12 @@ export class Ledger {
       output: toOutput({ id: r.o_id, job_id: r.job_id, kind: r.kind, url: r.url, mime: r.mime, expires_at: r.expires_at, storage_key: r.storage_key, created_at: r.o_created }),
       job: toJob(r)
     }))
+  }
+
+  /** 결과 지우기 — 결과 행은 지우고 작업에는 지운 시각만 남긴다(비용 · 프롬프트 기록은 유지) */
+  removeOutputs(jobId: string): void {
+    this.db.prepare('delete from outputs where job_id = ?').run(jobId)
+    this.db.prepare('update jobs set deleted_at = ?, updated_at = ? where id = ?').run(this.now(), this.now(), jobId)
   }
 
   setStorageKey(outputId: string, key: string): void {

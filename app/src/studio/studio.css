@@ -416,6 +416,8 @@ html.studio-theme.studio-theme[data-space="art"] body{
   border-radius:28px; border:1.5px solid rgba(255,255,255,.4); background:linear-gradient(180deg, var(--st-card-hi), var(--st-card-lo)); box-shadow:0 30px 70px rgba(0,0,0,.45);
 }
 .st-art-danger{ margin-left:auto; padding:8px 14px; font-size:13px; border-color:rgba(255,140,120,.5) !important; color:#ffd2c8 !important; }
+.st-art-danger.st-art-delgo{ margin-left:0; background:rgba(255,120,100,.22); }
+.st-art-delwarn{ line-height:1.55; }
 .st-art-sec{ display:flex; flex-direction:column; gap:7px; }
 .st-art-sec-h{ display:flex; justify-content:space-between; align-items:center; min-height:26px; font-size:12px; letter-spacing:1.5px; color:var(--st-text-dim); }
 .st-art-sec-h .st-ghost{ font-size:12px; padding:3px 9px; letter-spacing:0; }

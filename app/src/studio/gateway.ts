@@ -256,6 +256,10 @@ export function composePrompt(st: Pick<Style, 'promptPrefix' | 'promptSuffix'> |
   return [st?.promptPrefix, prompt, st?.promptSuffix].map((p) => p?.trim()).filter((p): p is string => !!p).join(', ')
 }
 export const listModels = (): Promise<ModelInfo[]> => gw<ModelInfo[]>('/models')
+/** 결과 지우기 — 이 PC의 보관본 + (삭제 API가 있는 서비스면) 서비스 쪽 결과. 비용 기록은 남는다 */
+export const deleteJob = (id: string): Promise<{ local: number; remote: number; remoteSupported: boolean }> => gw(`/jobs/${id}/delete`, { method: 'POST' })
+/** 이 PC에 보관된 3D 모델을 Blender(설치된 것 중 최신)로 연다 */
+export const openInBlender = (outputId: string): Promise<{ exe: string; version: string }> => gw(`/outputs/${outputId}/open-in-blender`, { method: 'POST' })
 export const listLibrary = (limit = 300): Promise<LibraryItem[]> => gw<LibraryItem[]>(`/outputs?limit=${limit}`)
 /** 견적 → 승인 대기 작업. 승인은 승인 센터 카드에서만 한다. */
 export const quote = (req: QuoteRequest): Promise<Job> => gw<Job>('/jobs', { body: req }).then((j) => (upsert(j), j))

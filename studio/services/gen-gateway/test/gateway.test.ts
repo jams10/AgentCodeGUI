@@ -173,3 +173,40 @@ test('승인 전 고치기: 옵션을 바꾸면 같은 작업 id로 다시 견�
   await assert.rejects(gw.revise(job.id, { params: { n: 1 } }), (e: unknown) => e instanceof GatewayError && e.code === 'bad_state')
   assert.equal(p.submitted[0].params?.n, 3) // 고친 옵션으로 제출된다
 })
+
+test('결과 지우기: 보관본과 서비스 결과를 지우고, 비용 기록은 남긴다 · 진행 중이면 거절', async () => {
+  const p = new FakeProvider({ id: 'comfy' })
+  const remoteDeleted: string[] = []
+  ;(p as unknown as { deleteOutput: (o: { id: string }) => Promise<boolean> }).deleteOutput = async (o) => (remoteDeleted.push(o.id), true)
+  const removed: string[] = []
+  const archiver = { wants: () => true, archive: async (o: { id: string }) => `local:${o.id}.png`, remove: async (k: string) => void removed.push(k) }
+  const ledger = new Ledger(':memory:')
+  const gw = new Gateway({ ledger, providers: [p], routes: [{ capability: 'image', model: 'm', providers: ['comfy'] }], pollMs: 1, archiver })
+  const pending = await gw.quote(req)
+  await assert.rejects(gw.deleteJob(pending.id), (e: unknown) => e instanceof GatewayError && e.code === 'bad_state')
+  gw.reject(pending.id)
+  const job = await gw.quote(req)
+  await gw.approve(job.id)
+  await gw.waitFor(job.id, 2000)
+  const outs = ledger.outputs(job.id)
+  assert.equal(outs.length, 1)
+  const r = await gw.deleteJob(job.id)
+  assert.deepEqual(r, { local: 1, remote: 1, remoteSupported: true })
+  assert.deepEqual(removed, [`local:${outs[0].id}.png`])
+  assert.deepEqual(remoteDeleted, [outs[0].id])
+  assert.equal(ledger.outputs(job.id).length, 0) // 갤러리에서 사라진다
+  assert.equal(ledger.spend(0)[0]?.jobs, 1) // 사용액 합계에는 남는다
+})
+
+test('결과 지우기: 서비스 삭제가 실패하면 기록을 그대로 두고 오류를 돌려준다', async () => {
+  const p = new FakeProvider({ id: 'comfy' })
+  ;(p as unknown as { deleteOutput: () => Promise<boolean> }).deleteOutput = async () => {
+    throw new Error('ComfyCloud 결과 삭제 실패 (HTTP 500)')
+  }
+  const { gw, ledger } = setup([p])
+  const job = await gw.quote(req)
+  await gw.approve(job.id)
+  await gw.waitFor(job.id, 2000)
+  await assert.rejects(gw.deleteJob(job.id), (e: unknown) => e instanceof GatewayError && e.code === 'delete_failed' && /HTTP 500/.test(e.message))
+  assert.equal(ledger.outputs(job.id).length, 1)
+})

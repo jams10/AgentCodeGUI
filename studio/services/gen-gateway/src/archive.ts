@@ -1,8 +1,8 @@
 // 결과 보관 — 서비스 URL이 사라지기 전에 결과를 옮겨 둔다.
 // 지금은 로컬 보관(앱 데이터 폴더)만 있다. 클라우드 저장소(R2)를 붙이면 같은 인터페이스로 교체한다.
 import { createWriteStream } from 'node:fs'
-import { mkdir, rename, rm } from 'node:fs/promises'
-import { extname, join } from 'node:path'
+import { mkdir, readdir, rename, rm, rmdir } from 'node:fs/promises'
+import { dirname, extname, join, resolve, sep } from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import type { OutputRecord } from './types.ts'
@@ -12,6 +12,8 @@ export interface Archiver {
   wants(o: OutputRecord, now: number): boolean
   /** url에서 받아 보관하고 저장 키를 돌려준다 */
   archive(o: OutputRecord, url: string): Promise<string>
+  /** 보관본을 지운다(없으면 그냥 넘어간다) */
+  remove?(storageKey: string): Promise<void>
 }
 
 const EXT: Record<string, string> = { image: '.png', video: '.mp4', model: '.glb', audio: '.wav', other: '.bin' }
@@ -41,6 +43,16 @@ export class LocalArchiver implements Archiver {
 
   wants(o: OutputRecord): boolean {
     return o.storageKey == null
+  }
+
+  async remove(storageKey: string): Promise<void> {
+    if (!storageKey.startsWith('local:')) return
+    const abs = resolve(this.dir, storageKey.slice('local:'.length))
+    if (!abs.startsWith(resolve(this.dir) + sep)) throw new Error('보관 폴더 밖의 경로예요')
+    await rm(abs, { force: true })
+    // 작업 폴더가 비면 폴더도 지운다
+    const folder = dirname(abs)
+    if (folder !== resolve(this.dir) && (await readdir(folder).catch(() => ['x'])).length === 0) await rmdir(folder).catch(() => {})
   }
 
   async archive(o: OutputRecord, url: string): Promise<string> {

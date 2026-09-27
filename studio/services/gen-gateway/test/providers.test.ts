@@ -3,7 +3,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { TripoProvider, tripoEstimateCredits } from '../src/providers/tripo.ts'
@@ -285,6 +285,37 @@ test('Comfy: 결과 링크는 302 Location(서명 URL)을 돌려준다', async (
   const url = await new ComfyProvider(() => 'k', f).resolveOutput('https://cloud.comfy.org/api/v2/assets/a/content')
   assert.equal(url, 'https://storage.googleapis.com/signed?x=1')
   assert.equal(calls[0].headers.authorization, 'Bearer k')
+})
+
+test('Comfy: 결과 삭제는 주소의 자산 id로 DELETE /api/assets/{id}(X-API-Key), 이미 없으면(404) 성공으로 본다', async () => {
+  const id = '0f6c3e2a-1b2c-4d5e-8f90-1234567890ab'
+  const ok = mockFetch(() => ({ status: 204 }))
+  const o = { id: 'o', jobId: 'j', kind: 'image' as const, url: `https://cloud.comfy.org/api/v2/assets/${id}/content`, mime: null, expiresAt: null, storageKey: null, createdAt: 0 }
+  assert.equal(await new ComfyProvider(() => 'k', ok.f).deleteOutput(o), true)
+  assert.equal(ok.calls[0].method, 'DELETE')
+  assert.equal(ok.calls[0].url, `https://cloud.comfy.org/api/assets/${id}`)
+  assert.equal(ok.calls[0].headers['x-api-key'], 'k')
+  const gone = mockFetch(() => ({ status: 404 }))
+  assert.equal(await new ComfyProvider(() => 'k', gone.f).deleteOutput(o), true)
+  const bad = mockFetch(() => ({ status: 500 }))
+  await assert.rejects(new ComfyProvider(() => 'k', bad.f).deleteOutput(o), /HTTP 500/)
+})
+
+test('로컬 보관본 지우기: 파일과 빈 작업 폴더를 지우고, 보관 폴더 밖 경로는 거절한다', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gw-rm-'))
+  try {
+    const a = new LocalArchiver(dir)
+    mkdtempSync(join(dir, 'x')) // 다른 폴더는 남아야 한다
+    const jobDir = join(dir, 'job1')
+    mkdirSync(jobDir)
+    writeFileSync(join(jobDir, 'o.png'), 'x')
+    await a.remove('local:job1/o.png')
+    assert.equal(existsSync(jobDir), false)
+    await a.remove('local:job1/o.png') // 없어도 조용히 넘어간다
+    await assert.rejects(a.remove('local:../outside.png'), /보관 폴더 밖/)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 // ── 결과 보관 ───────────────────────────────────────────

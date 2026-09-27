@@ -108,6 +108,8 @@ export interface Provider {
   prepare?(req: GenerationRequest): Promise<GenerationRequest>
   estimate(req: GenerationRequest): Promise<Estimate>
   submit(req: GenerationRequest): Promise<{ remoteId: string }>
+  /** 서비스에 남은 결과를 지운다(선택 — 삭제 API가 있는 서비스만). 지웠거나 이미 없으면 true */
+  deleteOutput?(o: OutputRecord): Promise<boolean>
   status(remoteId: string): Promise<RemoteStatus>
   cancel?(remoteId: string): Promise<void>
   /** 인증이 필요하거나 만료되는 결과 URL을 지금 열 수 있는 URL로 바꾼다(없으면 저장된 URL 그대로) */

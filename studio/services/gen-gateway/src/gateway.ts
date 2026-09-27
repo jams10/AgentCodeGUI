@@ -222,6 +222,39 @@ export class Gateway {
     return next
   }
 
+  // ── 결과 지우기: 이 PC의 보관본 + (삭제 API가 있으면) 서비스 쪽 결과 ─────────
+  // 비용 기록은 남긴다(사용액 합계가 맞도록). 하나라도 실패하면 기록은 그대로 두고 오류를 돌려준다(다시 시도 가능).
+  async deleteJob(id: string): Promise<{ local: number; remote: number; remoteSupported: boolean }> {
+    const job = this.must(id)
+    if (job.state === 'awaiting_approval' || job.state === 'submitting' || job.state === 'running')
+      throw new GatewayError('bad_state', '승인 대기 · 진행 중인 작업은 먼저 거절하거나 취소해 주세요')
+    const p = this.providers.get(job.provider)
+    const errors: string[] = []
+    let local = 0
+    let remote = 0
+    for (const o of this.ledger.outputs(id)) {
+      if (o.storageKey && this.archiver?.remove) {
+        try {
+          await this.archiver.remove(o.storageKey)
+          local++
+        } catch (e) {
+          errors.push(`이 PC의 ${o.kind} 파일: ${(e as Error).message}`)
+        }
+      }
+      if (p?.deleteOutput) {
+        try {
+          if (await p.deleteOutput(o)) remote++
+        } catch (e) {
+          errors.push((e as Error).message)
+        }
+      }
+    }
+    if (errors.length) throw new GatewayError('delete_failed', `일부를 지우지 못했어요 — ${errors.join(' · ')}`)
+    this.ledger.removeOutputs(id)
+    this.emit(this.must(id))
+    return { local, remote, remoteSupported: !!p?.deleteOutput }
+  }
+
   // ── 승인 · 거절 · 취소 ─────────────────────────────────
   async approve(id: string): Promise<JobRecord> {
     const job = this.must(id)

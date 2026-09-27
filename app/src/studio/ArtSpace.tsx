@@ -7,11 +7,13 @@ import {
   composePrompt,
   contentUrl,
   createStyle,
+  deleteJob,
   deleteStyle,
   fmtCost,
   listLibrary,
   listModels,
   listStyles,
+  openInBlender,
   outputUrl,
   PROVIDER_NAME,
   quote,
@@ -119,7 +121,7 @@ const VIEW_NAME: Record<string, string> = { front: '앞', left: '왼쪽', back: 
 /** 상세 화면의 옵션 칩에서 뺄 값 — 따로 보여 주거나(프롬프트 · 입력) 너무 큰 값(워크플로 본문) */
 const DETAIL_HIDDEN = new Set(['workflow', 'workflowPath', 'negative_prompt', 'prompt', 'promptSlot'])
 
-function Detail({ e, model, styles, onStyle, onClose, onReuse }: { e: Entry; model?: ModelInfo; styles: Style[]; onStyle: (styleId: string | null) => void; onClose: () => void; onReuse: () => void }): ReactElement {
+function Detail({ e, model, styles, onStyle, onClose, onReuse, onDeleted }: { e: Entry; model?: ModelInfo; styles: Style[]; onStyle: (styleId: string | null) => void; onClose: () => void; onReuse: () => void; onDeleted: () => void }): ReactElement {
   const [idx, setIdx] = useState(0)
   const o = e.outputs[idx] ?? null
   useEffect(() => {
@@ -141,16 +143,29 @@ function Detail({ e, model, styles, onStyle, onClose, onReuse }: { e: Entry; mod
       })
       .catch(() => {})
   }
-  // 3D 모델 파일은 기본 앱(Windows에 연결된 3D 뷰어 · Blender 등)으로 연다
+  // 3D 모델은 Blender(설치된 것 중 최신)를 띄워 빈 장면에 불러온다
+  const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null)
   const openModel = (): void => {
     if (!o) return
-    void outputUrl(o.id)
-      .then((r) => {
-        if (!r.localPath) return window.api.openExternal(r.url).then(() => undefined)
-        const i = Math.max(r.localPath.lastIndexOf('\\'), r.localPath.lastIndexOf('/'))
-        return window.api.openPath(r.localPath.slice(0, i), r.localPath.slice(i + 1))
+    setNote({ ok: true, text: 'Blender를 여는 중…' })
+    openInBlender(o.id)
+      .then((b) => setNote({ ok: true, text: `Blender ${b.version}에서 모델을 불러오고 있어요 — 창이 뜰 때까지 몇 초 걸려요` }))
+      .catch((err: Error) => setNote({ ok: false, text: err.message }))
+  }
+  // 지우기 — 한 번 더 확인받는다. 되돌릴 수 없다.
+  const [confirmDel, setConfirmDel] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const remoteDeletable = e.job.provider === 'comfy'
+  const doDelete = (): void => {
+    setDeleting(true)
+    setNote(null)
+    deleteJob(e.job.id)
+      .then(onDeleted)
+      .catch((err: Error) => {
+        setNote({ ok: false, text: err.message })
+        setDeleting(false)
+        setConfirmDel(false)
       })
-      .catch(() => {})
   }
   const thumbLabel = (x: LibraryItem['output'], i: number): string => {
     if (x.kind === 'model') return '3D 모델'
@@ -176,10 +191,10 @@ function Detail({ e, model, styles, onStyle, onClose, onReuse }: { e: Entry; mod
               <div className="st-art-model3d-bar">
                 <div>
                   <b>3D 모델 파일 (.glb)</b>
-                  <span>앱 안에서 돌려 보는 3D 보기는 아직 없어요 — 기본 앱으로 열어 확인해요</span>
+                  <span>Blender를 열어 빈 장면에 이 모델을 불러와요</span>
                 </div>
                 <button type="button" className="st-gloss st-gen-go" onClick={openModel}>
-                  3D 모델 열기
+                  Blender로 열기
                 </button>
               </div>
             </div>
@@ -288,13 +303,38 @@ function Detail({ e, model, styles, onStyle, onClose, onReuse }: { e: Entry; mod
           </div>
           {j.fallbackReason && <div className="st-gen-warn">대체 — {j.fallbackReason}</div>}
           {j.error && <div className="st-gen-warn">{j.error}</div>}
+          {note && <div className={note.ok ? 'st-usage-note' : 'st-gen-warn'}>{note.text}</div>}
+          {confirmDel && (
+            <div className="st-gen-warn st-art-delwarn">
+              {remoteDeletable
+                ? `이 PC의 파일과 ${PROVIDER_NAME[j.provider]} 서버의 결과를 지워요.`
+                : `이 PC의 파일을 지워요. ${PROVIDER_NAME[j.provider] ?? j.provider}는 서버에서 지우는 기능이 없어서, 서비스 쪽 사본은 보관 기간이 지나면 사라져요.`}{' '}
+              되돌릴 수 없어요. 비용 기록은 사용액 합계를 위해 남겨요.
+            </div>
+          )}
           <div className="st-art-actions">
-            <button type="button" className="st-gloss st-gen-go" onClick={onReuse}>
-              다시 생성
-            </button>
-            <button type="button" className="st-pill" onClick={open} disabled={!o}>
-              {o?.storageKey ? '폴더에서 보기' : '원본 열기'}
-            </button>
+            {confirmDel ? (
+              <>
+                <button type="button" className="st-pill st-art-danger st-art-delgo" disabled={deleting} onClick={doDelete}>
+                  {deleting ? '지우는 중…' : '정말 지우기'}
+                </button>
+                <button type="button" className="st-pill" disabled={deleting} onClick={() => setConfirmDel(false)}>
+                  취소
+                </button>
+              </>
+            ) : (
+              <>
+                <button type="button" className="st-gloss st-gen-go" onClick={onReuse}>
+                  다시 생성
+                </button>
+                <button type="button" className="st-pill" onClick={open} disabled={!o}>
+                  {o?.storageKey ? '폴더에서 보기' : '원본 열기'}
+                </button>
+                <button type="button" className="st-pill st-art-danger" onClick={() => setConfirmDel(true)}>
+                  삭제
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -689,6 +729,7 @@ export function ArtSpace({ ensureApp }: { ensureApp: () => void }): ReactElement
           onStyle={(sid) => void setJobStyle(current.job.id, sid).then(reload).catch(() => {})}
           onClose={() => setOpen(null)}
           onReuse={() => reuse(current)}
+          onDeleted={() => (setOpen(null), reload())}
         />
       )}
       {editing && <StyleEditor style={editing === 'new' ? null : editing} onClose={() => setEditing(null)} onSaved={reload} />}

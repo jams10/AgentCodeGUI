@@ -22,7 +22,7 @@ Node 24가 `.ts`를 직접 실행합니다. 빌드 단계와 추가 패키지가
   같은 서비스에 동시에 도는 작업이 있으면 잔액 차이는 섞이므로 기록하지 않습니다(알 수 없음).
 - **키:** Windows DPAPI(현재 사용자)로 암호화해 `<데이터 폴더>/studio/secrets.json`에 둡니다. 평문은 디스크와
   명령줄 인자에 남지 않고, 저장소(git)에는 들어가지 않습니다.
-- **결과 보관:** 곧 만료되는 결과(Tripo 5분 링크)는 완료 즉시 `<데이터 폴더>/studio/outputs/`에 받아 둡니다.
+- **결과 보관:** 모든 결과를 완료 즉시 `<데이터 폴더>/studio/outputs/`에 받아 둡니다(Tripo 5분 링크 · Comfy 파트너 노드 24시간 삭제 · Higgsfield 7일 보관 대비).
   클라우드 저장소(R2)를 연결하면 `archive.ts`의 보관 단계를 교체해 모든 결과를 그쪽으로 보냅니다.
 
 데이터 폴더는 앱과 같습니다: `CCG_HOME`이 있으면 그 경로, 없으면 `~/.agentstudio`.
@@ -74,6 +74,8 @@ node studio/services/gen-gateway/src/cli.ts serve                 # 게이트웨
 | `GET /health` | 인증 없음 |
 | `POST /jobs` | 견적 → 승인 대기 작업 |
 | `POST /jobs/:id/approve` · `reject` · `cancel` | 승인은 앱 UI에서만 부른다 |
+| `POST /jobs/:id/delete` | 결과 지우기 — 이 PC의 보관본 + 삭제 API가 있는 서비스(ComfyCloud `DELETE /api/assets/{id}`)의 결과. Tripo · Higgsfield는 삭제 API가 없어 서비스 쪽 사본은 보관 기간 뒤 사라진다. 비용 기록(작업 행)은 남기고 `deleted_at`만 표시 |
+| `GET /blender` · `POST /outputs/:id/open-in-blender` | 설치된 Blender(최신 버전 자동 선택, `CCG_BLENDER`로 지정 가능)를 띄워 보관된 3D 모델을 빈 장면에 불러온다 |
 | `POST /jobs/:id/revise` | 승인 전 고치기 `{ params?, prompt? }` — 같은 서비스로 무료 재견적, 작업 id 유지. 틀린 값은 400(원래 값 유지). 스타일이 붙은 작업은 프롬프트를 고치지 않는다 |
 | `GET /jobs` · `/jobs/:id` · `/jobs/:id/wait?timeout=` | 조회 · 완료 대기 |
 | `GET /outputs/:id/url` | 지금 열 수 있는 결과 URL(보관본 우선) |
