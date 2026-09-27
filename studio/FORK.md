@@ -32,6 +32,11 @@ AgentStudio는 [UnrealFactory/AgentCodeGUI](https://github.com/UnrealFactory/Age
 | `app/src/App.tsx` `<WelcomeState>` | `variant={cwd ? 'agent' : 'chat'}` 1줄 — 폴더 없는 대화는 일반 대화 문구(원본 SessionWindow와 같은 규칙). |
 | `.github/workflows/studio-upstream-sync.yml` | 새 파일(원본에 없음). |
 
+## 생성 게이트웨이 (`studio/services/gen-gateway/`)
+
+외부 생성 서비스(ComfyCloud · Tripo · Higgsfield)를 묶는 상주 프로세스. 원본 코드와 완전히 분리돼 있다.
+사용법과 규칙은 [studio/services/gen-gateway/README.md](services/gen-gateway/README.md).
+
 ## Studio 화면 구조 (`app/src/studio/`)
 
 - `StudioRoot.tsx` — 홈 런처 ⟷ 작업 공간 전환. 채팅 공간은 원본 `App`을 그대로 마운트하고(대화·엔진·모델 선택·컨텍스트·한도),
