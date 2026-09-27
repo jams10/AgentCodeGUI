@@ -16,6 +16,8 @@ import type { Balance, Estimate, GenerationRequest, Provider, ProviderOutput, Re
 
 const BASE = 'https://api.higgsfield.ai'
 const RETENTION_MS = 7 * 24 * 60 * 60 * 1000
+/** 견적용 자리 표시 이미지 URL — 형식 검사만 통과하면 된다 */
+const ESTIMATE_PLACEHOLDER = 'https://example.com/studio-estimate.png'
 
 /** 친숙한 이름 → API 경로. 목록에 없는 모델은 'hf/<경로>'로 부른다. */
 export const HIGGSFIELD_MODELS: Record<string, { path: string; capability: 'image' | 'video'; needsImage?: boolean }> = {
@@ -103,11 +105,12 @@ export class HiggsfieldProvider implements Provider {
     const path = pathOf(req)
     if (!path) return { cost: null, note: '지원하지 않는 모델' }
     try {
-      // 견적에는 입력 이미지가 필요 없는 경우가 많고, 업로드는 과금이 없지만 불필요하므로 URL 입력만 싣는다
+      // 견적은 이미지를 받아 보지 않으므로 업로드하지 않는다 — 로컬 파일 입력은 자리 표시 URL로 필수 항목만 채운다
       const b: Record<string, unknown> = { ...(req.params ?? {}) }
       if (req.prompt) b.prompt = req.prompt
-      const url = req.inputs?.find((i) => i.kind === 'image' && i.url)?.url
-      if (url && b.image_url === undefined) b.image_url = url
+      const imgs = (req.inputs ?? []).filter((i) => i.kind === 'image').map((i) => i.url ?? ESTIMATE_PLACEHOLDER)
+      if (imgs.length === 1 && b.image_url === undefined) b.image_url = imgs[0]
+      else if (imgs.length > 1 && b.image_urls === undefined) b.image_urls = imgs
       const r = await requestJson<{ credits?: unknown; usd?: unknown; type?: unknown; pricing_description?: unknown }>(this.fetchImpl, `${BASE}/estimate/${path}`, { headers: this.headers(), body: b, timeoutMs: 15000 })
       const usd = num(r.usd) ?? (typeof r.pricing_description === 'string' ? tokenMeteredUsd(r.pricing_description, b) : null)
       return usd == null ? { cost: null, note: '견적 응답에 금액이 없어요' } : { cost: { amount: usd, unit: 'usd', usd } }

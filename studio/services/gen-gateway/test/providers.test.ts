@@ -122,6 +122,14 @@ test('Higgsfield: 견적은 /estimate/<같은 경로>의 usd를 쓰고, 견적 =
   assert.equal(p.estimateIsExact, true)
 })
 
+test('Higgsfield: 로컬 파일 입력은 견적 때 업로드하지 않고 자리 표시 URL로 image_url을 채운다', async () => {
+  const { f, calls } = mockFetch(() => ({ body: { usd: '0.537' } }))
+  const e = await new HiggsfieldProvider(() => 'a:b', f).estimate({ capability: 'video', model: 'seedance-2.0-i2v', prompt: 'x', inputs: [{ kind: 'image', path: 'E:/a.png' }] })
+  assert.equal(calls.length, 1) // 업로드 요청 없음
+  assert.match(String((calls[0].body as { image_url?: string }).image_url), /^https:\/\//)
+  assert.equal(e.cost?.usd, 0.537)
+})
+
 // 2026-09 실제 응답 문구(Seedance 2.0) — 금액 대신 요금 설명을 준다
 const SEEDANCE_PRICING = 'Token-metered pricing. Billable video tokens = ceil(generated video seconds × output width × output height × 24 fps / 1024). Image and audio references do not count as video input. Per 1,000 video tokens: 480p/720p/1080p $0.014, 4K $0.008. Rates shown are before any applicable customer discount.'
 
