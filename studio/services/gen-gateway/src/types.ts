@@ -60,6 +60,8 @@ export interface Estimate {
   /** null이면 서비스가 사전에 알려주지 않는 비용(실행 후 잔액 차이로 계산) */
   cost: Cost | null
   note?: string
+  /** 서비스가 요청 자체를 거절함(옵션 값 오류 등) — 작업을 만들지 않고 요청 오류로 돌려준다 */
+  invalid?: string
 }
 
 export interface Balance {

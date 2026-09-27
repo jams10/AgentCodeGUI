@@ -7,7 +7,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { TripoProvider, tripoEstimateCredits } from '../src/providers/tripo.ts'
-import { HiggsfieldProvider } from '../src/providers/higgsfield.ts'
+import { HiggsfieldProvider, tokenMeteredUsd } from '../src/providers/higgsfield.ts'
 import { ComfyProvider, comfyBalanceCredits, substituteInputs } from '../src/providers/comfy.ts'
 import { LocalArchiver } from '../src/archive.ts'
 import { Ledger } from '../src/ledger.ts'
@@ -54,14 +54,20 @@ test('Tripo: 텍스트→3D 제출은 v3 엔드포인트에 Bearer 키와 prompt
   assert.deepEqual(calls[0].body, { model: 'v3.1-20260211', prompt: 'a knight' })
 })
 
+test('Tripo: 모델 버전을 안 주면 기본 H3.1로 보낸다(필수 필드)', async () => {
+  const { f, calls } = mockFetch(() => ({ body: { code: 0, data: { task_id: 't' } } }))
+  await new TripoProvider(() => 'k', f).submit({ capability: 'model3d', model: 'tripo-text-to-3d', prompt: 'a frog' })
+  assert.deepEqual(calls[0].body, { model: 'v3.1-20260211', prompt: 'a frog' })
+})
+
 test('Tripo: 이미지 URL 입력은 input 필드, 여러 방향은 inputs[{view:url}]', async () => {
   const { f, calls } = mockFetch(() => ({ body: { code: 0, data: { task_id: 't' } } }))
   const p = new TripoProvider(() => 'k', f)
   await p.submit({ capability: 'model3d', model: 'tripo-image-to-3d', inputs: [{ kind: 'image', url: 'https://x/a.png' }] })
-  assert.deepEqual(calls[0].body, { input: 'https://x/a.png' })
+  assert.deepEqual(calls[0].body, { model: 'v3.1-20260211', input: 'https://x/a.png' })
   await p.submit({ capability: 'model3d', model: 'tripo-multiview-to-3d', inputs: [{ kind: 'image', url: 'https://x/f.png' }, { kind: 'image', url: 'https://x/b.png', view: 'back' }] })
   assert.equal(calls[1].url, 'https://openapi.tripo3d.ai/v3/generation/multiview-to-model')
-  assert.deepEqual(calls[1].body, { inputs: [{ front: 'https://x/f.png' }, { back: 'https://x/b.png' }] })
+  assert.deepEqual(calls[1].body, { model: 'v3.1-20260211', inputs: [{ front: 'https://x/f.png' }, { back: 'https://x/b.png' }] })
 })
 
 test('Tripo: 성공 상태 → 모델·미리보기 결과, 5분 만료, credits_consumed를 실제 비용으로', async () => {
@@ -114,6 +120,29 @@ test('Higgsfield: 견적은 /estimate/<같은 경로>의 usd를 쓰고, 견적 =
   assert.equal(calls[0].url, 'https://api.higgsfield.ai/estimate/higgsfield-ai/soul/standard')
   assert.deepEqual(e.cost, { amount: 0.094, unit: 'usd', usd: 0.094 })
   assert.equal(p.estimateIsExact, true)
+})
+
+// 2026-09 실제 응답 문구(Seedance 2.0) — 금액 대신 요금 설명을 준다
+const SEEDANCE_PRICING = 'Token-metered pricing. Billable video tokens = ceil(generated video seconds × output width × output height × 24 fps / 1024). Image and audio references do not count as video input. Per 1,000 video tokens: 480p/720p/1080p $0.014, 4K $0.008. Rates shown are before any applicable customer discount.'
+
+test('Higgsfield: 토큰 과금 설명문으로 견적을 계산한다', async () => {
+  // 5초 · 1280×720 → ceil(5×1280×720×24/1024) = 108000 토큰 × $0.014/1000 = $1.512
+  assert.equal(tokenMeteredUsd(SEEDANCE_PRICING, { duration: 5, resolution: '720p', aspect_ratio: '16:9' }), 1.512)
+  assert.equal(tokenMeteredUsd(SEEDANCE_PRICING, { duration: 5, resolution: '720p', aspect_ratio: '9:16' }), 1.512)
+  assert.equal(tokenMeteredUsd(SEEDANCE_PRICING, { duration: 5, resolution: '4k', aspect_ratio: '16:9' }), 7.776) // 3840×2160 → 972000 토큰 × $0.008
+  assert.equal(tokenMeteredUsd(SEEDANCE_PRICING, {}), 1.512) // 기본값 5초 · 720p · 16:9
+  assert.equal(tokenMeteredUsd('Flat price per request.', { resolution: '720p' }), null) // 모르는 형식은 견적 없음
+  assert.equal(tokenMeteredUsd(SEEDANCE_PRICING, { resolution: '2K' }), null)
+  const { f } = mockFetch(() => ({ body: { type: 'description', pricing_description: SEEDANCE_PRICING } }))
+  const e = await new HiggsfieldProvider(() => 'a:b', f).estimate({ capability: 'video', model: 'seedance-2.0-t2v', prompt: 'x', params: { duration: 10, resolution: '480p', aspect_ratio: '16:9' } })
+  assert.deepEqual(e.cost, { amount: 1.343, unit: 'usd', usd: 1.343 }) // 10초 · 853×480 → 95963 토큰
+})
+
+test('Higgsfield: 옵션 값이 틀려 거절되면 견적 단계에서 요청 오류(작업을 만들지 않음)', async () => {
+  const { f } = mockFetch(() => ({ status: 400, body: { detail: "resolution: '2K' is not one of ['720p', '1080p']" } }))
+  const e = await new HiggsfieldProvider(() => 'a:b', f).estimate({ capability: 'image', model: 'soul', prompt: 'x', params: { resolution: '2K' } })
+  assert.equal(e.cost, null)
+  assert.match(e.invalid ?? '', /2K/)
 })
 
 test('Higgsfield: hf/<경로>로 카탈로그의 다른 모델을 부른다', () => {

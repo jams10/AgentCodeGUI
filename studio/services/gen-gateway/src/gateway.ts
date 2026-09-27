@@ -163,6 +163,7 @@ export class Gateway {
         continue
       }
       const est = await p.estimate(req)
+      if (est.invalid) throw new GatewayError('bad_request', `${id}: ${est.invalid}`)
       let bal: Balance | null = null
       try {
         bal = await this.balance(id)

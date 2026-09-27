@@ -6,6 +6,7 @@
 //  - 결과 URL은 5분 뒤 만료 → 게이트웨이가 완료 즉시 보관한다(expiresAt을 짧게 표시).
 //  - 입력 이미지: 공개 URL 그대로, 로컬 파일은 POST /v3/files(multipart)로 file_token을 받는다.
 //  - 실패 · 취소된 작업은 과금되지 않는다(작업 생성 때 동결 → 성공 시 차감).
+//  - 생성 요청에는 모델 버전 `model`이 필수(2026-09 — 없으면 400). 요금은 버전과 무관하게 같다.
 import { readFile } from 'node:fs/promises'
 import { basename, extname } from 'node:path'
 import { requestJson, num, type FetchLike } from '../http.ts'
@@ -14,6 +15,8 @@ import type { Balance, Estimate, GenerationRequest, Provider, ProviderOutput, Re
 const BASE = 'https://openapi.tripo3d.ai/v3'
 const USD_PER_CREDIT = 0.01
 const URL_TTL_MS = 5 * 60 * 1000
+/** 기본 모델 버전 — H3.1(고품질 H 계열 최신). params.model로 바꿀 수 있다. */
+export const TRIPO_DEFAULT_MODEL = 'v3.1-20260211'
 
 const ENDPOINT: Record<string, string> = {
   'tripo-text-to-3d': 'generation/text-to-model',
@@ -106,7 +109,7 @@ export class TripoProvider implements Provider {
 
   async submit(req: GenerationRequest): Promise<{ remoteId: string }> {
     if (!this.supports(req)) throw new Error(`Tripo가 처리할 수 없는 요청이에요: ${req.model}`)
-    const body: Record<string, unknown> = { ...(req.params ?? {}) }
+    const body: Record<string, unknown> = { model: TRIPO_DEFAULT_MODEL, ...(req.params ?? {}) }
     const imgs = (req.inputs ?? []).filter((i) => i.kind === 'image')
     if (req.model === 'tripo-text-to-3d') body.prompt = req.prompt
     else if (req.model === 'tripo-image-to-3d') {

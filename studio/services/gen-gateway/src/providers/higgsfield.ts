@@ -2,13 +2,16 @@
 //  - 인증: Authorization: Key <KEY_ID>:<KEY_SECRET>  (키 보관함에는 "KEY_ID:KEY_SECRET" 한 줄로 저장)
 //  - 모델마다 경로가 따로다: POST /<vendor>/<model>/<variant>  → {request_id, status_url, cancel_url}
 //  - 견적: POST /estimate/<같은 경로> (본문 동일) → {credits, usd}. 고정 요금이라 견적 = 청구액.
+//    토큰 과금 모델(Seedance 2.0 등)은 금액 대신 {type:'description', pricing_description}을 준다 —
+//    "초 × 가로 × 세로 × 24fps / 1024 토큰, 1,000토큰당 $x" 공식을 읽어 계산한다(출력 크기는 해상도 · 비율로 추정).
+//    옵션 값이 틀리면 400 — 견적 단계에서 요청 오류로 돌려준다(실패할 작업을 만들지 않게).
 //  - 상태: GET /requests/{id}/status — queued · in_progress · completed · failed · nsfw · canceled
 //  - 잔액 조회 API는 문서화되어 있지 않다 → balance()는 null(기록부 사용액으로 대신 보여준다).
 //  - 결과 보관은 "최소 7일" — 영구 보관은 저장소 업로드가 맡는다.
 //  - 3D(Tripo)는 CLI 전용이라 여기서 다루지 않는다.
 import { readFile } from 'node:fs/promises'
 import { extname } from 'node:path'
-import { requestJson, num, type FetchLike } from '../http.ts'
+import { HttpError, requestJson, num, type FetchLike } from '../http.ts'
 import type { Balance, Estimate, GenerationRequest, Provider, ProviderOutput, RemoteStatus } from '../types.ts'
 
 const BASE = 'https://api.higgsfield.ai'
@@ -105,10 +108,11 @@ export class HiggsfieldProvider implements Provider {
       if (req.prompt) b.prompt = req.prompt
       const url = req.inputs?.find((i) => i.kind === 'image' && i.url)?.url
       if (url && b.image_url === undefined) b.image_url = url
-      const r = await requestJson<{ credits?: unknown; usd?: unknown }>(this.fetchImpl, `${BASE}/estimate/${path}`, { headers: this.headers(), body: b, timeoutMs: 15000 })
-      const usd = num(r.usd)
+      const r = await requestJson<{ credits?: unknown; usd?: unknown; type?: unknown; pricing_description?: unknown }>(this.fetchImpl, `${BASE}/estimate/${path}`, { headers: this.headers(), body: b, timeoutMs: 15000 })
+      const usd = num(r.usd) ?? (typeof r.pricing_description === 'string' ? tokenMeteredUsd(r.pricing_description, b) : null)
       return usd == null ? { cost: null, note: '견적 응답에 금액이 없어요' } : { cost: { amount: usd, unit: 'usd', usd } }
     } catch (e) {
+      if (e instanceof HttpError && (e.status === 400 || e.status === 422)) return { cost: null, invalid: `옵션 값이 맞지 않아요 — ${e.message}` }
       return { cost: null, note: `견적 실패: ${(e as Error).message}` }
     }
   }
@@ -158,4 +162,30 @@ export class HiggsfieldProvider implements Provider {
   async cancel(remoteId: string): Promise<void> {
     await requestJson(this.fetchImpl, `${BASE}/requests/${encodeURIComponent(remoteId)}/cancel`, { method: 'POST', headers: this.headers() })
   }
+}
+
+const SHORT_SIDE: Record<string, number> = { '480p': 480, '720p': 720, '1080p': 1080, '4k': 2160 }
+
+/**
+ * 토큰 과금 설명문 → 달러. 설명문 형식이 바뀌어 공식이나 요율을 못 읽으면 null(견적 없음)로 둔다.
+ * 출력 크기: 짧은 변 = 해상도(720p → 720), 긴 변 = 비율로 계산. 서비스가 실제로 고르는 크기와 몇 픽셀 다를 수 있다.
+ */
+export function tokenMeteredUsd(desc: string, params: Record<string, unknown>): number | null {
+  if (!/seconds\s*×\s*output width\s*×\s*output height\s*×\s*24 fps\s*\/\s*1024/i.test(desc)) return null
+  const res = String(params.resolution ?? '720p').toLowerCase()
+  const short = SHORT_SIDE[res]
+  if (!short) return null
+  // "480p/720p/1080p $0.014, 4K $0.008" — 해상도 이름이 든 구간의 요율
+  let rate: number | null = null
+  for (const m of desc.matchAll(/([0-9a-z/]+)\s*\$([0-9]+(?:\.[0-9]+)?)/gi)) {
+    if (m[1].toLowerCase().split('/').includes(res)) rate = Number(m[2])
+  }
+  if (rate == null || !isFinite(rate)) return null
+  const [a, b] = String(params.aspect_ratio ?? '16:9').split(':').map(Number)
+  if (!a || !b) return null
+  const long = Math.round((short * Math.max(a, b)) / Math.min(a, b))
+  const seconds = Number(params.duration ?? 5)
+  if (!isFinite(seconds) || seconds <= 0) return null
+  const tokens = Math.ceil((seconds * short * long * 24) / 1024)
+  return Math.round((tokens / 1000) * rate * 1000) / 1000
 }

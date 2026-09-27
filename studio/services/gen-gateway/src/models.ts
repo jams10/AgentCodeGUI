@@ -24,8 +24,6 @@ export interface ModelInfo {
   options: ModelOption[]
 }
 
-const ASPECT = ['1:1', '4:3', '3:4', '3:2', '2:3', '16:9', '9:16', '21:9']
-
 export const MODELS: ModelInfo[] = [
   {
     id: 'soul',
@@ -34,9 +32,9 @@ export const MODELS: ModelInfo[] = [
     input: 'none',
     prompt: 'required',
     options: [
-      { key: 'aspect_ratio', label: '비율', type: 'enum', values: ASPECT, default: '1:1' },
-      { key: 'resolution', label: '해상도', type: 'enum', values: ['2K', '4K'], default: '2K' },
-      { key: 'num_images', label: '장수', type: 'number', min: 1, max: 4, default: 1 }
+      { key: 'aspect_ratio', label: '비율', type: 'enum', values: ['1:1', '4:3', '3:4', '3:2', '2:3', '16:9', '9:16'], default: '1:1' },
+      { key: 'resolution', label: '해상도', type: 'enum', values: ['720p', '1080p'], default: '720p' },
+      { key: 'batch_size', label: '장수', type: 'enum', values: [1, 4], default: 1 }
     ]
   },
   {
@@ -82,6 +80,7 @@ export const MODELS: ModelInfo[] = [
     input: 'none',
     prompt: 'required',
     options: [
+      { key: 'model', label: '모델 버전', type: 'enum', values: ['v3.1-20260211', 'P2-20260801', 'P1-20260311', 'v3.0-20250812', 'v2.5-20250123'], default: 'v3.1-20260211' },
       { key: 'texture', label: '텍스처', type: 'bool', default: true },
       { key: 'texture_quality', label: '텍스처 품질', type: 'enum', values: ['standard', 'detailed'], default: 'standard' },
       { key: 'geometry_quality', label: '형상 품질', type: 'enum', values: ['standard', 'detailed'], default: 'standard' },
@@ -97,6 +96,7 @@ export const MODELS: ModelInfo[] = [
     input: 'image',
     prompt: 'none',
     options: [
+      { key: 'model', label: '모델 버전', type: 'enum', values: ['v3.1-20260211', 'P2-20260801', 'P1-20260311', 'v3.0-20250812', 'v2.5-20250123'], default: 'v3.1-20260211' },
       { key: 'texture', label: '텍스처', type: 'bool', default: true },
       { key: 'texture_quality', label: '텍스처 품질', type: 'enum', values: ['standard', 'detailed'], default: 'standard' },
       { key: 'geometry_quality', label: '형상 품질', type: 'enum', values: ['standard', 'detailed'], default: 'standard' },
@@ -111,6 +111,7 @@ export const MODELS: ModelInfo[] = [
     prompt: 'none',
     note: '앞 · 왼쪽 · 뒤 · 오른쪽 순서로 2~4장',
     options: [
+      { key: 'model', label: '모델 버전', type: 'enum', values: ['v3.1-20260211', 'P2-20260801', 'P1-20260311', 'v3.0-20250812', 'v2.5-20250123'], default: 'v3.1-20260211' },
       { key: 'texture', label: '텍스처', type: 'bool', default: true },
       { key: 'texture_quality', label: '텍스처 품질', type: 'enum', values: ['standard', 'detailed'], default: 'standard' }
     ]
