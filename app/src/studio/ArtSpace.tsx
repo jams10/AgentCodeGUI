@@ -111,7 +111,7 @@ const SPACE_NAME: Record<string, string> = { chat: '채팅', art: '아트', game
 
 const VIEW_NAME: Record<string, string> = { front: '앞', left: '왼쪽', back: '뒤', right: '오른쪽' }
 /** 상세 화면의 옵션 칩에서 뺄 값 — 따로 보여 주거나(프롬프트 · 입력) 너무 큰 값(워크플로 본문) */
-const DETAIL_HIDDEN = new Set(['workflow', 'workflowPath', 'negative_prompt', 'prompt'])
+const DETAIL_HIDDEN = new Set(['workflow', 'workflowPath', 'negative_prompt', 'prompt', 'promptSlot'])
 
 function Detail({ e, model, styles, onStyle, onClose, onReuse }: { e: Entry; model?: ModelInfo; styles: Style[]; onStyle: (styleId: string | null) => void; onClose: () => void; onReuse: () => void }): ReactElement {
   const [idx, setIdx] = useState(0)

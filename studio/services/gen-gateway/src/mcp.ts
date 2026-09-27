@@ -23,7 +23,10 @@ const TOOLS = [
       '대화 방식: 사용자가 만들고 싶은 것을 말하면, 결과를 크게 바꾸는데 정해지지 않은 것(예: 종류 · 비율 · 길이 · 스타일)만 짧게 묻는다.',
       '선택지 질문 도구(AskUserQuestion 등)가 있으면 그걸로, 한 번에 한 질문 · 선택지 2~4개로 묻는다. 요청이 충분히 분명하면 묻지 말고 바로 generate를 부른다.',
       '해상도 · 모델 버전 같은 세부 옵션은 사용자가 승인 카드에서 직접 바꿀 수 있으니 일일이 묻지 말고 알맞은 값을 골라라. 프롬프트는 서비스에 맞게 영어로 자세히 쓴다.',
-      '결과에는 사용자가 카드에서 고친 최종 옵션 · 프롬프트가 담긴다 — 다음 요청에 반영하라.'
+      '결과에는 사용자가 카드에서 고친 최종 옵션 · 프롬프트가 담긴다 — 다음 요청에 반영하라.',
+      "ComfyCloud(model 'comfy-workflow'): API 형식 워크플로 JSON을 params.workflow에 객체로 직접 넣는다 — 사용자 폴더(바탕화면 등)에 파일을 만들지 말 것.",
+      '프롬프트는 prompt에도 같이 준다. 게이트웨이가 워크플로의 프롬프트 자리에 그 글을 써 넣고 기록하므로, 사용자가 카드에서 프롬프트를 고칠 수 있다.',
+      '결과에는 결과물 주소(url) 또는 이 PC의 파일 경로(path)가 담긴다 — 결과를 확인해야 하면 그걸 연다.'
     ].join(' '),
     inputSchema: {
       type: 'object',
@@ -87,12 +90,28 @@ function summary(job: JobRecord, outputs: OutputRecord[] = []): string {
     `서비스: ${job.provider}${job.fallbackReason ? ` (대체: ${job.fallbackReason})` : ''}`,
     cost ? `비용: ${cost.unit === 'usd' ? '$' + cost.amount.toFixed(2) : Math.round(cost.amount) + ' 크레딧'}${job.cost ? '' : ' (예상)'}` : '비용: 알 수 없음',
     `모델: ${job.model}`,
-    job.params && Object.keys(job.params).length ? `옵션: ${JSON.stringify(Object.fromEntries(Object.entries(job.params).filter(([k]) => k !== 'workflow')))}` : '',
+    job.params && Object.keys(job.params).length ? `옵션: ${JSON.stringify(Object.fromEntries(Object.entries(job.params).filter(([k]) => k !== 'workflow' && k !== 'promptSlot')))}` : '',
     job.prompt ? `프롬프트: ${job.prompt}` : '',
     job.error ? `오류: ${job.error}` : '',
     ...outputs.map((o) => `결과(${o.kind}): output_id=${o.id}`)
   ]
   return lines.filter(Boolean).join('\n')
+}
+
+/** 결과마다 지금 열 수 있는 곳 — 보관본이 있으면 이 PC의 파일 경로, 없으면 서비스 링크(만료될 수 있음) */
+async function whereIs(outputs: OutputRecord[]): Promise<string> {
+  const rows = await Promise.all(
+    outputs.map(async (o) => {
+      try {
+        const r = (await api(`/outputs/${o.id}/url`)) as { url?: string; localPath?: string | null }
+        return r.localPath ? `  ${o.kind} path: ${r.localPath}` : r.url ? `  ${o.kind} url: ${r.url}` : ''
+      } catch {
+        return ''
+      }
+    })
+  )
+  const text = rows.filter(Boolean).join('\n')
+  return text ? `\n열어 보기:\n${text}` : ''
 }
 
 async function call(name: string, args: Json): Promise<string> {
@@ -114,11 +133,11 @@ async function call(name: string, args: Json): Promise<string> {
     if (w.job.state === 'awaiting_approval') return `사용자가 아직 승인하지 않았어요.\n${summary(w.job)}\n나중에 generation_status로 확인하세요.`
     if (w.job.state === 'running' || w.job.state === 'submitting') w = (await api(`/jobs/${job.id}/wait?timeout=${WAIT_RESULT_MS}`)) as typeof w
     if (w.job.state === 'rejected') return `사용자가 이 생성을 거절했어요. 같은 요청을 다시 보내지 말고 무엇을 바꿀지 물어보세요.\n${summary(w.job)}`
-    return summary(w.job, w.outputs)
+    return summary(w.job, w.outputs) + (await whereIs(w.outputs))
   }
   if (name === 'generation_status') {
     const w = (await api(`/jobs/${encodeURIComponent(String(args.id))}`)) as { job: JobRecord; outputs: OutputRecord[] }
-    return summary(w.job, w.outputs)
+    return summary(w.job, w.outputs) + (await whereIs(w.outputs))
   }
   if (name === 'list_models') {
     type Opt = { key: string; label: string; type: string; values?: unknown[]; default?: unknown; min?: number; max?: number }

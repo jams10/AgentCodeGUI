@@ -162,7 +162,15 @@ export class Gateway {
         skipped.push(`${id}: 이 모델을 지원하지 않음`)
         continue
       }
-      const est = await p.estimate(req)
+      let r = req
+      if (p.prepare) {
+        try {
+          r = await p.prepare(req)
+        } catch (e) {
+          throw new GatewayError('bad_request', `${id}: ${(e as Error).message}`)
+        }
+      }
+      const est = await p.estimate(r)
       if (est.invalid) throw new GatewayError('bad_request', `${id}: ${est.invalid}`)
       let bal: Balance | null = null
       try {
@@ -180,8 +188,8 @@ export class Gateway {
         capability: req.capability,
         model: req.model,
         provider: id,
-        prompt: req.prompt ?? null,
-        params: req.params ?? null,
+        prompt: r.prompt ?? null,
+        params: r.params ?? null,
         inputs: req.inputs ?? null,
         origin: req.origin ?? null,
         estimate: est.cost,

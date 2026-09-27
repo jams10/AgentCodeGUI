@@ -57,6 +57,27 @@ export function substituteInputs(node: unknown, assets: string[]): unknown {
   return node
 }
 
+const PROMPT_KEYS = ['prompt', 'text', 'positive_prompt', 'text_g']
+
+/**
+ * 워크플로 안의 프롬프트 자리 — 프롬프트 같은 글자 입력 중 가장 긴 것(네거티브는 뺀다).
+ * 기록 · 승인 카드에 보여 주고, 카드에서 고친 프롬프트를 제출 때 이 자리에 다시 써 넣는다.
+ */
+export function findPromptSlot(wf: Record<string, unknown>): { node: string; key: string; text: string } | null {
+  let best: { node: string; key: string; text: string } | null = null
+  for (const [node, raw] of Object.entries(wf)) {
+    const n = raw as { class_type?: unknown; inputs?: Record<string, unknown>; _meta?: { title?: unknown } }
+    const label = `${String(n?.class_type ?? '')} ${String(n?._meta?.title ?? '')}`.toLowerCase()
+    if (label.includes('negative')) continue
+    for (const key of PROMPT_KEYS) {
+      const v = n?.inputs?.[key]
+      if (typeof v !== 'string' || !v.trim() || INPUT_TOKEN.test(v)) continue
+      if (!best || v.length > best.text.length) best = { node, key, text: v }
+    }
+  }
+  return best
+}
+
 /** /api/billing/balance 응답(센트) → 크레딧. 이전 앱 creditValues.ts와 같은 필드 우선순위. */
 export function comfyBalanceCredits(body: Record<string, unknown>): number | null {
   let cents: number | null = null
@@ -100,7 +121,10 @@ export class ComfyProvider implements Provider {
   /** params.workflow(객체) 또는 params.workflowPath(API 형식 JSON 파일) */
   private async workflowOf(req: GenerationRequest): Promise<Record<string, unknown>> {
     const wf = req.params?.workflow
-    if (wf && typeof wf === 'object' && !Array.isArray(wf)) return wf as Record<string, unknown>
+    if (wf && typeof wf === 'object' && !Array.isArray(wf)) {
+      if (Array.isArray((wf as Record<string, unknown>).nodes)) throw new Error('UI 형식 워크플로예요. ComfyUI에서 "Export (API)"로 저장한 형식을 써 주세요.')
+      return wf as Record<string, unknown>
+    }
     const path = req.params?.workflowPath
     if (typeof path !== 'string') throw new Error('워크플로(params.workflow 또는 workflowPath)가 필요해요.')
     const parsed = JSON.parse(await readFile(path, 'utf8')) as unknown
@@ -115,6 +139,17 @@ export class ComfyProvider implements Provider {
     const credits = comfyBalanceCredits(body ?? {})
     if (credits == null) return null
     return { amount: credits, unit: 'credits', usd: credits / CREDITS_PER_USD, checkedAt: Date.now() }
+  }
+
+  /** 워크플로를 작업 기록에 스냅숏으로 담고(파일이 지워져도 다시 만들 수 있게) 프롬프트 자리를 찾아 둔다 */
+  async prepare(req: GenerationRequest): Promise<GenerationRequest> {
+    if (req.model !== 'comfy-workflow') return req
+    const wf = await this.workflowOf(req)
+    const slot = findPromptSlot(wf)
+    const params: Record<string, unknown> = { ...(req.params ?? {}), workflow: wf }
+    if (slot) params.promptSlot = { node: slot.node, key: slot.key }
+    // 따로 준 프롬프트가 있으면 그게 기준(제출 때 그 자리에 써 넣는다), 없으면 워크플로 안의 글을 기록한다
+    return { ...req, params, prompt: req.prompt?.trim() ? req.prompt : slot?.text ?? req.prompt }
   }
 
   async estimate(): Promise<Estimate> {
@@ -137,7 +172,13 @@ export class ComfyProvider implements Provider {
 
   async submit(req: GenerationRequest): Promise<{ remoteId: string }> {
     if (!this.supports(req)) throw new Error('params.workflow 또는 workflowPath(API 형식 워크플로 JSON)가 필요해요.')
-    const source = await this.workflowOf(req)
+    let source = await this.workflowOf(req)
+    // 기록된 프롬프트(승인 카드에서 고쳤을 수 있다)를 워크플로의 프롬프트 자리에 써 넣는다
+    const slot = req.params?.promptSlot as { node?: unknown; key?: unknown } | undefined
+    if (req.prompt && slot && typeof slot.node === 'string' && typeof slot.key === 'string') {
+      const n = source[slot.node] as { inputs?: Record<string, unknown> } | undefined
+      if (n?.inputs && typeof n.inputs[slot.key] === 'string') source = { ...source, [slot.node]: { ...n, inputs: { ...n.inputs, [slot.key]: req.prompt } } }
+    }
     const assets: string[] = []
     for (const i of req.inputs ?? []) {
       if (!i.path) throw new Error('ComfyCloud 입력은 로컬 파일 경로로 주세요(업로드 후 $INPUT_n으로 참조).')

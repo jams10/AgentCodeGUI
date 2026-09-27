@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { TripoProvider, tripoEstimateCredits } from '../src/providers/tripo.ts'
 import { HiggsfieldProvider, tokenMeteredUsd } from '../src/providers/higgsfield.ts'
-import { ComfyProvider, comfyBalanceCredits, substituteInputs } from '../src/providers/comfy.ts'
+import { ComfyProvider, comfyBalanceCredits, findPromptSlot, substituteInputs } from '../src/providers/comfy.ts'
 import { LocalArchiver } from '../src/archive.ts'
 import { Ledger } from '../src/ledger.ts'
 import { Gateway } from '../src/gateway.ts'
@@ -145,6 +145,12 @@ test('Higgsfield: 옵션 값이 틀려 거절되면 견적 단계에서 요청 �
   assert.match(e.invalid ?? '', /2K/)
 })
 
+test('Higgsfield: API에 없는 모델 경로(404)는 견적 단계에서 요청 오류', async () => {
+  const { f } = mockFetch(() => ({ status: 404, body: { detail: 'model_not_found' } }))
+  const e = await new HiggsfieldProvider(() => 'a:b', f).estimate({ capability: 'image', model: 'hf/openai/gpt-image-2.5-sunburst', prompt: 'x' })
+  assert.match(e.invalid ?? '', /API에 없는 모델 경로/)
+})
+
 test('Higgsfield: hf/<경로>로 카탈로그의 다른 모델을 부른다', () => {
   const p = new HiggsfieldProvider(() => 'a:b')
   assert.equal(p.supports({ capability: 'video', model: 'hf/minimax/hailuo-2.3/standard/text-to-video' }), true)
@@ -210,6 +216,40 @@ test('Comfy: 워크플로를 파일 경로로도 받고, UI 형식 파일은 알
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+test('Comfy: 준비 단계에서 워크플로를 스냅숏하고 프롬프트를 꺼내며, 제출 때 고친 프롬프트를 그 자리에 쓴다', async () => {
+  const wf = {
+    '1': { class_type: 'OpenAIGPTImageNodeV2', inputs: { prompt: 'a frog knight holding a lantern', size: '1024x1536' } },
+    '2': { class_type: 'CLIPTextEncode', _meta: { title: 'Negative Prompt' }, inputs: { text: 'blurry, low quality, watermark, extra fingers, very long negative text here' } },
+    '3': { class_type: 'LoadImage', inputs: { image: '$INPUT_0' } }
+  }
+  assert.deepEqual(findPromptSlot(wf), { node: '1', key: 'prompt', text: 'a frog knight holding a lantern' })
+  const dir = mkdtempSync(join(tmpdir(), 'gw-wf-'))
+  try {
+    const file = join(dir, 'wf.json')
+    writeFileSync(file, JSON.stringify(wf))
+    const { f, calls } = mockFetch(() => ({ status: 201, body: { id: 'job_3' } }))
+    const p = new ComfyProvider(() => 'k', f)
+    const r = await p.prepare({ capability: 'image', model: 'comfy-workflow', params: { workflowPath: file } })
+    assert.equal(r.prompt, 'a frog knight holding a lantern') // 워크플로 안의 프롬프트가 기록된다
+    assert.deepEqual(r.params?.workflow, wf) // 파일이 지워져도 다시 만들 수 있게 스냅숏
+    assert.deepEqual(r.params?.promptSlot, { node: '1', key: 'prompt' })
+    rmSync(file)
+    // 카드에서 고친 프롬프트로 제출 — 스냅숏의 그 자리에 들어간다(입력 이미지 없이 부르면 $INPUT_0 오류이므로 LoadImage는 뺀다)
+    const { '3': _drop, ...noInput } = wf
+    await p.submit({ ...r, prompt: 'a frog knight holding TWO lanterns', params: { ...r.params, workflow: noInput } })
+    const sent = (calls[0].body as { workflow: Record<string, { inputs: Record<string, unknown> }> }).workflow
+    assert.equal(sent['1'].inputs.prompt, 'a frog knight holding TWO lanterns')
+    assert.equal(sent['2'].inputs.text, wf['2'].inputs.text) // 네거티브는 그대로
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('Comfy: UI 형식 워크플로는 준비 단계에서 거절한다(작업을 만들지 않음)', async () => {
+  const p = new ComfyProvider(() => 'k')
+  await assert.rejects(p.prepare({ capability: 'image', model: 'comfy-workflow', params: { workflow: { nodes: [], links: [] } } }), /Export \(API\)/)
 })
 
 test('Comfy: $INPUT_n을 자산 참조로 바꾼다', () => {

@@ -10,7 +10,7 @@ import { approve, cancel, CAP_NAME, fmtCost, listModels, outputUrl, PROVIDER_NAM
 import { guessOptions, OptionInput } from './options'
 
 const TOAST_MS = 7000
-const HIDDEN_PARAMS = new Set(['workflow', 'prompt', 'workflowPath'])
+const HIDDEN_PARAMS = new Set(['workflow', 'prompt', 'workflowPath', 'promptSlot'])
 
 // 모델 카탈로그 — 옵션 입력칸을 그리는 데 쓴다. 카드가 처음 뜰 때 한 번 받아 둔다.
 let catalog: ModelInfo[] | null = null

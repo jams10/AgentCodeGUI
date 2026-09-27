@@ -113,6 +113,7 @@ export class HiggsfieldProvider implements Provider {
       return usd == null ? { cost: null, note: '견적 응답에 금액이 없어요' } : { cost: { amount: usd, unit: 'usd', usd } }
     } catch (e) {
       if (e instanceof HttpError && (e.status === 400 || e.status === 422)) return { cost: null, invalid: `옵션 값이 맞지 않아요 — ${e.message}` }
+      if (e instanceof HttpError && e.status === 404) return { cost: null, invalid: `Higgsfield API에 없는 모델 경로예요(${path}) — 웹에만 있는 모델일 수 있어요. 공식 API 문서에서 경로를 확인하거나 다른 서비스를 쓰세요` }
       return { cost: null, note: `견적 실패: ${(e as Error).message}` }
     }
   }

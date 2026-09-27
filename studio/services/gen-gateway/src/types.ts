@@ -101,6 +101,11 @@ export interface Provider {
   /** 키가 있어 호출 가능한가 */
   configured(): boolean
   balance(): Promise<Balance | null>
+  /**
+   * 견적 전에 요청을 기록할 모양으로 다듬는다(선택). 예: ComfyCloud는 워크플로 파일을 읽어 작업에 스냅숏으로 담고,
+   * 워크플로 안의 프롬프트를 꺼내 기록한다. 요청이 틀렸으면 Error를 던진다(작업을 만들지 않는다).
+   */
+  prepare?(req: GenerationRequest): Promise<GenerationRequest>
   estimate(req: GenerationRequest): Promise<Estimate>
   submit(req: GenerationRequest): Promise<{ remoteId: string }>
   status(remoteId: string): Promise<RemoteStatus>
