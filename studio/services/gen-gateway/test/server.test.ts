@@ -5,6 +5,7 @@ import { Ledger } from '../src/ledger.ts'
 import { Gateway, type GatewayEvent } from '../src/gateway.ts'
 import { FakeProvider } from '../src/providers/fake.ts'
 import { startServer } from '../src/server.ts'
+import { LocalArchiver } from '../src/archive.ts'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -90,7 +91,9 @@ test('결과 목록과 결과 파일: 토큰은 ?t=로도 받고(결과 파일�
   const dir = mkdtempSync(join(tmpdir(), 'gw-content-'))
   const ledger = new Ledger(':memory:')
   const fake = new FakeProvider({ id: 'comfy' })
+  // 파일 위치는 게이트웨이의 보관기가 저장 키로 찾는다 — 이 테스트는 보관기 없이 두고(원격 302 확인), 나중에 예전 키(local:)로 확인한다
   const gateway = new Gateway({ ledger, providers: [fake], routes: [{ capability: 'image', model: 'm', providers: ['comfy'] }], pollMs: 1 })
+  ;(gateway as unknown as { archiver: unknown }).archiver = { wants: () => false, archive: async () => '', localPath: new LocalArchiver({ legacyDir: dir, libraryDir: join(dir, 'lib') }).localPath.bind(new LocalArchiver({ legacyDir: dir, libraryDir: join(dir, 'lib') })) }
   const srv = await startServer({ gateway, ledger, secrets: null, providers: [fake], infoFile: null, outputsDir: dir })
   const base = `http://127.0.0.1:${srv.port}`
   try {
@@ -165,5 +168,61 @@ test('이벤트 스트림이 작업 상태 변화를 흘려보낸다', async () 
     assert.deepEqual(seen, ['awaiting_approval', 'submitting', 'running', 'succeeded'])
   } finally {
     await srv.close()
+  }
+})
+
+test('도구: 앞 폴더가 우선, 목록에는 파일 경로를 싣지 않고, 내용은 id로 받는다', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gw-tools-'))
+  try {
+    const builtin = join(dir, 'builtin')
+    const user = join(dir, 'user')
+    mkdirSync(builtin)
+    mkdirSync(user)
+    writeFileSync(join(builtin, 'sheet.html'), '<html><head><title>캐릭터 시트</title></head></html>')
+    writeFileSync(join(user, 'sheet.html'), '<title>덮어쓰기 시도</title>')
+    writeFileSync(join(user, 'mine.html'), '<p>제목 없음</p>')
+    writeFileSync(join(user, 'notes.txt'), 'x')
+    const ledger = new Ledger(':memory:')
+    const fake = new FakeProvider({ id: 'comfy' })
+    const gateway = new Gateway({ ledger, providers: [fake], routes: [], pollMs: 1 })
+    const srv = await startServer({ gateway, ledger, secrets: null, providers: [fake], infoFile: null, toolDirs: [builtin, user] })
+    const call = (p: string) => fetch(`http://127.0.0.1:${srv.port}${p}`, { headers: { Authorization: `Bearer ${srv.token}` } })
+    try {
+      assert.deepEqual(await (await call('/tools')).json(), [{ id: 'sheet', name: '캐릭터 시트' }, { id: 'mine', name: 'mine' }])
+      const t = (await (await call('/tools/sheet')).json()) as { html: string }
+      assert.match(t.html, /캐릭터 시트/)
+      assert.equal((await call('/tools/..%2Fsecrets')).status, 404)
+    } finally {
+      await srv.close()
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('캐릭터 파일: 저장 · 목록 · 읽기 · 지우기, id 형식이 틀리면 거절', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gw-chars-'))
+  try {
+    const ledger = new Ledger(':memory:')
+    const fake = new FakeProvider({ id: 'comfy' })
+    const gateway = new Gateway({ ledger, providers: [fake], routes: [], pollMs: 1 })
+    const srv = await startServer({ gateway, ledger, secrets: null, providers: [fake], infoFile: null, charactersDir: join(dir, 'characters') })
+    const call = (p: string, init: RequestInit = {}) => fetch(`http://127.0.0.1:${srv.port}${p}`, { ...init, headers: { Authorization: `Bearer ${srv.token}`, 'Content-Type': 'application/json' } })
+    try {
+      assert.deepEqual(await (await call('/characters')).json(), [])
+      const saved = (await (await call('/characters/서린-1', { method: 'POST', body: JSON.stringify({ name: '서린', values: { hair: '단발' } }) })).json()) as { id: string; updatedAt: number }
+      assert.equal(saved.id, '서린-1')
+      assert.ok(saved.updatedAt > 0)
+      const list = (await (await call('/characters')).json()) as { id: string; name: string }[]
+      assert.deepEqual(list.map((c) => [c.id, c.name]), [['서린-1', '서린']])
+      assert.equal(((await (await call('/characters/서린-1')).json()) as { values: { hair: string } }).values.hair, '단발')
+      assert.equal((await call('/characters/..%2F..%2Fx', { method: 'POST', body: '{}' })).status, 400)
+      await call('/characters/서린-1/delete', { method: 'POST' })
+      assert.equal((await call('/characters/서린-1')).status, 404)
+    } finally {
+      await srv.close()
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
   }
 })

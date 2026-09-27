@@ -25,6 +25,24 @@ export interface ModelInfo {
 }
 
 export const MODELS: ModelInfo[] = [
+  ...(['sunburst', 'flare'] as const).map(
+    (v): ModelInfo => ({
+      id: `gpt-image-2.5-${v}`,
+      label: `GPT Image 2.5 ${v === 'sunburst' ? 'Sunburst' : 'Flare'}`,
+      capability: 'image',
+      input: 'optional-image',
+      prompt: 'required',
+      note: v === 'sunburst' ? '정밀한 편집 · 참조 인물 유지에 강함. 참조 이미지 최대 16장' : '빠른 일반 생성. 참조 이미지 최대 16장',
+      options: [
+        { key: 'quality', label: '품질', type: 'enum', values: ['low', 'medium', 'high', 'xhigh', 'max'], default: 'medium' },
+        { key: 'size', label: '크기', type: 'enum', values: ['auto', '1024x1024', '1024x1536', '1536x1024', '2048x2048', '1152x2048', '2048x1152'], default: 'auto' },
+        { key: 'width', label: '너비(직접)', type: 'number', min: 480, max: 3840 },
+        { key: 'height', label: '높이(직접)', type: 'number', min: 480, max: 3840 },
+        { key: 'background', label: '배경', type: 'enum', values: ['auto', 'opaque', 'transparent'], default: 'auto' },
+        { key: 'n', label: '장수', type: 'number', min: 1, max: 8, default: 1 }
+      ]
+    })
+  ),
   {
     id: 'soul',
     label: 'Higgsfield Soul',
@@ -45,7 +63,7 @@ export const MODELS: ModelInfo[] = [
     prompt: 'required',
     options: [
       { key: 'duration', label: '길이(초)', type: 'number', min: 4, max: 15, default: 5 },
-      { key: 'resolution', label: '해상도', type: 'enum', values: ['480p', '720p', '1080p'], default: '720p' },
+      { key: 'resolution', label: '해상도', type: 'enum', values: ['480p', '720p', '1080p'], default: '480p' },
       { key: 'aspect_ratio', label: '비율', type: 'enum', values: ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'], default: '16:9' },
       { key: 'generate_audio', label: '소리 생성', type: 'bool', default: false }
     ]
@@ -58,7 +76,7 @@ export const MODELS: ModelInfo[] = [
     prompt: 'optional',
     options: [
       { key: 'duration', label: '길이(초)', type: 'number', min: 4, max: 15, default: 5 },
-      { key: 'resolution', label: '해상도', type: 'enum', values: ['480p', '720p', '1080p'], default: '720p' },
+      { key: 'resolution', label: '해상도', type: 'enum', values: ['480p', '720p', '1080p'], default: '480p' },
       { key: 'generate_audio', label: '소리 생성', type: 'bool', default: false }
     ]
   },

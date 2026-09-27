@@ -15,11 +15,34 @@ export interface GenerationRequest {
   model: string
   prompt?: string
   /** 입력 이미지 등 — URL 또는 로컬 경로 */
-  inputs?: { kind: 'image' | 'video' | 'model'; url?: string; path?: string; /** 여러 방향 입력(front · back · left · right) */ view?: string }[]
+  inputs?: {
+    kind: 'image' | 'video' | 'model'
+    url?: string
+    path?: string
+    /** 앱에 있는 이전 결과를 입력으로 — 게이트웨이가 이 PC의 보관본 경로로 바꾼다(없으면 받아서 보관) */
+    outputId?: string
+    /** 여러 방향 입력(front · back · left · right) */
+    view?: string
+  }[]
   /** 모델별 추가 옵션(해상도·길이·시드·워크플로 JSON 등) — 어댑터가 해석한다 */
   params?: Record<string, unknown>
   /** 이 요청이 어디서 왔나 — 라이브러리 출처 표시용 */
-  origin?: { space?: string; source?: 'ui' | 'agent'; conversation?: string; title?: string; /** 스타일 적용 전 원래 프롬프트 */ userPrompt?: string }
+  origin?: {
+    space?: string
+    source?: 'ui' | 'agent' | 'tool'
+    /** 도구에서 온 요청이면 도구 id */
+    tool?: string
+    conversation?: string
+    title?: string
+    /** 아트 디렉션 · 스타일을 붙이기 전 원래 프롬프트 */
+    userPrompt?: string
+    /** 요청이 나온 작업 폴더(채팅의 cwd) — 프로젝트 폴더 안이면 그 프로젝트로 분류된다 */
+    cwd?: string
+    /** 분류된 프로젝트 id(게이트웨이가 채운다) */
+    project?: string
+  }
+  /** 아트 프로젝트 id — 결과를 그 프로젝트로 분류하고 아트 디렉션을 붙인다. 없으면 origin.cwd로 찾는다 */
+  project?: string
   /** 특정 서비스를 강제(라우팅 무시) */
   provider?: ProviderId
   /** 스타일(id 또는 이름) — 결과를 이 스타일로 분류하고, 스타일의 앞/뒤 문구를 프롬프트에 붙인다 */
@@ -149,6 +172,8 @@ export interface JobRecord {
   balanceBefore: Balance | null
   /** 분류된 스타일 */
   styleId: string | null
+  /** 아트 프로젝트 id */
+  project: string | null
 }
 
 export interface OutputRecord {

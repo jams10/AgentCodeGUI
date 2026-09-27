@@ -54,6 +54,7 @@ node studio/services/gen-gateway/src/cli.ts serve                 # 게이트웨
 
 | 모델 | 기능 | 서비스 |
 |---|---|---|
+| `gpt-image-2.5-sunburst` / `gpt-image-2.5-flare` | image (참조 이미지 최대 16장 · 편집) | ComfyCloud — 파트너 노드, 워크플로는 게이트웨이가 만든다(`providers/comfy-presets.ts`) |
 | `comfy-workflow` | image · video · model3d | ComfyCloud — `params.workflow`에 API 형식 워크플로 JSON, 입력 파일은 `$INPUT_0`… |
 | `tripo-text-to-3d` / `tripo-image-to-3d` / `tripo-multiview-to-3d` | model3d | Tripo |
 | `soul` | image | Higgsfield |
@@ -75,6 +76,8 @@ node studio/services/gen-gateway/src/cli.ts serve                 # 게이트웨
 | `POST /jobs` | 견적 → 승인 대기 작업 |
 | `POST /jobs/:id/approve` · `reject` · `cancel` | 승인은 앱 UI에서만 부른다 |
 | `POST /jobs/:id/delete` | 결과 지우기 — 이 PC의 보관본 + 삭제 API가 있는 서비스(ComfyCloud `DELETE /api/assets/{id}`)의 결과. Tripo · Higgsfield는 삭제 API가 없어 서비스 쪽 사본은 보관 기간 뒤 사라진다. 비용 기록(작업 행)은 남기고 `deleted_at`만 표시 |
+| `GET /tools` · `GET /tools/:id` | 도구(HTML 플러그인) 목록 · 내용. 내장 `gen-gateway/tools/` → 사용자 `<데이터 폴더>/studio/tools/` 순(같은 이름이면 내장 우선) |
+| `GET /characters` · `GET/POST /characters/:id` · `POST /characters/:id/delete` | 캐릭터 파일(`<데이터 폴더>/studio/characters/<id>.json`) — 캐릭터 시트 도구가 쓴다 |
 | `GET /blender` · `POST /outputs/:id/open-in-blender` | 설치된 Blender(최신 버전 자동 선택, `CCG_BLENDER`로 지정 가능)를 띄워 보관된 3D 모델을 빈 장면에 불러온다 |
 | `POST /jobs/:id/revise` | 승인 전 고치기 `{ params?, prompt? }` — 같은 서비스로 무료 재견적, 작업 id 유지. 틀린 값은 400(원래 값 유지). 스타일이 붙은 작업은 프롬프트를 고치지 않는다 |
 | `GET /jobs` · `/jobs/:id` · `/jobs/:id/wait?timeout=` | 조회 · 완료 대기 |
@@ -84,6 +87,11 @@ node studio/services/gen-gateway/src/cli.ts serve                 # 게이트웨
 | `GET /models` | 모델 카탈로그(`src/models.ts`) + 라우팅 순서와 서비스별 키 준비 상태 |
 | `GET /styles` · `POST /styles` · `POST /styles/:id` · `POST /styles/:id/delete` | 스타일(분류 + 프롬프트 프리셋). 지워도 결과는 남고 분류만 풀린다 |
 | `POST /jobs/:id/style` | 결과의 스타일 분류 바꾸기 (`{ styleId \| null }`) |
+
+## 입력으로 이전 결과 쓰기
+
+`inputs: [{ kind: 'image', outputId }]` — 앱에 있는 결과를 입력으로 넘긴다. 게이트웨이가 이 PC의 보관본 경로로 바꾸고,
+아직 보관하지 않은 결과면 그때 받아서 보관한다. 참조 이미지 편집(상태 파생 · 코스튬)과 이미지→영상에 쓴다.
 
 ## 스타일
 

@@ -6,6 +6,7 @@
 //    다음 서비스로 넘어간다. 넘어간 이유는 작업 기록(fallbackReason)과 승인 카드에 남는다.
 //  - 서비스가 비용을 알려주지 않으면, 같은 서비스에 동시에 도는 작업이 없을 때만 잔액 차이로 계산한다.
 import type { Archiver } from './archive.ts'
+import { applyProject, type ProjectStore } from './projects.ts'
 import type { Ledger } from './ledger.ts'
 import type { Route } from './routes.ts'
 import { findRoute } from './routes.ts'
@@ -35,6 +36,8 @@ export interface GatewayOptions {
   now?: () => number
   /** 결과 보관(곧 만료되는 서비스 URL을 옮겨 둔다) */
   archiver?: Archiver
+  /** 아트 프로젝트 — 요청을 프로젝트로 분류하고 아트 디렉션을 붙인다 */
+  projects?: ProjectStore
 }
 
 /** 스타일 앞 문구 + 프롬프트 + 뒤 문구 */
@@ -65,6 +68,7 @@ export class Gateway {
   private readonly onEvent: (e: GatewayEvent) => void
   private readonly now: () => number
   private readonly archiver: Archiver | null
+  readonly projects: ProjectStore | null
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly waiters = new Map<string, Set<(j: JobRecord) => void>>()
 
@@ -77,6 +81,12 @@ export class Gateway {
     this.onEvent = o.onEvent ?? (() => {})
     this.now = o.now ?? Date.now
     this.archiver = o.archiver ?? null
+    this.projects = o.projects ?? null
+  }
+
+  /** 저장 키 → 이 PC의 파일 경로(로컬 보관본이 아니면 null) */
+  localPath(storageKey: string | null): string | null {
+    return storageKey && this.archiver?.localPath ? this.archiver.localPath(storageKey) : null
   }
 
   setRoutes(routes: Route[]): void {
@@ -131,11 +141,23 @@ export class Gateway {
   }
 
   // ── 견적: 서비스를 고르고 승인 대기 작업을 만든다 ─────────────
-  async quote(input: GenerationRequest): Promise<JobRecord> {
+  async quote(raw: GenerationRequest): Promise<JobRecord> {
+    const input = await this.resolveInputs(raw)
+    // 프로젝트 — 명시한 id, 없으면 요청이 나온 작업 폴더(채팅의 cwd)로 찾는다. 프로젝트가 있으면 스타일 대신 아트 디렉션을 붙인다
+    const projectId = raw.project ?? this.projects?.projectOfPath(raw.origin?.cwd) ?? null
+    const project = projectId ? this.projects?.get(projectId) ?? null : null
+    if (projectId && !project) throw new GatewayError('bad_request', `'${projectId}' 프로젝트를 찾지 못했어요`)
     // 스타일 — 앞/뒤 문구를 붙인 최종 프롬프트가 견적·승인 카드·기록에 그대로 남는다
     let req = input
+    if (project) {
+      try {
+        req = applyProject(input, project, modelTakesNegative(input.model))
+      } catch (e) {
+        throw new GatewayError('bad_request', (e as Error).message)
+      }
+    }
     let styleId: string | null = null
-    if (input.style) {
+    if (!project && input.style) {
       const st = this.ledger.style(input.style)
       if (!st) throw new GatewayError('no_style', `'${input.style}' 스타일을 찾지 못했어요.`)
       styleId = st.id
@@ -195,7 +217,8 @@ export class Gateway {
         estimate: est.cost,
         fallbackReason: skipped.length ? skipped.join(' · ') : null,
         balanceBefore: bal,
-        styleId
+        styleId,
+        project: project?.id ?? null
       })
       this.emit(job)
       return job
@@ -220,6 +243,32 @@ export class Gateway {
     const next = this.ledger.revise(id, { prompt: patch.prompt !== undefined ? prompt : undefined, params: patch.params !== undefined ? params : undefined, estimate: est.cost })
     this.emit(next)
     return next
+  }
+
+  /**
+   * 입력의 outputId(앱에 있는 이전 결과) → 이 PC의 파일 경로. 아직 보관하지 않은 결과면 지금 받아서 보관한다.
+   * 기록에는 경로와 함께 outputId를 남겨, 어떤 결과를 참조했는지 알 수 있게 한다.
+   */
+  private async resolveInputs(req: GenerationRequest): Promise<GenerationRequest> {
+    if (!req.inputs?.some((i) => i.outputId)) return req
+    const inputs = await Promise.all(
+      req.inputs.map(async (i) => {
+        if (!i.outputId) return i
+        const o = this.ledger.output(i.outputId)
+        if (!o) throw new GatewayError('bad_request', `입력으로 준 결과를 찾지 못했어요: ${i.outputId}`)
+        const a = this.archiver
+        let key = o.storageKey
+        if (!key && a) {
+          const p = this.providers.get(o.provider)
+          const url = p?.resolveOutput ? await p.resolveOutput(o.url) : o.url
+          key = await a.archive(o, url, { project: o.project })
+          this.ledger.setStorageKey(o.id, key)
+        }
+        const path = key && a?.localPath ? a.localPath(key) : null
+        return path ? { ...i, path, url: undefined } : { ...i, url: o.url }
+      })
+    )
+    return { ...req, inputs }
   }
 
   // ── 결과 지우기: 이 PC의 보관본 + (삭제 API가 있으면) 서비스 쪽 결과 ─────────
@@ -399,7 +448,7 @@ export class Gateway {
     if (st.state === 'succeeded') {
       const added = this.ledger.addOutputs(id, st.outputs ?? [])
       const cost = st.cost ?? (p.estimateIsExact && job.estimate ? job.estimate : await this.costFromBalance(job))
-      const warn = await this.archiveOutputs(p, added)
+      const warn = await this.archiveOutputs(p, added, job.project)
       const outputs = this.ledger.outputs(id)
       this.emit(this.ledger.update(id, { state: 'succeeded', progress: 1, cost, error: warn.length ? `결과 보관 실패: ${warn.join(' · ')}` : null }), outputs)
       return
@@ -408,7 +457,7 @@ export class Gateway {
   }
 
   /** 결과를 보관한다(보관 대상은 Archiver가 정한다) — 실패해도 작업은 성공으로 두고 경고만 남긴다 */
-  private async archiveOutputs(p: Provider, outputs: OutputRecord[]): Promise<string[]> {
+  private async archiveOutputs(p: Provider, outputs: OutputRecord[], project: string | null): Promise<string[]> {
     const a = this.archiver
     if (!a) return []
     const warn: string[] = []
@@ -416,7 +465,7 @@ export class Gateway {
       if (!a.wants(o, this.now())) continue
       try {
         const url = p.resolveOutput ? await p.resolveOutput(o.url) : o.url
-        this.ledger.setStorageKey(o.id, await a.archive(o, url))
+        this.ledger.setStorageKey(o.id, await a.archive(o, url, { project }))
       } catch (e) {
         warn.push(`${o.kind} — ${(e as Error).message}`)
       }

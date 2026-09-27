@@ -14,6 +14,8 @@ export interface Route {
 
 export const DEFAULT_ROUTES: Route[] = [
   { capability: 'image', model: 'comfy-workflow', providers: ['comfy'], note: 'ComfyCloud 워크플로(API 형식 JSON)를 그대로 실행' },
+  { capability: 'image', model: 'gpt-image-2.5-sunburst', providers: ['comfy'], note: 'OpenAI GPT Image 2.5 (ComfyCloud 파트너 노드)' },
+  { capability: 'image', model: 'gpt-image-2.5-flare', providers: ['comfy'] },
   { capability: 'video', model: 'comfy-workflow', providers: ['comfy'] },
   { capability: 'model3d', model: 'comfy-workflow', providers: ['comfy'] },
   // Higgsfield의 텍스트→3D도 Tripo 모델이지만 CLI 전용이고 REST API에는 없다(2026-09 확인) — 대체 경로로 넣지 않는다.

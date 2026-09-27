@@ -90,7 +90,8 @@ function toJob(r: Row): JobRecord {
     progress: (r.progress as number | null) ?? null,
     error: (r.error as string | null) ?? null,
     balanceBefore: parse<Balance>(r.balance_before),
-    styleId: (r.style_id as string | null) ?? null
+    styleId: (r.style_id as string | null) ?? null,
+    project: (r.project_id as string | null) ?? null
   }
 }
 
@@ -134,21 +135,23 @@ export class Ledger {
     if (!cols.includes('style_id')) this.db.exec('alter table jobs add column style_id text')
     // 결과를 지운 작업 — 비용 기록은 남기고(사용액 합계) 결과 행만 지운다
     if (!cols.includes('deleted_at')) this.db.exec('alter table jobs add column deleted_at integer')
+    // 아트 프로젝트 — 결과를 프로젝트별로 모아 본다
+    if (!cols.includes('project_id')) this.db.exec('alter table jobs add column project_id text; create index if not exists jobs_project on jobs(project_id)')
   }
 
   close(): void {
     this.db.close()
   }
 
-  createJob(j: Omit<JobRecord, 'id' | 'createdAt' | 'updatedAt' | 'cost' | 'remoteId' | 'progress' | 'error' | 'styleId'> & { styleId?: string | null }): JobRecord {
+  createJob(j: Omit<JobRecord, 'id' | 'createdAt' | 'updatedAt' | 'cost' | 'remoteId' | 'progress' | 'error' | 'styleId' | 'project'> & { styleId?: string | null; project?: string | null }): JobRecord {
     const id = randomUUID()
     const t = this.now()
     this.db
       .prepare(
-        `insert into jobs (id, created_at, updated_at, state, capability, model, provider, prompt, params, inputs, origin, estimate, fallback_reason, balance_before, style_id)
-         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `insert into jobs (id, created_at, updated_at, state, capability, model, provider, prompt, params, inputs, origin, estimate, fallback_reason, balance_before, style_id, project_id)
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(id, t, t, j.state, j.capability, j.model, j.provider, j.prompt, json(j.params), json(j.inputs), json(j.origin), json(j.estimate), j.fallbackReason, json(j.balanceBefore), j.styleId ?? null)
+      .run(id, t, t, j.state, j.capability, j.model, j.provider, j.prompt, json(j.params), json(j.inputs), json(j.origin), json(j.estimate), j.fallbackReason, json(j.balanceBefore), j.styleId ?? null, j.project ?? null)
     return this.job(id)!
   }
 
@@ -157,9 +160,13 @@ export class Ledger {
     return r ? toJob(r) : null
   }
 
-  jobs(opts: { limit?: number; state?: JobState; provider?: ProviderId } = {}): JobRecord[] {
+  jobs(opts: { limit?: number; state?: JobState; provider?: ProviderId; project?: string } = {}): JobRecord[] {
     const where: string[] = []
     const args: (string | number)[] = []
+    if (opts.project) {
+      where.push('project_id = ?')
+      args.push(opts.project)
+    }
     if (opts.state) {
       where.push('state = ?')
       args.push(opts.state)
@@ -213,14 +220,16 @@ export class Ledger {
   }
 
   /** 최근 결과(작업 정보 포함) — 갤러리용 */
-  recentOutputs(limit = 200): { output: OutputRecord; job: JobRecord }[] {
+  /** project: 프로젝트 id · '' = 프로젝트 없는 결과만 · undefined = 전부 */
+  recentOutputs(limit = 200, project?: string): { output: OutputRecord; job: JobRecord }[] {
     const n = Math.max(1, Math.min(1000, limit))
+    const filter = project === undefined ? '' : project === '' ? 'where j.project_id is null' : 'where j.project_id = ?'
     const rows = this.db
       .prepare(
         `select o.id as o_id, o.job_id, o.kind, o.url, o.mime, o.expires_at, o.storage_key, o.created_at as o_created, j.*
-         from outputs o join jobs j on j.id = o.job_id order by o.created_at desc limit ?`
+         from outputs o join jobs j on j.id = o.job_id ${filter} order by o.created_at desc limit ?`
       )
-      .all(n) as Row[]
+      .all(...(project ? [project, n] : [n])) as Row[]
     return rows.map((r) => ({
       output: toOutput({ id: r.o_id, job_id: r.job_id, kind: r.kind, url: r.url, mime: r.mime, expires_at: r.expires_at, storage_key: r.storage_key, created_at: r.o_created }),
       job: toJob(r)
@@ -237,9 +246,32 @@ export class Ledger {
     this.db.prepare('update outputs set storage_key = ? where id = ?').run(key, outputId)
   }
 
-  output(id: string): (OutputRecord & { provider: ProviderId }) | null {
-    const r = this.db.prepare('select o.*, j.provider from outputs o join jobs j on j.id = o.job_id where o.id = ?').get(id) as Row | undefined
-    return r ? { ...toOutput(r), provider: r.provider as ProviderId } : null
+  output(id: string): (OutputRecord & { provider: ProviderId; project: string | null }) | null {
+    const r = this.db.prepare('select o.*, j.provider, j.project_id from outputs o join jobs j on j.id = o.job_id where o.id = ?').get(id) as Row | undefined
+    return r ? { ...toOutput(r), provider: r.provider as ProviderId, project: (r.project_id as string | null) ?? null } : null
+  }
+
+  /** 프로젝트별 결과 수와 대표 이미지(가장 최근 이미지 결과) — 프로젝트 목록 카드용 */
+  projectCounts(): Map<string, { outputs: number; cover: string | null }> {
+    const rows = this.db
+      .prepare(
+        `select j.project_id as p, count(o.id) as n,
+           (select o2.id from outputs o2 join jobs j2 on j2.id = o2.job_id where j2.project_id = j.project_id and o2.kind = 'image' order by o2.created_at desc limit 1) as cover
+         from outputs o join jobs j on j.id = o.job_id where j.project_id is not null group by j.project_id`
+      )
+      .all() as Row[]
+    return new Map(rows.map((r) => [r.p as string, { outputs: Number(r.n), cover: (r.cover as string | null) ?? null }]))
+  }
+
+  /** 프로젝트가 없는 작업 id — 이전 데이터를 프로젝트로 옮길 때 */
+  jobIdsWithoutProject(): string[] {
+    return (this.db.prepare('select id from jobs where project_id is null').all() as Row[]).map((r) => r.id as string)
+  }
+
+  /** 옛 작업을 프로젝트로 옮긴다(이전 데이터 정리용) */
+  assignProject(jobIds: string[], project: string): void {
+    const st = this.db.prepare('update jobs set project_id = ? where id = ?')
+    for (const id of jobIds) st.run(project, id)
   }
 
   recordBalance(provider: ProviderId, b: Balance): void {

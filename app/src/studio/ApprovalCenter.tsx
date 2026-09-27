@@ -74,7 +74,7 @@ function PendingCard({ job }: { job: Job }): ReactElement {
   const model = models.find((m) => m.id === job.model)
   const opts: ModelOption[] = model ? model.options.filter((o) => !HIDDEN_PARAMS.has(o.key)) : guessOptions(params, HIDDEN_PARAMS)
   const chips = paramChips(job)
-  const who = job.origin?.source === 'agent' ? 'AI 요청' : '직접 요청'
+  const who = job.origin?.source === 'agent' ? 'AI 요청' : job.origin?.source === 'tool' ? '도구 요청' : '직접 요청'
   const canEditPrompt = !job.styleId && job.prompt != null
   return (
     <section className="st-gen-card" role="dialog" aria-label={`${CAP_NAME[job.capability]} 승인`}>
@@ -212,6 +212,59 @@ function Toast({ job, onClose }: { job: Job; onClose: () => void }): ReactElemen
   )
 }
 
+/** 승인 대기가 여러 건일 때 — 합계와 모두 승인 · 거절(한 번 더 확인). 도구 · AI가 한꺼번에 요청하는 경우 */
+function BatchBar({ jobs }: { jobs: Job[] }): ReactElement {
+  const [confirm, setConfirm] = useState<'approve' | 'reject' | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const usd = jobs.reduce((a, j) => a + (j.estimate?.usd ?? 0), 0)
+  const unknown = jobs.filter((j) => j.estimate?.usd == null).length
+  const run = async (kind: 'approve' | 'reject'): Promise<void> => {
+    setBusy(true)
+    setErr(null)
+    const fails: string[] = []
+    for (const j of jobs) await (kind === 'approve' ? approve(j.id) : reject(j.id)).catch((e: Error) => fails.push(e.message))
+    if (fails.length) setErr(`${fails.length}건 실패 — ${fails[0]}`)
+    setBusy(false)
+    setConfirm(null)
+  }
+  return (
+    <section className="st-gen-card st-gen-batch" aria-label="승인 대기 묶음">
+      <div className="st-gen-row">
+        <b>승인 대기 {jobs.length}건</b>
+        <span>
+          예상 {usd > 0 ? `$${usd.toFixed(2)}` : ''}
+          {unknown ? `${usd > 0 ? ' + ' : ''}알 수 없음 ${unknown}건` : ''}
+        </span>
+      </div>
+      {err && <div className="st-gen-warn">{err}</div>}
+      <footer className="st-gen-actions">
+        {confirm ? (
+          <>
+            <button type="button" className="st-gloss st-gen-go" disabled={busy} onClick={() => void run(confirm)}>
+              {busy ? '처리 중…' : confirm === 'approve' ? `${jobs.length}건 모두 생성` : `${jobs.length}건 모두 거절`}
+            </button>
+            <button type="button" className="st-ghost" disabled={busy} onClick={() => setConfirm(null)}>
+              취소
+            </button>
+          </>
+        ) : (
+          <>
+            <button type="button" className="st-gloss st-gen-go" onClick={() => setConfirm('approve')}>
+              모두 승인
+            </button>
+            <button type="button" className="st-ghost" onClick={() => setConfirm('reject')}>
+              모두 거절
+            </button>
+          </>
+        )}
+      </footer>
+    </section>
+  )
+}
+
+const SHOW_CARDS = 3
+
 export function ApprovalCenter(): ReactElement | null {
   const g = useGateway()
   const jobs = Object.values(g.jobs)
@@ -243,9 +296,11 @@ export function ApprovalCenter(): ReactElement | null {
           ))}
         </section>
       )}
-      {pending.map((j) => (
+      {pending.length > 1 && <BatchBar jobs={pending} />}
+      {pending.slice(0, SHOW_CARDS).map((j) => (
         <PendingCard key={j.id} job={j} />
       ))}
+      {pending.length > SHOW_CARDS && <div className="st-gen-card st-gen-more">나머지 {pending.length - SHOW_CARDS}건은 위 카드를 처리하면 이어서 보여요</div>}
     </div>
   )
 }

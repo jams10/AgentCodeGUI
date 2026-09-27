@@ -1,8 +1,10 @@
 // 게이트웨이 조립 — 경로 · 키 보관함 · 서비스 어댑터 · 기록부 · 서버를 묶는다.
 import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { LocalArchiver } from './archive.ts'
+import { ProjectStore } from './projects.ts'
 import { Gateway, type GatewayEvent } from './gateway.ts'
 import { Ledger } from './ledger.ts'
 import { FAKE_MODEL, MODELS, type ModelInfo } from './models.ts'
@@ -21,9 +23,32 @@ export function appHome(): string {
   return h ? resolve(h) : join(homedir(), '.agentstudio')
 }
 
+/**
+ * 에셋(생성 결과 · 아트 프로젝트) 루트 — 용량이 커서 앱 데이터 폴더와 따로 둔다.
+ * CCG_STUDIO_ASSETS가 있으면 그것, 없으면 E:\AgentStudio(E 드라이브가 있을 때), 그것도 없으면 <데이터 폴더>/studio/assets.
+ */
+export function assetsRoot(home = appHome()): string {
+  const env = process.env.CCG_STUDIO_ASSETS
+  if (env) return resolve(env)
+  if (process.platform === 'win32' && existsSync('E:\\')) return 'E:\\AgentStudio'
+  return join(home, 'studio', 'assets')
+}
+
 export function paths(home = appHome()) {
   const dir = join(home, 'studio')
-  return { dir, db: join(dir, 'gateway.db'), secrets: join(dir, 'secrets.json'), routes: join(dir, 'routes.json'), info: join(dir, 'gateway.json'), outputs: join(dir, 'outputs') }
+  return {
+    dir,
+    db: join(dir, 'gateway.db'),
+    secrets: join(dir, 'secrets.json'),
+    routes: join(dir, 'routes.json'),
+    info: join(dir, 'gateway.json'),
+    outputs: join(dir, 'outputs'),
+    characters: join(dir, 'characters'),
+    tools: join(dir, 'tools'),
+    // 아트 프로젝트 폴더들 · 프로젝트 없는 결과
+    projects: join(assetsRoot(home), 'ArtProjects'),
+    library: join(assetsRoot(home), 'Library')
+  }
 }
 
 export function makeProviders(secrets: SecretStore): Provider[] {
@@ -65,11 +90,15 @@ export async function boot(opts: { serve: boolean; log?: (m: string) => void } =
   }
   let emit: (e: GatewayEvent) => void = () => {}
   // 클라우드 저장소 연결 전까지는 곧 만료되는 결과(Tripo 5분 링크 등)만 앱 데이터 폴더에 보관한다
-  const gateway = new Gateway({ ledger, providers, routes, onEvent: (e) => emit(e), archiver: new LocalArchiver(p.outputs) })
+  const projects = new ProjectStore(p.projects)
+  const archiver = new LocalArchiver({ legacyDir: p.outputs, libraryDir: p.library, projectAssets: (id) => (projects.get(id) ? projects.assetsDir(id) : null) })
+  const gateway = new Gateway({ ledger, providers, routes, onEvent: (e) => emit(e), archiver, projects })
   gateway.resume()
   let server: RunningServer | null = null
   if (opts.serve) {
-    server = await startServer({ gateway, ledger, secrets, providers, infoFile: p.info, outputsDir: p.outputs, models })
+    // 내장 도구는 게이트웨이 옆 tools 폴더(개발: 저장소, 설치본: resources/gen-gateway/tools), 사용자 도구는 데이터 폴더
+    const builtinTools = join(dirname(fileURLToPath(import.meta.url)), '..', 'tools')
+    server = await startServer({ gateway, ledger, secrets, providers, infoFile: p.info, outputsDir: p.outputs, models, charactersDir: p.characters, toolDirs: [builtinTools, p.tools] })
     emit = server.broadcast
     log(`127.0.0.1:${server.port}에서 대기 중 (라우팅: ${source === 'user' ? 'routes.json' : '기본값'}, 키: ${secrets.list().map((k) => k.provider).join(', ') || '없음'})`)
   }

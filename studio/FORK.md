@@ -30,6 +30,7 @@ AgentStudio는 [UnrealFactory/AgentCodeGUI](https://github.com/UnrealFactory/Age
 | `crates/ccg-store/src/lib.rs` `app_home()` | 기본 데이터 폴더 이름을 빌드 시 `CCG_DEFAULT_HOME_DIR`로 바꿀 수 있게 함. 없으면 원본과 같음. |
 | `app/src/main.tsx` | 메인 창 루트를 `<App />` 대신 `<StudioRoot />`로 연다(import 1줄 + 렌더 1줄). |
 | `app/src/App.tsx` `onOpenSettings` 아래 + import | 2줄 — 채팅이 설정 창을 열려 하면(사이드바 설정 버튼 · API 과금 가드) Studio 설정 공간으로 보낸다(`studioRouteSettings`). |
+| `app/src/App.tsx` `onSelectUnified` 아래 + import | 2줄 — `studioChatHooks`: `studio:new-chat {dir}`(새 채팅 + 작업 폴더) · `studio:open-chat {id}` 창 이벤트를 원본 함수로 잇는다. 아트 프로젝트 채팅용(`app/src/studio/chatBridge.ts`). |
 | `app/src/components/Settings.tsx` | 3줄 — import 1줄, 레일 목록을 `studioNav()`로 거름, API 탭 아래 `<StudioApiServices />`. 모두 `app/src/studio/settingsExt.tsx`. |
 | `app/src/App.tsx` `<WelcomeState>` | `variant={cwd ? 'agent' : 'chat'}` 1줄 — 폴더 없는 대화는 일반 대화 문구(원본 SessionWindow와 같은 규칙). |
 | `src-tauri/src/main.rs` | `mod studio;` 1줄 + setup에서 `studio::start()` 1줄(엔진 부팅 전) — 생성 게이트웨이 실행. |
@@ -67,6 +68,11 @@ AgentStudio는 [UnrealFactory/AgentCodeGUI](https://github.com/UnrealFactory/Age
 | Updates | 원본(AgentCodeGUI) 릴리스 업데이트 · 패치노트 — Studio 빌드엔 맞지 않음. |
 | (문구) `~/.agentcodegui3` | 원본에 고정된 데이터 폴더 이름 — 설정 공간이 화면 글자만 `~/.agentstudio`로 바꿔 보여 준다. |
 | Display의 「유리」 구역 | Studio 테마가 배경을 칠해서 값이 효과가 없음(`SettingsSpace.tsx`가 제목 글자로 찾아 숨김). |
+- `ArtSpace.tsx` — 아트: 프로젝트 목록 → 프로젝트(갤러리 · 도구 · 프로젝트 채팅 바 · 상세 보기 · 프로젝트 설정). 스타일은 프로젝트가 대신한다.
+  프로젝트 = `E:\AgentStudio\ArtProjects\<이름>` 폴더(project.json · CLAUDE.md · AGENTS.md · characters/ · assets/ · exports/). 채팅은 이 폴더를 작업 폴더로 연다.
+- `ToolHost.tsx` — 도구(HTML 플러그인) 창. 게이트웨이 tools 폴더의 HTML을 격리된 iframe(sandbox, allow-same-origin 없음)에 띄우고
+  `window.studio` 다리(postMessage)로 캐릭터 파일 · 견적 요청 · 작업 상태 · 미리보기만 제공한다. 비용은 여전히 승인 카드로만.
+  내장 도구: `studio/services/gen-gateway/tools/character-sheet.html`(캐릭터 시트 · 기준 이미지 · 상태 파생 · 상태 영상).
 - `usage.tsx` — Claude(`getUsage`) · Codex(`codexAuth.accountsUsage`) 한도 패널. 외부 서비스 크레딧은 생성 게이트웨이 연결 후 채운다.
 
 아직 원본 이름이 남아 있는 곳 (새 설계에서 연결 지점으로 처리 예정):

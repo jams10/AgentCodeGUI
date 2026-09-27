@@ -69,6 +69,7 @@ import { GitModal, type GitViewerOverride } from './components/GitModal'
 import { ImageViewer } from './components/ImageViewer'
 import { SettingsModal } from './components/Settings'
 import { studioRouteSettings } from './studio/settingsExt' // [studio hook]
+import { studioChatHooks } from './studio/chatBridge' // [studio hook]
 import { EngineGate } from './components/EngineGate'
 import { EngineUpdateGate } from './components/EngineUpdateGate'
 import { AppUpdateGate } from './components/AppUpdateGate'
@@ -2120,6 +2121,7 @@ function MainApp({ user }: { user: AppUser }) {
     }
     onSelectGeneral(id)
   })
+  useEffect(() => studioChatHooks({ newChat: startNewChat, setCwd: setManualCwd, openChat: onSelectUnified }), [startNewChat, onSelectUnified]) // [studio hook] 아트 프로젝트 채팅 — studio:new-chat · studio:open-chat
   const onRenameUnified = useEvent((id: string, name: string) => {
     if (multi.summaries.some((s) => s.id === id)) {
       multi.renameSession(id, name)

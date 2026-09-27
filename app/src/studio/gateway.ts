@@ -25,7 +25,7 @@ export interface Job {
   prompt: string | null
   params: Record<string, unknown> | null
   inputs: { kind: string; url?: string; path?: string; view?: string }[] | null
-  origin: { space?: string; source?: 'ui' | 'agent'; title?: string; userPrompt?: string } | null
+  origin: { space?: string; source?: 'ui' | 'agent' | 'tool'; tool?: string; title?: string; userPrompt?: string } | null
   estimate: Cost | null
   cost: Cost | null
   fallbackReason: string | null
@@ -33,6 +33,8 @@ export interface Job {
   error: string | null
   balanceBefore: Balance | null
   styleId: string | null
+  /** 아트 프로젝트 id */
+  project: string | null
 }
 export interface Output {
   id: string
@@ -83,8 +85,10 @@ export interface QuoteRequest {
   model: string
   /** 서비스 지정 — 없으면 라우팅 순서대로 */
   provider?: ProviderId
+  /** 아트 프로젝트 — 결과를 그 프로젝트로 분류하고 아트 디렉션을 붙인다 */
+  project?: string
   prompt?: string
-  inputs?: { kind: 'image'; path?: string; url?: string; view?: string }[]
+  inputs?: { kind: 'image' | 'video'; path?: string; url?: string; outputId?: string; view?: string }[]
   params?: Record<string, unknown>
   origin?: Job['origin']
   style?: string
@@ -256,17 +260,67 @@ export function composePrompt(st: Pick<Style, 'promptPrefix' | 'promptSuffix'> |
   return [st?.promptPrefix, prompt, st?.promptSuffix].map((p) => p?.trim()).filter((p): p is string => !!p).join(', ')
 }
 export const listModels = (): Promise<ModelInfo[]> => gw<ModelInfo[]>('/models')
+// ── 도구(HTML 플러그인) · 캐릭터 파일 ─────────────────────
+export interface ToolInfo {
+  id: string
+  name: string
+}
+export const listTools = (): Promise<ToolInfo[]> => gw<ToolInfo[]>('/tools')
+export const getTool = (id: string): Promise<ToolInfo & { html: string }> => gw(`/tools/${encodeURIComponent(id)}`)
+// 캐릭터 파일은 프로젝트 폴더의 characters/ 에 있다
+const chars = (project: string): string => `/projects/${encodeURIComponent(project)}/characters`
+export const listCharacters = (project: string): Promise<{ id: string; name: string; updatedAt: number }[]> => gw(chars(project))
+export const getCharacter = (project: string, id: string): Promise<Record<string, unknown>> => gw(`${chars(project)}/${encodeURIComponent(id)}`)
+export const saveCharacter = (project: string, id: string, doc: Record<string, unknown>): Promise<Record<string, unknown>> => gw(`${chars(project)}/${encodeURIComponent(id)}`, { body: doc })
+export const deleteCharacter = (project: string, id: string): Promise<{ ok: boolean }> => gw(`${chars(project)}/${encodeURIComponent(id)}/delete`, { method: 'POST' })
+
+// ── 아트 프로젝트 ───────────────────────────────────────
+export interface ProjectSettings {
+  /** 캐릭터 제작 공통 규칙(한 줄에 하나) */
+  rules: string
+  /** 모든 이미지 · 영상에서 피할 것 */
+  avoid: string
+  portraitRatio: string
+  fullRatio: string
+  background: string
+  model: string
+  quality: string
+  videoSeconds: number
+  videoResolution: string
+}
+export interface Project {
+  id: string
+  name: string
+  createdAt: number
+  updatedAt: number
+  settings: ProjectSettings
+  /** 프로젝트 폴더(이 PC의 경로) */
+  dir: string
+  outputs?: number
+  cover?: string | null
+}
+export const listProjects = (): Promise<{ root: string; defaults: ProjectSettings; projects: Project[] }> => gw('/projects')
+export const createProject = (name: string, settings: Partial<ProjectSettings>): Promise<Project> => gw('/projects', { body: { name, settings } })
+export const getProject = (id: string): Promise<Project> => gw(`/projects/${encodeURIComponent(id)}`)
+export const updateProject = (id: string, patch: { name?: string; settings?: Partial<ProjectSettings> }): Promise<Project> => gw(`/projects/${encodeURIComponent(id)}`, { body: patch })
 /** 결과 지우기 — 이 PC의 보관본 + (삭제 API가 있는 서비스면) 서비스 쪽 결과. 비용 기록은 남는다 */
 export const deleteJob = (id: string): Promise<{ local: number; remote: number; remoteSupported: boolean }> => gw(`/jobs/${id}/delete`, { method: 'POST' })
 /** 이 PC에 보관된 3D 모델을 Blender(설치된 것 중 최신)로 연다 */
 export const openInBlender = (outputId: string): Promise<{ exe: string; version: string }> => gw(`/outputs/${outputId}/open-in-blender`, { method: 'POST' })
-export const listLibrary = (limit = 300): Promise<LibraryItem[]> => gw<LibraryItem[]>(`/outputs?limit=${limit}`)
+/** project: 프로젝트 id · '' = 프로젝트 없는 결과 · 생략 = 전부 */
+export const listLibrary = (limit = 300, project?: string): Promise<LibraryItem[]> => gw<LibraryItem[]>(`/outputs?limit=${limit}${project !== undefined ? `&project=${encodeURIComponent(project)}` : ''}`)
 /** 견적 → 승인 대기 작업. 승인은 승인 센터 카드에서만 한다. */
 export const quote = (req: QuoteRequest): Promise<Job> => gw<Job>('/jobs', { body: req }).then((j) => (upsert(j), j))
 
 /** <img>/<video>에 바로 넣을 결과 주소(게이트웨이가 보관본을 흘리거나 지금 열 수 있는 링크로 넘겨 준다) */
 export function contentUrl(outputId: string): string | null {
   return info ? `http://127.0.0.1:${info.port}/outputs/${encodeURIComponent(outputId)}/content?t=${info.token}` : null
+}
+
+/** contentUrl과 같지만, 게이트웨이가 막 다시 떠서 접속 정보가 비어 있으면 먼저 받아 온다 */
+export async function contentUrlReady(outputId: string): Promise<string | null> {
+  if (!info) await loadInfo()
+  return contentUrl(outputId)
 }
 
 // ── 표시 도우미 ───────────────────────────────────────

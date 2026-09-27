@@ -5,8 +5,15 @@
 //   node studio/services/gen-gateway/src/cli.ts keys set <서비스>    키 입력(화면에 표시되지 않음)
 //   node studio/services/gen-gateway/src/cli.ts keys remove <서비스>
 //   node studio/services/gen-gateway/src/cli.ts balance             서비스별 잔액 확인(생성·과금 없음)
+//   node studio/services/gen-gateway/src/cli.ts projects list       아트 프로젝트 목록
+//   node studio/services/gen-gateway/src/cli.ts projects adopt <이름>  프로젝트가 없는 작업 · 결과 파일 · 캐릭터를 그 프로젝트로 옮긴다(없으면 만든다)
 // 서비스: comfy · tripo · higgsfield  (Higgsfield는 "KEY_ID:KEY_SECRET" 형식)
+import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { basename, dirname, join } from 'node:path'
+import { LocalArchiver } from './archive.ts'
+import { Ledger } from './ledger.ts'
 import { boot, paths, runningInfo } from './main.ts'
+import { folderName, ProjectStore } from './projects.ts'
 import { SecretStore } from './secrets.ts'
 import type { ProviderId } from './types.ts'
 
@@ -53,6 +60,55 @@ function provider(arg: string | undefined): ProviderId {
 
 async function main(argv: string[]): Promise<void> {
   const [cmd, sub, arg] = argv
+  if (cmd === 'projects') {
+    const p = paths()
+    const store = new ProjectStore(p.projects)
+    if (sub === 'list') {
+      for (const pr of store.list()) console.log(`${pr.id}	${pr.name}	${store.dir(pr.id)}`)
+      return
+    }
+    if (sub === 'adopt') {
+      if (!arg) throw new Error('프로젝트 이름을 주세요')
+      const pr = store.get(folderName(arg)) ?? store.create(arg)
+      const ledger = new Ledger(p.db)
+      const archiver = new LocalArchiver({ legacyDir: p.outputs, libraryDir: p.library, projectAssets: (id) => (store.get(id) ? store.assetsDir(id) : null) })
+      const ids = ledger.jobIdsWithoutProject()
+      let moved = 0
+      for (const id of ids) {
+        for (const o of ledger.outputs(id)) {
+          const src = o.storageKey ? archiver.localPath(o.storageKey) : null
+          if (!src || !existsSync(src)) continue
+          const rel = `${id}/${basename(src)}`
+          const dest = join(store.assetsDir(pr.id), rel)
+          mkdirSync(dirname(dest), { recursive: true })
+          // 드라이브가 다를 수 있어 복사 → 크기 확인 → 원본 정리(이동)
+          copyFileSync(src, dest)
+          if (statSync(dest).size !== statSync(src).size) throw new Error(`복사 확인 실패: ${src}`)
+          ledger.setStorageKey(o.id, `proj:${pr.id}/${rel}`)
+          rmSync(src)
+          if (readdirSync(dirname(src)).length === 0) rmSync(dirname(src), { recursive: true })
+          moved++
+        }
+      }
+      ledger.assignProject(ids, pr.id)
+      // 예전 위치의 캐릭터 파일
+      let chars = 0
+      if (existsSync(p.characters)) {
+        for (const f of readdirSync(p.characters).filter((x) => x.endsWith('.json'))) {
+          const dest = join(store.charactersDir(pr.id), f)
+          if (existsSync(dest)) continue
+          mkdirSync(dirname(dest), { recursive: true })
+          copyFileSync(join(p.characters, f), dest)
+          rmSync(join(p.characters, f))
+          chars++
+        }
+      }
+      ledger.close()
+      console.log(`'${pr.name}' 프로젝트(${store.dir(pr.id)})로 작업 ${ids.length}개 · 결과 파일 ${moved}개 · 캐릭터 ${chars}개를 옮겼어요.`)
+      return
+    }
+    throw new Error('projects list | projects adopt <이름>')
+  }
   if (cmd === 'serve') {
     if (await runningInfo()) {
       console.error('[gen-gateway] 이미 실행 중이에요.')

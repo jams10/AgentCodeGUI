@@ -230,6 +230,17 @@ button.st-pill:hover{ background:linear-gradient(180deg, rgba(255,255,255,.4), r
 /* 아트 화면은 fixed라 자기만의 쌓임 층을 만든다 — 그 안의 상세 보기 · 스타일 편집 막(z 40)이
    바깥에 겹쳐 그린 어시스턴트 채팅(.win, z 25)보다 아래로 깔리지 않게, 막이 열린 동안 아트 층을 올린다 */
 .st-art:has(> .st-veil){ z-index:30; }
+/* 도구(HTML 플러그인) 창 — 화면을 거의 채운다. 도구 내용은 격리된 iframe */
+.st-tool{ position:relative; width:calc(100vw - 48px); height:calc(100vh - 48px); display:flex; flex-direction:column; border-radius:24px; overflow:hidden;
+  border:1px solid rgba(255,255,255,.3); background:var(--st-card-lo); box-shadow:0 30px 80px rgba(0,0,0,.45); }
+.st-tool-bar{ display:flex; align-items:center; justify-content:space-between; padding:8px 12px 8px 18px; font-size:14px; background:rgba(0,0,0,.18); }
+.st-tool-bar .st-ghost{ font-size:18px; padding:2px 10px; }
+.st-tool-frame{ flex:1; width:100%; border:0; background:#101318; }
+.st-tool-pick{ position:absolute; inset:48px 10% 10%; z-index:2; display:flex; flex-direction:column; gap:10px; padding:16px; border-radius:18px;
+  background:var(--st-card-hi); border:1px solid rgba(255,255,255,.3); box-shadow:0 20px 60px rgba(0,0,0,.5); }
+.st-tool-pick-grid{ flex:1; min-height:0; overflow:auto; display:grid; grid-template-columns:repeat(auto-fill, minmax(140px, 1fr)); gap:10px; }
+.st-tool-pick-grid button{ aspect-ratio:1; border-radius:12px; overflow:hidden; border:1px solid rgba(255,255,255,.2); background:var(--st-media-bg); padding:0; }
+.st-tool-pick-grid img{ width:100%; height:100%; object-fit:cover; }
 .st-live{
   position:relative; width:min(1180px, calc(100vw - 80px)); height:min(720px, calc(100vh - 80px)); overflow:hidden;
   border-radius:40px; border:1.5px solid rgba(255,255,255,.4); padding:52px; display:flex; gap:44px;
@@ -319,6 +330,46 @@ button.st-pill:hover{ background:linear-gradient(180deg, rgba(255,255,255,.4), r
 /* 오른쪽 열 — [만들기 | 어시스턴트] 탭 + 본문 */
 .st-art-right{ display:flex; flex-direction:column; gap:10px; min-height:0; }
 .st-art-right > .st-art-side{ flex:1; }
+/* 아트 프로젝트 — 목록 · 카드 · 설정 · 채팅 바 */
+.st-proj{ position:fixed; left:0; right:0; top:52px; bottom:0; overflow:auto; padding:18px 28px 28px; font-family:var(--st-font); color:#fff; }
+.st-proj-head h2{ font-size:22px; font-weight:400; margin:0 0 4px; }
+.st-proj-grid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:16px; margin-top:18px; }
+.st-proj-card{ display:flex; flex-direction:column; text-align:left; border-radius:22px; overflow:hidden; border:1px solid rgba(255,255,255,.26);
+  background:linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,.04)); box-shadow:inset 0 1px 0 rgba(255,255,255,.3), 0 14px 32px rgba(0,0,0,.25); transition:transform .15s; }
+.st-proj-card:hover{ transform:translateY(-2px); border-color:rgba(255,255,255,.5); }
+.st-proj-cover{ aspect-ratio:4/3; display:grid; place-items:center; background:var(--st-media-bg); overflow:hidden; }
+.st-proj-cover img{ width:100%; height:100%; object-fit:cover; }
+.st-proj-meta{ display:flex; flex-direction:column; gap:2px; padding:12px 14px; min-width:0; }
+.st-proj-meta b{ font-weight:400; font-size:16px; }
+.st-proj-meta .st-dim{ font-size:12px; }
+.st-proj-new{ align-items:center; justify-content:center; gap:6px; min-height:220px; font-size:15px; color:var(--st-text-soft); border-style:dashed; }
+.st-proj-new span{ font-size:34px; line-height:1; }
+.st-proj-back{ align-self:flex-start; font-size:12.5px; color:var(--st-text-dim); padding:2px 4px; }
+.st-proj-back:hover{ color:#fff; }
+.st-proj-title{ display:flex; flex-direction:column; gap:4px; }
+.st-proj-title h2{ margin:0; }
+.st-proj-title .st-dim{ font-size:12px; }
+.st-proj-title .st-pill{ align-self:flex-start; margin-top:4px; padding:5px 12px; font-size:12px; }
+.st-proj-editor{ width:min(720px, calc(100vw - 48px)); max-height:calc(100vh - 80px); overflow:auto; display:flex; flex-direction:column; gap:12px; padding:24px 26px;
+  border-radius:26px; border:1.5px solid rgba(255,255,255,.35); background:linear-gradient(180deg, var(--st-card-hi), var(--st-card-lo)); box-shadow:0 30px 80px rgba(0,0,0,.45); color:#fff; font-family:var(--st-font); }
+.st-proj-editor h2{ font-size:20px; font-weight:400; margin:0; }
+.st-proj-tabs{ display:flex; gap:4px; padding:4px; border-radius:999px; background:var(--st-well); border:1px solid rgba(255,255,255,.2); align-self:flex-start; }
+.st-proj-tabs button{ padding:6px 16px; border-radius:999px; font-size:13px; color:var(--st-text-dim2); }
+.st-proj-tabs button.on{ color:var(--st-on-gloss); background:var(--st-gloss); }
+.st-proj-cols{ display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:10px 12px; }
+.st-chatbar{ position:relative; flex-shrink:0; display:flex; gap:6px; align-items:center; }
+.st-chatbar-pick{ flex:1; min-width:0; display:flex; align-items:center; gap:8px; padding:8px 12px; border-radius:14px; font-size:13px; color:#fff; text-align:left;
+  background:linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,.04)); border:1px solid rgba(255,255,255,.26); }
+.st-chatbar-pick > span{ flex:1; min-width:0; }
+.st-chatbar-pick em{ font-style:normal; font-size:11.5px; color:var(--st-text-dim); }
+.st-chatbar-new{ flex-shrink:0; padding:8px 12px; font-size:12.5px; }
+.st-chatbar-list{ position:absolute; left:0; right:0; top:calc(100% + 6px); z-index:40; margin:0; padding:6px; list-style:none; max-height:min(360px, 55vh); overflow:auto;
+  border-radius:14px; background:var(--st-card-hi); border:1px solid rgba(255,255,255,.3); box-shadow:0 18px 40px rgba(0,0,0,.4); display:flex; flex-direction:column; gap:2px; }
+.st-chatbar-list li.st-dim{ padding:8px 10px; font-size:12.5px; }
+.st-chatbar-list button{ width:100%; display:flex; justify-content:space-between; gap:10px; padding:8px 10px; border-radius:10px; font-size:13px; color:#fff; text-align:left; }
+.st-chatbar-list button:hover{ background:rgba(255,255,255,.09); }
+.st-chatbar-list button.on{ background:rgba(var(--st-accent-rgb),.18); }
+.st-chatbar-list em{ font-style:normal; font-size:11.5px; color:var(--st-text-dim); flex-shrink:0; }
 /* 채팅이 겹쳐 그려질 빈 자리 — 테두리 · 배경 없이 크기만 차지한다(테두리는 위에 올라온 채팅 창의 것 하나만) */
 .st-art-assist-hole{ flex:1; min-height:0; }
 .st-art.assist{ grid-template-columns:220px minmax(0,1fr) 470px; }
@@ -370,35 +421,8 @@ html.studio-theme.studio-theme[data-space="art"] body{
   --chat-bg: rgba(34,20,38,.50) !important;
 }
 
-/* 스타일 드롭다운 */
 /* 왼쪽 패널은 세로로만 스크롤 — 펼친 목록 때문에 옆으로 밀리지 않게 */
 .st-art-filter{ overflow-x:hidden; }
-.st-sp{ position:relative; }
-.st-sp-btn{
-  width:100%; display:flex; align-items:center; gap:8px; padding:9px 12px; border-radius:12px; font-size:14px; color:#fff; text-align:left;
-  border:1px solid rgba(255,255,255,.3); background:var(--st-well);
-}
-.st-sp-btn:hover{ border-color:rgba(255,255,255,.5); }
-.st-sp-btn > span{ flex:1; min-width:0; }
-.st-sp-btn em{ font-style:normal; font-size:12px; color:var(--st-text-dim); }
-.st-sp-btn svg{ flex-shrink:0; color:var(--st-text-dim); }
-.st-sp-btn[aria-expanded="true"] svg{ transform:rotate(180deg); }
-.st-sp-pop{
-  position:absolute; left:0; right:0; top:calc(100% + 6px); z-index:30; box-sizing:border-box; padding:10px; display:flex; flex-direction:column; gap:8px;
-  border-radius:16px; border:1px solid rgba(255,255,255,.35); background:linear-gradient(180deg, var(--st-card-hi), var(--st-card-lo)); box-shadow:0 18px 44px rgba(0,0,0,.45);
-  backdrop-filter:blur(14px); /* 아래 목록 글자가 비치지 않게 */
-}
-.st-sp-list{ margin:0; padding:0; max-height:min(320px, 50vh); overflow:auto; display:flex; flex-direction:column; gap:2px; }
-.st-sp-list li{ list-style:none; display:flex; align-items:center; border-radius:10px; border:1px solid transparent; }
-.st-sp-list li.hi{ background:rgba(255,255,255,.09); }
-.st-sp-list li.on{ background:rgba(var(--st-accent-rgb),.16); border-color:rgba(var(--st-accent-rgb),.45); }
-/* ✎은 가리킨 줄에서만 자리를 차지한다 — 평소에는 개수 숫자가 한 줄로 맞춰진다 */
-.st-sp-list .st-art-edit{ display:none; }
-.st-sp-list li:hover .st-art-edit, .st-sp-list li.hi .st-art-edit, .st-sp-list .st-art-edit:focus-visible{ display:grid; place-items:center; opacity:1; }
-.st-sp-pick{ flex:1; min-width:0; display:flex; justify-content:space-between; align-items:center; gap:8px; padding:7px 10px; font-size:13.5px; color:#fff; text-align:left; }
-.st-sp-pick em{ font-style:normal; font-size:12px; color:var(--st-text-dim); }
-.st-sp-empty{ padding:8px 10px; font-size:12.5px; color:var(--st-text-dim); }
-.st-sp-new{ padding:8px 10px !important; border-radius:10px; font-size:13px; }
 .st-art-srow{ display:flex; align-items:center; border-radius:12px; border:1px solid transparent; }
 .st-art-srow > button:first-child{ flex:1; min-width:0; }
 .st-art-srow.on{ background:rgba(255,255,255,.18); border-color:rgba(255,255,255,.4); }
@@ -493,6 +517,8 @@ html.studio-theme[data-space="settings"]{
 .st-gen-ellipsis{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .st-gen-prompt{ font-family:var(--font-mono); font-size:12.5px; line-height:1.55; color:var(--st-text-soft); background:var(--st-well-deep); border-radius:12px; padding:9px 12px; max-height:96px; overflow:auto; white-space:pre-wrap; word-break:break-word; }
 .st-gen-chips{ display:flex; flex-wrap:wrap; gap:6px; }
+.st-gen-batch{ gap:8px; }
+.st-gen-more{ font-size:12px; color:var(--st-text-dim); padding:10px 16px; }
 /* 승인 카드에서 고치기 — 옵션 입력칸 · 프롬프트 편집 */
 .st-gen-edit{ display:flex; gap:4px; flex-wrap:wrap; }
 .st-gen-edit .st-ghost{ font-size:12px; padding:3px 8px; color:var(--st-accent); }

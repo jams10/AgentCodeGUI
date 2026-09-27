@@ -10,7 +10,8 @@
   "bundle": {
     "createUpdaterArtifacts": false,
     "resources": {
-      "../studio/services/gen-gateway/src": "gen-gateway/src"
+      "../studio/services/gen-gateway/src": "gen-gateway/src",
+      "../studio/services/gen-gateway/tools": "gen-gateway/tools"
     },
     "publisher": "AgentStudio",
     "homepage": "https://github.com/jams10/AgentCodeGUI",

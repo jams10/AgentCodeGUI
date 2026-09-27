@@ -338,8 +338,8 @@ test('결과는 완료 즉시 로컬에 보관하고 저장 키를 남긴다(곧
     const done = await gw.waitFor(job.id, 3000)
     assert.equal(done.state, 'succeeded')
     const [o] = gw.outputs(job.id)
-    assert.match(o.storageKey ?? '', /^local:.+\.glb$/)
-    assert.equal(readFileSync(join(dir, o.storageKey!.slice(6))).toString(), 'glTF-bytes')
+    assert.match(o.storageKey ?? '', /^lib:.+\.glb$/) // 프로젝트 없는 결과는 Library
+    assert.equal(readFileSync(join(dir, o.storageKey!.slice(4))).toString(), 'glTF-bytes')
   } finally {
     srv.close()
     rmSync(dir, { recursive: true, force: true })
@@ -363,8 +363,8 @@ test('만료 시각이 없는 결과도 보관하고, 주소에 확장자가 없
     await gw.approve(job.id)
     assert.equal((await gw.waitFor(job.id, 3000)).state, 'succeeded')
     const [o] = gw.outputs(job.id)
-    assert.match(o.storageKey ?? '', /^local:.+\.webp$/)
-    assert.equal(readFileSync(join(dir, o.storageKey!.slice(6))).toString(), 'webp-bytes')
+    assert.match(o.storageKey ?? '', /^lib:.+\.webp$/)
+    assert.equal(readFileSync(join(dir, o.storageKey!.slice(4))).toString(), 'webp-bytes')
   } finally {
     srv.close()
     rmSync(dir, { recursive: true, force: true })

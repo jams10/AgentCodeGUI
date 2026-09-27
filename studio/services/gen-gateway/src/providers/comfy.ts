@@ -10,6 +10,7 @@ import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { basename, extname } from 'node:path'
 import { requestJson, num, type FetchLike } from '../http.ts'
+import { gptImageWorkflow, isComfyPreset } from './comfy-presets.ts'
 import type { Balance, Estimate, GenerationRequest, OutputKind, OutputRecord, Provider, ProviderOutput, RemoteStatus } from '../types.ts'
 
 const BASE = 'https://cloud.comfy.org'
@@ -111,6 +112,7 @@ export class ComfyProvider implements Provider {
   }
 
   supports(req: GenerationRequest): boolean {
+    if (isComfyPreset(req.model)) return true
     if (req.model !== 'comfy-workflow') return false
     const wf = req.params?.workflow
     if (wf && typeof wf === 'object' && !Array.isArray(wf)) return true
@@ -143,6 +145,8 @@ export class ComfyProvider implements Provider {
 
   /** 워크플로를 작업 기록에 스냅숏으로 담고(파일이 지워져도 다시 만들 수 있게) 프롬프트 자리를 찾아 둔다 */
   async prepare(req: GenerationRequest): Promise<GenerationRequest> {
+    // 내장 모델은 제출 때 워크플로를 새로 만든다 — 여기서는 요청이 맞는지만 확인
+    if (isComfyPreset(req.model)) return (gptImageWorkflow(req), req)
     if (req.model !== 'comfy-workflow') return req
     const wf = await this.workflowOf(req)
     const slot = findPromptSlot(wf)
@@ -158,13 +162,14 @@ export class ComfyProvider implements Provider {
 
   private async uploadAsset(path: string): Promise<string> {
     const type = MIME[extname(path).toLowerCase()] ?? 'application/octet-stream'
+    // 필드 순서가 중요하다 — content_type · file_path가 file보다 먼저 와야 한다(아니면 422 invalid_body)
     const form = new FormData()
-    form.append('file', new Blob([await readFile(path)], { type }), basename(path))
     form.append('content_type', type)
     form.append('file_path', basename(path))
-    const res = await this.fetchImpl(`${BASE}/api/v2/assets`, { method: 'POST', headers: { Authorization: `Bearer ${this.k()}` }, body: form, signal: AbortSignal.timeout(180000) })
+    form.append('file', new Blob([await readFile(path)], { type }), basename(path))
+    const res = await this.fetchImpl(`${BASE}/api/v2/assets`, { method: 'POST', headers: { Authorization: `Bearer ${this.k()}`, 'Idempotency-Key': crypto.randomUUID() }, body: form, signal: AbortSignal.timeout(180000) })
     const text = await res.text()
-    if (!res.ok) throw new Error(`입력 파일 업로드 실패 (HTTP ${res.status})`)
+    if (!res.ok) throw new Error(`입력 파일 업로드 실패 (HTTP ${res.status}${/"message":"([^"]+)"/.exec(text)?.[1] ? ` — ${/"message":"([^"]+)"/.exec(text)![1]}` : ''})`)
     const id = (JSON.parse(text) as { id?: string }).id
     if (!id) throw new Error('업로드 응답에 자산 id가 없어요')
     return id
@@ -172,7 +177,7 @@ export class ComfyProvider implements Provider {
 
   async submit(req: GenerationRequest): Promise<{ remoteId: string }> {
     if (!this.supports(req)) throw new Error('params.workflow 또는 workflowPath(API 형식 워크플로 JSON)가 필요해요.')
-    let source = await this.workflowOf(req)
+    let source = isComfyPreset(req.model) ? gptImageWorkflow(req) : await this.workflowOf(req)
     // 기록된 프롬프트(승인 카드에서 고쳤을 수 있다)를 워크플로의 프롬프트 자리에 써 넣는다
     const slot = req.params?.promptSlot as { node?: unknown; key?: unknown } | undefined
     if (req.prompt && slot && typeof slot.node === 'string' && typeof slot.key === 'string') {

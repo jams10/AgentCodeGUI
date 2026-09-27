@@ -2,11 +2,12 @@
 // 접속 정보(port · token · pid)는 <home>/studio/gateway.json에 쓴다. 앱과 MCP 중계기가 이 파일을 읽는다.
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { randomBytes } from 'node:crypto'
-import { createReadStream, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { dirname, extname, resolve } from 'node:path'
+import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { basename, dirname, extname, join } from 'node:path'
 import type { ModelInfo } from './models.ts'
 import { pathToFileURL } from 'node:url'
 import { findBlender, MODEL_EXTS, openInBlender } from './blender.ts'
+import { DEFAULT_SETTINGS, type ProjectSettings } from './projects.ts'
 import { Gateway, GatewayError, type GatewayEvent } from './gateway.ts'
 import type { Ledger } from './ledger.ts'
 import type { KeyStore } from './secrets.ts'
@@ -16,6 +17,64 @@ export const VERSION = '0.1.0'
 const MAX_BODY = 4 * 1024 * 1024
 const CONTENT_TYPE: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.mp4': 'video/mp4', '.webm': 'video/webm', '.glb': 'model/gltf-binary', '.fbx': 'application/octet-stream', '.wav': 'audio/wav' }
 const STATES: JobState[] = ['awaiting_approval', 'rejected', 'submitting', 'running', 'succeeded', 'failed', 'canceled']
+
+const CHARACTER_ID = /^[\p{L}\p{N}_-]{1,64}$/u
+const TOOL_ID = /^[\p{L}\p{N} ._-]{1,80}$/u
+
+/** 도구 폴더들의 *.html — 파일 이름이 id, <title>이 이름. 앞 폴더가 우선 */
+function listTools(dirs: string[]): { id: string; name: string; file: string }[] {
+  const seen = new Map<string, { id: string; name: string; file: string }>()
+  for (const dir of dirs) {
+    if (!existsSync(dir)) continue
+    for (const f of readdirSync(dir)) {
+      if (!f.toLowerCase().endsWith('.html')) continue
+      const id = basename(f, extname(f))
+      if (!TOOL_ID.test(id) || seen.has(id)) continue
+      const file = join(dir, f)
+      const title = /<title>([^<]{1,80})<\/title>/i.exec(readFileSync(file, 'utf8').slice(0, 4000))?.[1]?.trim()
+      seen.set(id, { id, name: title || id, file })
+    }
+  }
+  return [...seen.values()]
+}
+
+/** 캐릭터 파일 폴더 하나에 대한 목록 · 읽기 · 저장 · 지우기. seg는 ['characters', id?, 'delete'?] */
+async function characters(req: IncomingMessage, res: ServerResponse, dir: string, seg: string[]): Promise<void> {
+  if (req.method === 'GET' && seg.length === 1) {
+    if (!existsSync(dir)) return send(res, 200, [])
+    const list = readdirSync(dir)
+      .filter((f) => f.endsWith('.json'))
+      .map((f) => {
+        try {
+          const j = JSON.parse(readFileSync(join(dir, f), 'utf8')) as { name?: unknown; updatedAt?: unknown }
+          return { id: f.slice(0, -5), name: typeof j.name === 'string' ? j.name : f.slice(0, -5), updatedAt: typeof j.updatedAt === 'number' ? j.updatedAt : statSync(join(dir, f)).mtimeMs }
+        } catch {
+          return null
+        }
+      })
+      .filter(Boolean)
+    return send(res, 200, list.sort((a, b) => b!.updatedAt - a!.updatedAt))
+  }
+  const id = seg[1] ?? ''
+  if (!CHARACTER_ID.test(id)) return send(res, 400, { error: 'bad_id', message: '캐릭터 id는 영문 · 숫자 · 한글 · - · _ 64자 이내예요' })
+  const file = join(dir, `${id}.json`)
+  if (req.method === 'GET' && seg.length === 2) return existsSync(file) ? send(res, 200, JSON.parse(readFileSync(file, 'utf8'))) : send(res, 404, { error: 'not_found' })
+  if (req.method === 'POST' && seg.length === 2) {
+    const body = await readBody(req)
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return send(res, 400, { error: 'bad_request', message: '캐릭터는 JSON 객체여야 해요' })
+    mkdirSync(dir, { recursive: true })
+    const doc = { ...(body as Record<string, unknown>), id, updatedAt: Date.now() }
+    const tmp = `${file}.tmp`
+    writeFileSync(tmp, JSON.stringify(doc, null, 2), 'utf8')
+    renameSync(tmp, file)
+    return send(res, 200, doc)
+  }
+  if (req.method === 'POST' && seg[2] === 'delete') {
+    if (existsSync(file)) rmSync(file)
+    return send(res, 200, { ok: true })
+  }
+  return send(res, 404, { error: 'not_found' })
+}
 
 export interface ServerDeps {
   gateway: Gateway
@@ -27,6 +86,10 @@ export interface ServerDeps {
   outputsDir?: string | null
   /** 화면용 모델 카탈로그 */
   models?: ModelInfo[]
+  /** 캐릭터 파일 폴더(<데이터 폴더>/studio/characters) — 제작 도구가 캐릭터 시트를 저장한다 */
+  charactersDir?: string | null
+  /** 도구(HTML) 폴더 — 앞쪽이 우선(내장 → 사용자). 같은 이름이면 앞쪽 것을 쓴다 */
+  toolDirs?: string[]
   port?: number
 }
 
@@ -76,7 +139,8 @@ function asRequest(b: unknown): GenerationRequest {
     params: o.params && typeof o.params === 'object' ? (o.params as Record<string, unknown>) : undefined,
     origin: o.origin && typeof o.origin === 'object' ? (o.origin as GenerationRequest['origin']) : undefined,
     provider: typeof o.provider === 'string' ? (o.provider as ProviderId) : undefined,
-    style: typeof o.style === 'string' && o.style.trim() ? o.style.trim() : undefined
+    style: typeof o.style === 'string' && o.style.trim() ? o.style.trim() : undefined,
+    project: typeof o.project === 'string' && o.project.trim() ? o.project.trim() : undefined
   }
 }
 
@@ -145,7 +209,8 @@ export async function startServer(d: ServerDeps): Promise<RunningServer> {
           return res.end()
         }
       }
-      const seg = path.split('/').filter(Boolean)
+      // 경로 조각은 디코딩한다(한글 캐릭터 id 등). 디코딩 후에도 각 경로가 id 형식 · 목록으로 다시 검사한다
+      const seg = path.split('/').filter(Boolean).map((s) => { try { return decodeURIComponent(s) } catch { return s } })
       // 결과 파일만은 <img>/<video>가 헤더를 못 싣으므로 ?t=<토큰>도 받는다(127.0.0.1 · 실행마다 새 토큰)
       const isContent = req.method === 'GET' && seg[0] === 'outputs' && seg[2] === 'content'
       const authed = req.headers.authorization === `Bearer ${token}` || (isContent && url.searchParams.get('t') === token)
@@ -155,10 +220,13 @@ export async function startServer(d: ServerDeps): Promise<RunningServer> {
       if (isContent && seg[1]) {
         const o = d.ledger.output(seg[1])
         if (!o) return send(res, 404, { error: 'not_found' })
-        if (o.storageKey?.startsWith('local:') && d.outputsDir) {
-          const abs = resolve(d.outputsDir, o.storageKey.slice('local:'.length))
-          if (!abs.startsWith(resolve(d.outputsDir)) || !existsSync(abs)) return send(res, 404, { error: 'not_found' })
-          res.writeHead(200, { 'Content-Type': o.mime ?? CONTENT_TYPE[extname(abs).toLowerCase()] ?? 'application/octet-stream', 'Content-Length': statSync(abs).size, 'Cache-Control': 'private, max-age=3600' })
+        const local = gw.localPath(o.storageKey)
+        // 로컬 저장 키인데 위치를 못 찾으면(보관 폴더 밖 · 모르는 프로젝트) 서비스 링크로 넘기지 않고 거절한다
+        if (!local && /^(local|lib|proj):/.test(o.storageKey ?? '')) return send(res, 404, { error: 'not_found' })
+        if (local) {
+          const abs = local
+          if (!existsSync(abs)) return send(res, 404, { error: 'not_found' })
+          res.writeHead(200, { 'Content-Type': o.mime || (CONTENT_TYPE[extname(abs).toLowerCase()] ?? 'application/octet-stream'), 'Content-Length': statSync(abs).size, 'Cache-Control': 'private, max-age=3600' })
           createReadStream(abs).pipe(res)
           return
         }
@@ -243,7 +311,8 @@ export async function startServer(d: ServerDeps): Promise<RunningServer> {
         return send(res, 200, j)
       }
       if (req.method === 'GET' && path === '/outputs') {
-        return send(res, 200, d.ledger.recentOutputs(Number(url.searchParams.get('limit') ?? 200)))
+        const project = url.searchParams.get('project')
+        return send(res, 200, d.ledger.recentOutputs(Number(url.searchParams.get('limit') ?? 200), project ?? undefined))
       }
 
       if (req.method === 'GET' && path === '/events') {
@@ -264,7 +333,7 @@ export async function startServer(d: ServerDeps): Promise<RunningServer> {
       }
       if (req.method === 'GET' && path === '/jobs') {
         const st = url.searchParams.get('state') as JobState | null
-        return send(res, 200, d.ledger.jobs({ limit: Number(url.searchParams.get('limit') ?? 100), state: st && STATES.includes(st) ? st : undefined }))
+        return send(res, 200, d.ledger.jobs({ limit: Number(url.searchParams.get('limit') ?? 100), state: st && STATES.includes(st) ? st : undefined, project: url.searchParams.get('project') || undefined }))
       }
       if (req.method === 'POST' && path === '/jobs') return send(res, 201, await gw.quote(asRequest(await readBody(req))))
       if (seg[0] === 'jobs' && seg[1]) {
@@ -288,14 +357,48 @@ export async function startServer(d: ServerDeps): Promise<RunningServer> {
         if (req.method === 'POST' && seg[2] === 'reject') return send(res, 200, gw.reject(id))
         if (req.method === 'POST' && seg[2] === 'cancel') return send(res, 200, await gw.cancel(id))
       }
+      // ── 도구(HTML 플러그인) — 목록과 내용. 앱이 격리된 창(iframe sandbox)에 띄운다 ──
+      if (req.method === 'GET' && path === '/tools') return send(res, 200, listTools(d.toolDirs ?? []).map(({ id, name }) => ({ id, name })))
+      if (req.method === 'GET' && seg[0] === 'tools' && seg[1]) {
+        const t = listTools(d.toolDirs ?? []).find((x) => x.id === seg[1])
+        if (!t) return send(res, 404, { error: 'not_found' })
+        return send(res, 200, { id: t.id, name: t.name, html: readFileSync(t.file, 'utf8') })
+      }
+      // ── 아트 프로젝트 — 폴더 · 설정 · AI 지침(CLAUDE.md · AGENTS.md) ──
+      if (seg[0] === 'projects' && gw.projects) {
+        const store = gw.projects
+        if (req.method === 'GET' && seg.length === 1) {
+          const counts = d.ledger.projectCounts()
+          return send(res, 200, { root: store.root, defaults: DEFAULT_SETTINGS, projects: store.list().map((pr) => ({ ...pr, dir: store.dir(pr.id), ...(counts.get(pr.id) ?? { outputs: 0, cover: null }) })) })
+        }
+        if (req.method === 'POST' && seg.length === 1) {
+          const b = ((await readBody(req)) ?? {}) as { name?: unknown; settings?: unknown }
+          if (typeof b.name !== 'string' || !b.name.trim()) return send(res, 400, { error: 'bad_request', message: '프로젝트 이름이 필요해요' })
+          try {
+            return send(res, 201, store.create(b.name, (b.settings && typeof b.settings === 'object' ? b.settings : {}) as Partial<ProjectSettings>))
+          } catch (e) {
+            return send(res, 400, { error: 'bad_request', message: (e as Error).message })
+          }
+        }
+        const pid = seg[1] ?? ''
+        const pr = store.get(pid)
+        if (!pr) return send(res, 404, { error: 'not_found', message: '프로젝트를 찾지 못했어요' })
+        if (req.method === 'GET' && seg.length === 2) return send(res, 200, { ...pr, dir: store.dir(pr.id) })
+        if (req.method === 'POST' && seg.length === 2) {
+          const b = ((await readBody(req)) ?? {}) as { name?: unknown; settings?: unknown }
+          return send(res, 200, store.update(pr.id, { name: typeof b.name === 'string' ? b.name : undefined, settings: (b.settings && typeof b.settings === 'object' ? b.settings : undefined) as Partial<ProjectSettings> | undefined }))
+        }
+        if (seg[2] === 'characters') return characters(req, res, store.charactersDir(pr.id), seg.slice(2))
+      }
+      if (seg[0] === 'characters' && d.charactersDir) return characters(req, res, d.charactersDir, seg)
       // ── Blender로 3D 모델 열기 — 이 PC에 보관된 모델 파일만 연다 ──
       if (req.method === 'GET' && path === '/blender') return send(res, 200, await findBlender())
       if (req.method === 'POST' && seg[0] === 'outputs' && seg[1] && seg[2] === 'open-in-blender') {
         const o = d.ledger.output(seg[1])
         if (!o) return send(res, 404, { error: 'not_found' })
-        if (!o.storageKey?.startsWith('local:') || !d.outputsDir) return send(res, 409, { error: 'not_local', message: '이 PC에 보관된 모델 파일이 없어요' })
-        const abs = resolve(d.outputsDir, o.storageKey.slice('local:'.length))
-        if (!abs.startsWith(resolve(d.outputsDir)) || !existsSync(abs)) return send(res, 404, { error: 'not_found', message: '보관된 파일을 찾지 못했어요' })
+        const abs = gw.localPath(o.storageKey)
+        if (!abs) return send(res, 409, { error: 'not_local', message: '이 PC에 보관된 모델 파일이 없어요' })
+        if (!existsSync(abs)) return send(res, 404, { error: 'not_found', message: '보관된 파일을 찾지 못했어요' })
         if (!MODEL_EXTS.includes(extname(abs).toLowerCase())) return send(res, 400, { error: 'not_model', message: 'Blender로 열 수 있는 3D 파일이 아니에요' })
         try {
           return send(res, 200, await openInBlender(abs))
@@ -307,11 +410,9 @@ export async function startServer(d: ServerDeps): Promise<RunningServer> {
         const o = d.ledger.output(seg[1])
         if (!o) return send(res, 404, { error: 'not_found' })
         // 보관본이 있으면 그것을(서비스 링크는 만료될 수 있다)
-        if (o.storageKey?.startsWith('local:') && d.outputsDir) {
-          const abs = resolve(d.outputsDir, o.storageKey.slice('local:'.length))
-          if (!abs.startsWith(resolve(d.outputsDir))) return send(res, 400, { error: 'bad_storage_key' })
-          return send(res, 200, { url: pathToFileURL(abs).href, localPath: abs, stored: true })
-        }
+        const abs = gw.localPath(o.storageKey)
+        if (!abs && /^(local|lib|proj):/.test(o.storageKey ?? '')) return send(res, 400, { error: 'bad_storage_key' })
+        if (abs) return send(res, 200, { url: pathToFileURL(abs).href, localPath: abs, stored: true })
         const p = byId.get(o.provider)
         return send(res, 200, { url: p?.resolveOutput ? await p.resolveOutput(o.url) : o.url, stored: false, expiresAt: o.expiresAt })
       }

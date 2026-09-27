@@ -20,6 +20,7 @@ const TOOLS = [
       '모델 고르기: 먼저 list_models로 검증된 모델과 옵션 값을 본다. 사용자가 목록에 없는 Higgsfield 모델(예: Kling O3, Wan, MiniMax, Seedance 2.5, Recraft, Ideogram)을 원하면',
       "model에 'hf/<API 경로>'를 넣는다. 경로와 옵션 이름·값은 기억에 의존하지 말고 공식 문서(https://docs.higgsfield.ai/docs/models)의 해당 모델 페이지에서 확인한다.",
       '제출 전에 무료 견적을 먼저 받으므로, 옵션 값이 틀리면 비용 없이 "옵션 값이 맞지 않아요 — …" 오류가 돌아온다. 그 메시지에 나온 허용 값으로 고쳐 다시 요청하라.',
+      '아트 프로젝트 폴더에서 대화 중이면 결과는 그 프로젝트로 분류되고, 프로젝트의 "피할 것"이 게이트웨이에서 자동으로 붙는다. 분위기는 의상 · 소품 · 배경 · 조명 묘사로 직접 쓴다.',
       '대화 방식: 사용자가 만들고 싶은 것을 말하면, 결과를 크게 바꾸는데 정해지지 않은 것(예: 종류 · 비율 · 길이 · 스타일)만 짧게 묻는다.',
       '선택지 질문 도구(AskUserQuestion 등)가 있으면 그걸로, 한 번에 한 질문 · 선택지 2~4개로 묻는다. 요청이 충분히 분명하면 묻지 말고 바로 generate를 부른다.',
       '해상도 · 모델 버전 같은 세부 옵션은 사용자가 승인 카드에서 직접 바꿀 수 있으니 일일이 묻지 말고 알맞은 값을 골라라. 프롬프트는 서비스에 맞게 영어로 자세히 쓴다.',
@@ -37,8 +38,7 @@ const TOOLS = [
         prompt: { type: 'string' },
         inputs: { type: 'array', items: { type: 'object', properties: { kind: { type: 'string', enum: ['image', 'video', 'model'] }, url: { type: 'string' }, path: { type: 'string' } } } },
         params: { type: 'object', description: '모델별 옵션(해상도·길이·종횡비·ComfyCloud workflow JSON 등)' },
-        title: { type: 'string', description: '라이브러리에 보일 짧은 이름' },
-        style: { type: 'string', description: '스타일 이름 또는 id(list_styles로 확인). 결과를 그 스타일로 분류하고, 스타일의 앞/뒤 문구를 프롬프트에 자동으로 붙인다 — prompt에는 그 문구를 반복하지 말 것' }
+        title: { type: 'string', description: '라이브러리에 보일 짧은 이름' }
       },
       required: ['capability', 'model']
     }
@@ -56,11 +56,6 @@ const TOOLS = [
   {
     name: 'generation_balances',
     description: '연결된 생성 서비스의 남은 잔액/크레딧을 조회한다(비용 없음).',
-    inputSchema: { type: 'object', properties: {} }
-  },
-  {
-    name: 'list_styles',
-    description: '사용자가 만든 아트 스타일(분류 + 프롬프트 프리셋) 목록을 조회한다(비용 없음). 각 스타일의 설명과 프롬프트 앞/뒤 문구, 결과 수를 준다.',
     inputSchema: { type: 'object', properties: {} }
   },
   {
@@ -124,8 +119,8 @@ async function call(name: string, args: Json): Promise<string> {
         inputs: args.inputs,
         params: args.params,
         provider: typeof args.provider === 'string' ? args.provider : undefined,
-        origin: { source: 'agent', title: typeof args.title === 'string' ? args.title : undefined },
-        style: typeof args.style === 'string' ? args.style : undefined
+        // 이 중계기는 채팅의 작업 폴더에서 실행된다 — 아트 프로젝트 폴더면 게이트웨이가 그 프로젝트로 분류하고 아트 디렉션을 붙인다
+        origin: { source: 'agent', title: typeof args.title === 'string' ? args.title : undefined, cwd: process.cwd() }
       }
     })) as JobRecord
     // 승인 대기 → (승인되면) 완료까지
@@ -162,13 +157,6 @@ async function call(name: string, args: Json): Promise<string> {
     )
   }
   if (name === 'generation_balances') return JSON.stringify(await api('/balances'), null, 2)
-  if (name === 'list_styles') {
-    const list = (await api('/styles')) as { name: string; description: string | null; promptPrefix: string | null; promptSuffix: string | null; negative: string | null; count: number }[]
-    if (!list.length) return '아직 만든 스타일이 없어요. 사용자가 아트 화면에서 만들 수 있어요.'
-    return list
-      .map((s) => [`■ ${s.name} (결과 ${s.count}개)`, s.description && `  설명: ${s.description}`, s.promptPrefix && `  앞 문구: ${s.promptPrefix}`, s.promptSuffix && `  뒤 문구: ${s.promptSuffix}`, s.negative && `  네거티브: ${s.negative}`].filter(Boolean).join('\n'))
-      .join('\n')
-  }
   if (name === 'generation_history') {
     const list = (await api(`/jobs?limit=${Math.min(50, Number(args.limit ?? 10))}`)) as JobRecord[]
     return list.map((j) => `${new Date(j.createdAt).toISOString()} ${j.state} ${j.provider}/${j.model} — ${(j.prompt ?? '').slice(0, 80)}`).join('\n') || '기록이 없어요.'
