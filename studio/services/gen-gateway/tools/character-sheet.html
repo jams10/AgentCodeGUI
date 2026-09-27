@@ -76,7 +76,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 
 // ── 입력 항목 ────────────────────────────────────────────────
 const F = {
-  identity: [['name','캐릭터 이름','예: 서린'],['job','직업','예: 동네 수리점 직원'],['gender','성별','예: 여성'],['age','나이대','예: 20대 후반'],['firstImpression','첫인상','예: 둥근 얼굴과 짙은 눈썹으로 단단하고 친근한 인상','textarea',true]],
+  identity: [['name','캐릭터 이름','예: 서린'],['job','직업','예: 동네 수리점 직원'],['gender','성별','예: 여성'],['age','나이대','예: 20대 후반'],['firstImpression','첫인상','예: 둥근 얼굴과 짙은 눈썹으로 단단하고 친근한 인상','textarea',true],['personality','성격 · 감정 표현 방식 · 선택','예: 무뚝뚝한 편이라 기뻐도 크게 웃지 않고 눈으로 웃는다. 쑥스러우면 시선을 피한다.','textarea',true]],
   face: [['faceShape','얼굴형','예: 짧은 타원형, 볼에 살이 약간 있음'],['eyes','눈','예: 길고 약간 처진 눈'],['eyebrows','눈썹','예: 짙고 곧은 눈썹'],['nose','코','예: 낮은 콧대, 둥근 코끝'],['mouth','입 · 입술','예: 보통 크기 입, 아랫입술이 조금 두꺼움'],['jaw','턱 · 광대','예: 둥근 턱, 약간 넓은 광대'],['skinTone','피부 톤','예: 중간 밝기의 웜 베이지'],['hair','헤어스타일','예: 검은 턱 길이 단발, 귀 뒤로 넘김']],
   body: [['proportion','등신 · 신체 비율','예: 7.5등신, 다리가 긴 편, 머리는 작은 편','text',true],['bodyDescription','체형 요약','예: 평균 체격에 하체가 조금 더 발달한 체형','textarea',true],['frame','골격','예: 중간 골격'],['neck','목','예: 보통 길이와 굵기'],['shoulderDescription','어깨','예: 보통 너비, 완만한 어깨선'],['chestDescription','가슴 · 흉곽','예: 보통 볼륨, 흉곽이 납작하지 않음'],['waistDescription','허리','예: 완만하게 들어간 허리'],['hipDescription','골반 · 엉덩이','예: 골반이 어깨보다 약간 넓음'],['armDescription','팔','예: 전완이 단단하고 팔은 보통 굵기'],['legDescription','다리','예: 허벅지가 탄탄하고 종아리는 보통'],['muscleDescription','근육','예: 하체와 전완에 근육이 조금 보임'],['fatDescription','체지방','예: 복부와 볼에 부드러운 볼륨']],
   // 설정 메모 — 이미지 모델은 숫자를 재현하지 못하고, 치수 표현은 안전 검사에 걸릴 수 있어 프롬프트에 넣지 않는다
@@ -96,9 +96,10 @@ const STATES = [
   { id: 'idle', name: '기본', note: '평상시', loop: true, full: true,
     face: '무표정. 눈과 입 주변의 힘을 풀고 입을 편하게 다문다. 정면 시선.', bust: '어깨 수평, 편안한 중립 자세.', fullPose: '기본 서기 자세.',
     motion: 'Only subtle natural breathing and an occasional slow blink. Head and shoulders stay in place.' },
-  { id: 'joy', name: '기쁨', note: '회복 · 음식 · 버프 지속 (엷은 미소)', loop: true, full: true,
-    face: '입꼬리가 가볍게 올라가고 눈매가 부드러워지는 작고 편안한 미소. 이를 드러내지 않는다.', bust: '목과 어깨가 편하게 풀린 자세.', fullPose: '어깨가 풀린 편안한 서기 자세. 체중을 한쪽 다리에 살짝 싣는다.',
-    motion: 'A soft, content small smile is held. Gentle breathing, a slight relaxed head tilt of a few degrees at most.' },
+  { id: 'joy', name: '기쁨', note: '회복 · 음식 · 버프 지속 (엷은 기쁨)', loop: true, full: true, free: true,
+    face: '엷고 편안한 기쁨. 미소의 모양, 눈매, 입을 여는 정도는 이 인물의 성격 · 나이 · 인상에 맞게 정한다.', bust: '고개 · 어깨의 작은 움직임이나 기울기는 인물에 맞게 정하되, 기준 구도에서 크게 벗어나지 않는다.', fullPose: '편안하게 풀린 서기 자세. 몸짓은 인물에 맞게 정하되 작게.',
+    intensity: '절제된 가벼운 기쁨. 활짝 웃기 · 소리 내어 웃기 · 뛰기 · 팔을 드는 큰 동작은 하지 않는다(그건 환호 상태).',
+    motion: 'A mild, contented happiness expressed the way this particular person would show it; keep their expression from the input image. Restrained: no big grin, no laughing, no jumping, no large gestures. Gentle breathing and small natural movement only.' },
   { id: 'suffering', name: '괴로움', note: '독 · 출혈 · 화상 등 지속 피해', loop: true, full: true,
     face: '눈썹을 안쪽으로 모으고 눈을 가늘게 뜨며 이를 악문 지속적인 고통의 찡그림.', bust: '어깨를 조금 움츠리고 목에 힘이 들어간다. 손이 크롭 안에 들어오면 가슴 쪽을 부여잡는다.', fullPose: '한 손으로 가슴이나 옆구리를 부여잡고 상체를 조금 안으로 웅크린다.',
     motion: 'Sustained pain: tense shallow breathing, slight trembling of the shoulders, wincing eyes. No skin color change, no glow or visual effects.' },
@@ -113,10 +114,11 @@ const STATES = [
     motion: 'Frozen in fear: wide unfocused stare, rapid shallow breathing, faint trembling.' },
   { id: 'hurt', name: '피격', note: '공격을 맞은 순간', loop: false, full: false,
     face: '강하게 찡그리며 한쪽 눈을 질끈 감고 이를 악문다.', bust: '어깨가 움찔하며 고개가 살짝 뒤로 젖혀진다.', fullPose: '',
-    motion: 'One-shot hit reaction: starts neutral, a sharp flinch and wince as if struck, then recovers back to the neutral expression.' },
-  { id: 'cheer', name: '환호', note: '치명타 · 강한 버프 · 승리 (활짝 미소)', loop: false, full: false,
-    face: '이가 보이게 활짝 웃고 눈이 반달처럼 휘어진다.', bust: '어깨가 살짝 들리고 고개가 약간 뒤로 간다.', fullPose: '',
-    motion: 'One-shot: from neutral to a big bright smile with a small excited lift of the shoulders, then settles into the smile.' }
+    motion: 'One-shot hit reaction: starts from the pained wince in the input image, a sharp flinch as if struck again (shoulders jerk, head snaps back slightly), then holds the same wince. Head and shoulders stay in frame.' },
+  { id: 'cheer', name: '환호', note: '치명타 · 강한 버프 · 승리 (크고 분명한 기쁨)', loop: false, full: false, free: true,
+    face: '크고 분명한 기쁨 · 흥분. 웃음의 모양(활짝 웃음 · 이를 드러낸 웃음 · 자신만만한 미소 · 입을 벌린 탄성 등), 눈매는 이 인물의 성격 · 나이 · 인상에 맞게 정한다.', bust: '어깨 · 고개의 움직임은 인물에 맞게 정하되, 머리와 어깨가 기준 프레임 안에 남는다.', fullPose: '',
+    intensity: '기쁨 상태보다 한눈에 더 크고 분명하게. 다만 과장된 만화식 표현 · 점프 · 팔을 크게 휘두르는 동작은 하지 않는다. 손이 프레임에 들어오지 않는다.',
+    motion: 'One-shot: starts from the expression in the input image and plays a short burst of that strong happiness the way this particular person would show it, then settles back into the same expression. Head and shoulders stay in frame. No jumping, no big arm gestures, no exaggerated cartoon reaction.' }
 ]
 
 // ── 문서 ────────────────────────────────────────────────────
@@ -217,12 +219,14 @@ function statePrompt(kind, st) {
     full ? `첨부한 이미지 1(기준 전신)과 같은 장면에서 [${st.name}] 상태의 전신 이미지 한 장.` : `첨부한 이미지 1(기준 초상화)과 같은 장면에서 [${st.name}] 상태의 상반신 초상화 한 장.`,
     refs.length > 1 && block('참조', refs.slice(1).map(([, label], i) => `- 이미지 ${i + 2}: ${label}. 결과는 한 컷이고 시트처럼 여러 방향을 넣지 않는다.`)),
     block('그대로 유지', ['- 같은 인물 · 얼굴 구조 · 헤어 · 의상 · 소품 · 체형.', full ? '- 같은 카메라 · 구도 · 배경 · 조명. 머리부터 신발까지 모두 보인다.' : '- 같은 카메라 · 구도 · 얼굴 크기와 위치 · 배경 · 조명. 머리 전체 · 목 · 양 어깨 · 가슴 위쪽까지.', '- 상태 때문에 체중 · 근육 · 얼굴 살을 바꾸지 않는다.']),
-    block('이 상태에서 바꿀 것 — 모든 캐릭터 공통 규격', ['- 표정: ' + st.face, '- 자세: ' + (full ? st.fullPose : st.bust)]),
+    st.free
+      ? block('이 상태에서 바꿀 것 — 강도만 공통, 표현 방식은 이 인물답게', ['- 표정: ' + st.face, '- 자세: ' + (full ? st.fullPose : st.bust), '- 강도: ' + st.intensity, line('이 인물의 성격 · 감정 표현 방식', v('personality')), !v('personality') && line('이 인물 (나이 · 직업 · 인상으로 표현 방식을 짐작한다)', [v('age'), v('job'), v('firstImpression')].filter(Boolean).join(' · '))])
+      : block('이 상태에서 바꿀 것 — 모든 캐릭터 공통 규격', ['- 표정: ' + st.face, '- 자세: ' + (full ? st.fullPose : st.bust)]),
     block('금지', ['- 피부색 변화 · 발광 · 상태 아이콘 · 이펙트 · 글자 · 여러 컷 합성 없음.', '- 가장 상태가 잘 읽히는 한 순간의 정지 자세. 잔상 없음.'])
   ].filter(Boolean).join('\n\n')
 }
 function videoPrompt(st) {
-  return [st.motion, st.loop ? 'The first and last frames should match closely so it can loop.' : 'Ends in a calm, held pose.', 'Keep the exact same person, face, outfit, framing and background as the input image. Static camera: no camera movement, no zoom, no cuts. No text, no subtitles, no added effects.'].filter(Boolean).join(' ')
+  return [st.motion, st.loop ? 'The first and last frames should match closely so it can loop.' : 'Ends holding the same expression and pose as the first frame.', 'Keep the exact same person, face, outfit, framing and background as the input image. Static camera: no camera movement, no zoom, no cuts. No text, no subtitles, no added effects.'].filter(Boolean).join(' ')
 }
 
 // ── 생성 요청 ───────────────────────────────────────────────
