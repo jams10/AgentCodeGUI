@@ -1,6 +1,6 @@
 // 아트 작업 공간 — 필터 · 결과 갤러리 · 생성 패널 · 상세 보기.
 // 생성은 "견적 받기"까지만 한다. 비용이 드는 제출은 승인 센터 카드의 승인으로만 일어난다(채팅 · AI와 같은 길).
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactElement } from 'react'
 import { getPref, setPref } from '../lib/prefs'
 import {
   CAP_NAME,
@@ -564,6 +564,137 @@ function AssistHole(): ReactElement {
   return <div ref={ref} className="st-art-assist-hole" aria-hidden="true" />
 }
 
+// ── 스타일 드롭다운 ───────────────────────────────────
+/**
+ * 스타일이 늘어도 한 줄만 차지하는 필터. 펼치면 검색 · 전체 · 스타일(개수, ✎ 편집) · 미분류 · 새 스타일.
+ * 목록 밖을 누르거나 Esc로 닫힌다. 검색칸에서 ↑↓로 고르고 Enter로 선택한다.
+ */
+function StylePicker({
+  styles,
+  value,
+  total,
+  unsorted,
+  onChange,
+  onEdit,
+  onNew
+}: {
+  styles: Style[]
+  value: StyleFilter
+  total: number
+  unsorted: number
+  onChange: (v: StyleFilter) => void
+  onEdit: (s: Style) => void
+  onNew: () => void
+}): ReactElement {
+  const [open, setOpen] = useState(false)
+  const [q, setQ] = useState('')
+  const [hi, setHi] = useState(0)
+  const box = useRef<HTMLDivElement>(null)
+  const search = useRef<HTMLInputElement>(null)
+
+  const opts: { id: StyleFilter; label: string; count: number; style?: Style }[] = [
+    { id: 'all', label: '전체', count: total },
+    ...styles.filter((x) => !q.trim() || x.name.toLowerCase().includes(q.trim().toLowerCase())).map((x) => ({ id: x.id, label: x.name, count: x.count, style: x })),
+    { id: 'none', label: '미분류', count: unsorted }
+  ]
+  const current = value === 'all' ? '전체' : value === 'none' ? '미분류' : styles.find((x) => x.id === value)?.name ?? '전체'
+
+  useEffect(() => {
+    if (!open) return
+    setQ('')
+    setHi(Math.max(0, opts.findIndex((o) => o.id === value)))
+    requestAnimationFrame(() => search.current?.focus())
+    const down = (e: MouseEvent): void => {
+      if (!box.current?.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', down)
+    return () => document.removeEventListener('mousedown', down)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
+
+  const pick = (v: StyleFilter): void => {
+    onChange(v)
+    setOpen(false)
+  }
+  const onKey = (e: ReactKeyboardEvent): void => {
+    if (e.key === 'Escape') {
+      e.stopPropagation()
+      setOpen(false)
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setHi((h) => Math.min(opts.length - 1, h + 1))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setHi((h) => Math.max(0, h - 1))
+    } else if (e.key === 'Enter' && opts[hi]) {
+      e.preventDefault()
+      pick(opts[hi].id)
+    }
+  }
+
+  return (
+    <div className="st-sp" ref={box}>
+      <button type="button" className="st-sp-btn" aria-haspopup="listbox" aria-expanded={open} aria-label={`스타일 필터: ${current}`} onClick={() => setOpen((o) => !o)}>
+        <span className="st-gen-ellipsis">{current}</span>
+        <em>{value === 'all' ? total : value === 'none' ? unsorted : styles.find((x) => x.id === value)?.count ?? 0}</em>
+        <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+          <path d="m3 4.5 3 3 3-3" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+        </svg>
+      </button>
+      {open && (
+        <div className="st-sp-pop" onKeyDown={onKey}>
+          <input
+            ref={search}
+            className="st-art-search"
+            type="search"
+            aria-label="스타일 검색"
+            placeholder={`스타일 검색 (${styles.length}개)`}
+            value={q}
+            onChange={(e) => {
+              setQ(e.target.value)
+              setHi(0)
+            }}
+          />
+          <ul className="st-sp-list" role="listbox" aria-label="스타일">
+            {opts.map((o, i) => (
+              <li key={o.id} role="option" aria-selected={value === o.id} className={(i === hi ? 'hi ' : '') + (value === o.id ? 'on' : '')} onMouseEnter={() => setHi(i)}>
+                <button type="button" className="st-sp-pick" onClick={() => pick(o.id)} title={o.style?.description ?? undefined}>
+                  <span className="st-gen-ellipsis">{o.label}</span>
+                  <em>{o.count}</em>
+                </button>
+                {o.style && (
+                  <button
+                    type="button"
+                    className="st-art-edit"
+                    aria-label={`${o.label} 스타일 고치기`}
+                    onClick={() => {
+                      setOpen(false)
+                      onEdit(o.style!)
+                    }}
+                  >
+                    ✎
+                  </button>
+                )}
+              </li>
+            ))}
+            {q.trim() && opts.length === 2 && <li className="st-sp-empty">'{q.trim()}' 스타일이 없어요</li>}
+          </ul>
+          <button
+            type="button"
+            className="st-art-newstyle st-sp-new"
+            onClick={() => {
+              setOpen(false)
+              onNew()
+            }}
+          >
+            + 새 스타일
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── 공간 ───────────────────────────────────────────────
 type StyleFilter = 'all' | 'none' | string
 
@@ -652,28 +783,7 @@ export function ArtSpace({ ensureApp }: { ensureApp: () => void }): ReactElement
         <input className="st-art-search" type="search" aria-label="프롬프트 검색" placeholder="프롬프트 검색" value={q} onChange={(e) => setQ(e.target.value)} />
         <div className="st-art-group">
           <span>스타일</span>
-          <button type="button" className={styleF === 'all' ? 'on' : ''} onClick={() => setStyleF('all')}>
-            전체
-            <em>{entries.length}</em>
-          </button>
-          {styles.map((x) => (
-            <div key={x.id} className={styleF === x.id ? 'st-art-srow on' : 'st-art-srow'}>
-              <button type="button" onClick={() => setStyleF(x.id)} title={x.description ?? undefined}>
-                <span className="st-gen-ellipsis">{x.name}</span>
-                <em>{x.count}</em>
-              </button>
-              <button type="button" className="st-art-edit" aria-label={`${x.name} 스타일 고치기`} onClick={() => setEditing(x)}>
-                ✎
-              </button>
-            </div>
-          ))}
-          <button type="button" className={styleF === 'none' ? 'on' : ''} onClick={() => setStyleF('none')}>
-            미분류
-            <em>{unsorted}</em>
-          </button>
-          <button type="button" className="st-art-newstyle" onClick={() => setEditing('new')}>
-            + 새 스타일
-          </button>
+          <StylePicker styles={styles} value={styleF} total={entries.length} unsorted={unsorted} onChange={setStyleF} onEdit={(x) => setEditing(x)} onNew={() => setEditing('new')} />
         </div>
         <div className="st-art-group">
           <span>종류</span>
