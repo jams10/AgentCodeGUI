@@ -22,7 +22,7 @@ test('프로젝트 만들기: 폴더 구조 · project.json · CLAUDE.md/AGENTS.
     for (const sub of ['characters', 'assets', 'exports']) assert.ok(existsSync(join(root, 'Test', sub)))
     const claude = readFileSync(join(root, 'Test', 'CLAUDE.md'), 'utf8')
     assert.match(claude, /피할 것.*글자 없음/)
-    assert.match(claude, /## 캐릭터 제작 공통 규칙/)
+    assert.match(claude, /tools\/character-sheet\.json/)
     assert.ok(existsSync(join(root, 'Test', 'AGENTS.md')))
     assert.throws(() => st.create('Test'), /이미 있어요/)
     assert.deepEqual(st.list().map((x) => x.id), ['Test'])
@@ -38,25 +38,43 @@ test('설정을 바꾸면 관리 구역만 다시 쓰고, 사용자가 적은 �
     st.create('P')
     const f = join(root, 'P', 'CLAUDE.md')
     writeFileSync(f, '내 메모: 주인공은 왼손잡이\n\n' + readFileSync(f, 'utf8') + '\n끝 메모')
-    st.update('P', { settings: { avoid: '문신 없음', rules: '규칙 하나\n규칙 둘' } })
+    st.update('P', { settings: { avoid: '문신 없음' } })
     const t = readFileSync(f, 'utf8')
     assert.match(t, /^내 메모: 주인공은 왼손잡이/)
     assert.match(t, /끝 메모/)
     assert.match(t, /문신 없음/)
-    assert.match(t, /- 규칙 하나\n- 규칙 둘/)
     assert.equal(t.match(/agentstudio:begin/g)?.length, 1) // 관리 구역은 하나만
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
 })
 
-test('설정 정리: 빈 값은 시작값, 예전 테마 설정 같은 모르는 값은 버린다', () => {
-  const s = normalize({ theme: 'fmv90', themes: {}, imageDirection: 'x', quality: 'high' } as never)
-  assert.equal(s.quality, 'high')
-  assert.match(s.rules, /추가 인물 없음/)
-  assert.equal('theme' in s, false)
-  assert.equal('themes' in s, false)
-  assert.equal('imageDirection' in s, false)
+test('설정 정리: 프로젝트 설정은 피할 것만 — 예전 테마 · 캐릭터 시트 값 같은 모르는 값은 버린다', () => {
+  const s = normalize({ theme: 'fmv90', themes: {}, quality: 'high', avoid: '로고' } as never)
+  assert.deepEqual(s, { avoid: '로고' })
+})
+
+test('예전 project.json의 캐릭터 시트 값은 도구 설정(tools/character-sheet.json)으로 옮긴다 · 도구 id 검사', () => {
+  const root = tmp()
+  try {
+    const st = new ProjectStore(root)
+    st.create('Old')
+    const f = join(root, 'Old', 'project.json')
+    const j = JSON.parse(readFileSync(f, 'utf8'))
+    j.settings = { avoid: '글자', rules: '규칙 A', background: '회색', analysisModel: 'gpt-x' }
+    writeFileSync(f, JSON.stringify(j))
+    assert.deepEqual(st.get('Old')?.settings, { avoid: '글자' })
+    assert.deepEqual(st.toolSettings('Old', 'character-sheet'), { rules: '규칙 A', background: '회색', analysisModel: 'gpt-x' })
+    assert.deepEqual(JSON.parse(readFileSync(f, 'utf8')).settings, { avoid: '글자' }) // 새 형식으로 다시 썼다
+    // 이미 도구 설정이 있으면 덮어쓰지 않는다
+    st.setToolSettings('Old', 'character-sheet', { rules: '새 규칙' })
+    writeFileSync(f, JSON.stringify({ ...j, settings: { rules: '옛 규칙' } }))
+    st.get('Old')
+    assert.deepEqual(st.toolSettings('Old', 'character-sheet'), { rules: '새 규칙' })
+    assert.throws(() => st.toolSettings('Old', '../x'), /도구 id/)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })
 
 test('폴더 이름 정리와 경로로 프로젝트 찾기(밖 경로는 null)', () => {

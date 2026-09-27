@@ -1,5 +1,6 @@
 // 아트 프로젝트 — 프로젝트 하나 = 폴더 하나(기본 E:\AgentStudio\ArtProjects\<이름>).
-//   project.json        앱 설정(공통 제작 규칙 · 피할 것 · 비율 · 기본 모델 · 영상 설정)
+//   project.json        프로젝트 설정(이름 · 피할 것) — 모든 도구 공통
+//   tools/<도구>.json   도구별 설정(예: 캐릭터 시트의 공통 규칙 · 출력 규격 · 기본 복장 · 분석 엔진)
 //   CLAUDE.md · AGENTS.md  AI가 채팅을 시작할 때 자동으로 읽는 프로젝트 지침(설정 요약 + 작업 규칙)
 //   characters/         캐릭터 시트 파일
 //   assets/             생성 결과(게이트웨이가 완료 즉시 보관)
@@ -10,27 +11,9 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFile
 import { join, relative, resolve, sep } from 'node:path'
 import type { GenerationRequest } from './types.ts'
 
-/** 캐릭터 제작 공통 규칙 시작값 — 프로젝트 설정에서 고친다(한 줄에 하나) */
-export const DEFAULT_RULES = [
-  '완전히 가상의 인물 한 명. 설정한 외모를 임의로 미화하거나 과장하지 않는다.',
-  '첫인상을 표현하려고 미소 · 분노 · 피로 같은 상태를 추가하지 않는다.',
-  '중립적인 정면 조명, 실제 피부 질감, 고른 노출. 과도한 보정 · 광각 왜곡 · 극적인 역광 없음.',
-  '스캔라인 · 노이즈 · VHS 번짐 같은 화면 효과는 넣지 않는다(나중에 일괄 후처리).',
-  '글자 · 이름표 · 치수선 · UI · 체력바 · 테두리 · 콜라주 · 추가 인물 없음.'
-].join('\n')
-
 export interface ProjectSettings {
-  /** 캐릭터 제작 공통 규칙(한 줄에 하나) — 캐릭터 시트 프롬프트와 AI 지침에 들어간다 */
-  rules: string
   /** 모든 생성에서 피할 것 — 네거티브를 받는 모델은 negative_prompt로, 나머지는 금지 문구로 */
   avoid: string
-  portraitRatio: string
-  fullRatio: string
-  background: string
-  model: string
-  quality: string
-  videoSeconds: number
-  videoResolution: string
 }
 
 export interface Project {
@@ -42,16 +25,15 @@ export interface Project {
 }
 
 export const DEFAULT_SETTINGS: ProjectSettings = {
-  rules: DEFAULT_RULES,
-  avoid: '',
-  portraitRatio: '4:5',
-  fullRatio: '2:3',
-  background: '밝은 회색 단색 배경',
-  model: 'gpt-image-2.5-sunburst',
-  quality: 'medium',
-  videoSeconds: 4,
-  videoResolution: '480p'
+  avoid: ''
 }
+
+/**
+ * 예전에 프로젝트 설정에 있던 캐릭터 시트 전용 값 — 이제 도구 설정(tools/character-sheet.json)에 있다.
+ * 예전 project.json을 읽으면 이 값들을 도구 설정으로 옮긴다(도구 설정이 아직 없을 때만).
+ */
+const LEGACY_SHEET_KEYS = ['rules', 'portraitRatio', 'fullRatio', 'background', 'model', 'quality', 'videoSeconds', 'videoResolution', 'baseOutfit', 'analysisEngine', 'analysisModel']
+const TOOL_ID = /^[a-z0-9][a-z0-9-]{0,40}$/
 
 /** 폴더 이름으로 쓸 수 있게 — Windows 금지 문자 · 끝의 점/공백 제거 */
 export function folderName(name: string): string {
@@ -96,7 +78,15 @@ export class ProjectStore {
       const f = join(this.dir(id), 'project.json')
       if (!existsSync(f)) return null
       const j = JSON.parse(readFileSync(f, 'utf8')) as Partial<Project>
-      return { id, name: j.name || id, createdAt: j.createdAt ?? 0, updatedAt: j.updatedAt ?? 0, settings: normalize(j.settings ?? {}) }
+      const p: Project = { id, name: j.name || id, createdAt: j.createdAt ?? 0, updatedAt: j.updatedAt ?? 0, settings: normalize(j.settings ?? {}) }
+      const raw = (j.settings ?? {}) as Record<string, unknown>
+      const legacy = Object.fromEntries(LEGACY_SHEET_KEYS.filter((k) => raw[k] !== undefined).map((k) => [k, raw[k]]))
+      if (Object.keys(legacy).length) {
+        // 예전 형식 — 캐릭터 시트 값을 도구 설정으로 옮기고 project.json을 새 형식으로 다시 쓴다
+        if (!this.toolSettings(id, 'character-sheet')) this.setToolSettings(id, 'character-sheet', legacy)
+        this.write(p)
+      }
+      return p
     } catch {
       return null
     }
@@ -119,6 +109,29 @@ export class ProjectStore {
     const next: Project = { ...p, name: patch.name?.trim() || p.name, updatedAt: Date.now(), settings: normalize({ ...p.settings, ...(patch.settings ?? {}) }) }
     this.write(next)
     return next
+  }
+
+  /** 도구 설정 — <프로젝트>/tools/<도구 id>.json. 없으면 null */
+  toolSettings(id: string, toolId: string): Record<string, unknown> | null {
+    if (!TOOL_ID.test(toolId)) throw new Error('도구 id가 올바르지 않아요')
+    const f = join(this.dir(id), 'tools', `${toolId}.json`)
+    if (!existsSync(f)) return null
+    try {
+      const v = JSON.parse(readFileSync(f, 'utf8')) as unknown
+      return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null
+    } catch {
+      return null
+    }
+  }
+
+  setToolSettings(id: string, toolId: string, value: Record<string, unknown>): Record<string, unknown> {
+    if (!TOOL_ID.test(toolId)) throw new Error('도구 id가 올바르지 않아요')
+    const d = join(this.dir(id), 'tools')
+    mkdirSync(d, { recursive: true })
+    const tmp = join(d, `${toolId}.json.tmp`)
+    writeFileSync(tmp, JSON.stringify(value, null, 2), 'utf8')
+    renameSync(tmp, join(d, `${toolId}.json`))
+    return value
   }
 
   /** 작업 폴더(채팅의 cwd 등)가 어느 프로젝트 안인지 */
@@ -155,7 +168,7 @@ const KEYS = Object.keys(DEFAULT_SETTINGS) as (keyof ProjectSettings)[]
 export function normalize(raw: Partial<ProjectSettings>): ProjectSettings {
   const s = { ...DEFAULT_SETTINGS } as Record<string, unknown>
   for (const k of KEYS) if (raw[k] !== undefined && raw[k] !== null) s[k] = raw[k]
-  return { ...(s as unknown as ProjectSettings), rules: typeof s.rules === 'string' ? s.rules : DEFAULT_RULES }
+  return s as unknown as ProjectSettings
 }
 
 /** 프로젝트 지침(CLAUDE.md / AGENTS.md 관리 구역) */
@@ -169,15 +182,11 @@ function guide(p: Project): string {
     '## 설정',
     '- 분위기는 따로 정하지 않아요 — 의상 · 소품 · 배경 · 조명 묘사로 만들어요.',
     s.avoid ? `- 피할 것(게이트웨이가 모든 이미지 · 영상 요청에 자동으로 붙여요): ${s.avoid}` : '',
-    `- 기본 비율: 상반신 ${s.portraitRatio} · 전신 ${s.fullRatio}, 배경: ${s.background}`,
-    `- 기본 이미지 모델: ${s.model} (품질 ${s.quality}) · 영상: ${s.videoSeconds}초 ${s.videoResolution}`,
     '',
     '## 폴더',
     '- `characters/` 캐릭터 시트(JSON) — 캐릭터 외형 · 기준 이미지 · 상태 진행 기록. 캐릭터 작업 전에 해당 파일을 읽어요.',
-    '- `assets/` 생성 결과(자동 보관) · `exports/` 스프라이트 시트 등 최종 산출물',
-    '',
-    '## 캐릭터 제작 공통 규칙',
-    ...s.rules.split('\n').map((l) => l.trim()).filter(Boolean).map((l) => `- ${l}`),
+    '- `tools/` 도구 설정(JSON) — 예: `tools/character-sheet.json`에 캐릭터 제작 공통 규칙 · 출력 규격 · 공통 기본 복장이 있어요. 캐릭터 이미지를 만들 때는 이 값을 따라요.',
+    '- `assets/` 생성 결과(자동 보관) · `references/` 올린 참고 사진 · `exports/` 스프라이트 시트 등 최종 산출물',
     '',
     '## 작업 규칙',
     '- 한 채팅에서는 한 가지 작업만 해요. 끝나면 결정한 내용을 이 파일이나 캐릭터 파일에 남기고 새 채팅에서 이어가요.',

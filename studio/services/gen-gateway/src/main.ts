@@ -4,6 +4,7 @@ import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { LocalArchiver } from './archive.ts'
+import { makeEngines } from './analyze.ts'
 import { ProjectStore } from './projects.ts'
 import { Gateway, type GatewayEvent } from './gateway.ts'
 import { Ledger } from './ledger.ts'
@@ -98,7 +99,7 @@ export async function boot(opts: { serve: boolean; log?: (m: string) => void } =
   if (opts.serve) {
     // 내장 도구는 게이트웨이 옆 tools 폴더(개발: 저장소, 설치본: resources/gen-gateway/tools), 사용자 도구는 데이터 폴더
     const builtinTools = join(dirname(fileURLToPath(import.meta.url)), '..', 'tools')
-    server = await startServer({ gateway, ledger, secrets, providers, infoFile: p.info, outputsDir: p.outputs, models, charactersDir: p.characters, toolDirs: [builtinTools, p.tools] })
+    server = await startServer({ gateway, ledger, secrets, providers, infoFile: p.info, outputsDir: p.outputs, models, charactersDir: p.characters, toolDirs: [builtinTools, p.tools], engines: makeEngines(appHome()) })
     emit = server.broadcast
     log(`127.0.0.1:${server.port}에서 대기 중 (라우팅: ${source === 'user' ? 'routes.json' : '기본값'}, 키: ${secrets.list().map((k) => k.provider).join(', ') || '없음'})`)
   }

@@ -8,6 +8,7 @@ import type { ModelInfo } from './models.ts'
 import { pathToFileURL } from 'node:url'
 import { findBlender, MODEL_EXTS, openInBlender } from './blender.ts'
 import { DEFAULT_SETTINGS, type ProjectSettings } from './projects.ts'
+import { analyzeFields, analyzePrompt, analyzeSchema, pickFields, type AnalyzeEngine, type AnalyzeKind } from './analyze.ts'
 import { Gateway, GatewayError, type GatewayEvent } from './gateway.ts'
 import type { Ledger } from './ledger.ts'
 import type { KeyStore } from './secrets.ts'
@@ -90,6 +91,8 @@ export interface ServerDeps {
   charactersDir?: string | null
   /** 도구(HTML) 폴더 — 앞쪽이 우선(내장 → 사용자). 같은 이름이면 앞쪽 것을 쓴다 */
   toolDirs?: string[]
+  /** 사진 분석 엔진(요청의 engine으로 고른다 — 없으면 첫 엔진) */
+  engines?: AnalyzeEngine[]
   port?: number
 }
 
@@ -389,8 +392,59 @@ export async function startServer(d: ServerDeps): Promise<RunningServer> {
           return send(res, 200, store.update(pr.id, { name: typeof b.name === 'string' ? b.name : undefined, settings: (b.settings && typeof b.settings === 'object' ? b.settings : undefined) as Partial<ProjectSettings> | undefined }))
         }
         if (seg[2] === 'characters') return characters(req, res, store.charactersDir(pr.id), seg.slice(2))
+        // 도구 설정 — <프로젝트>/tools/<도구>.json (예: 캐릭터 시트의 공통 규칙 · 출력 규격)
+        if (seg[2] === 'tools' && seg[3] && seg[4] === 'settings' && seg.length === 5) {
+          try {
+            if (req.method === 'GET') return send(res, 200, store.toolSettings(pr.id, seg[3]) ?? {})
+            if (req.method === 'POST') {
+              const b = await readBody(req)
+              if (!b || typeof b !== 'object' || Array.isArray(b)) return send(res, 400, { error: 'bad_request', message: '설정은 객체여야 해요' })
+              return send(res, 200, store.setToolSettings(pr.id, seg[3], b as Record<string, unknown>))
+            }
+          } catch (e) {
+            return send(res, 400, { error: 'bad_request', message: (e as Error).message })
+          }
+        }
+        // 참고 사진 올리기(얼굴 · 패션 사진 등) — <프로젝트>/references에 저장하고 경로를 돌려준다(생성 입력 · 분석에 쓴다)
+        if (req.method === 'POST' && seg[2] === 'uploads' && seg.length === 3) {
+          const b = ((await readBody(req)) ?? {}) as { dataUrl?: unknown; name?: unknown }
+          const m = typeof b.dataUrl === 'string' ? b.dataUrl.match(/^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/) : null
+          if (!m) return send(res, 400, { error: 'bad_request', message: 'PNG · JPEG · WebP 이미지만 올릴 수 있어요' })
+          const dir = join(store.dir(pr.id), 'references')
+          mkdirSync(dir, { recursive: true })
+          const stem = (typeof b.name === 'string' ? b.name : 'ref').replace(/\.[^.]*$/, '').replace(/[^\p{L}\p{N}_-]+/gu, '_').slice(0, 40) || 'ref'
+          const file = join(dir, `${Date.now().toString(36)}-${stem}.${m[1] === 'jpeg' ? 'jpg' : m[1]}`)
+          writeFileSync(file, Buffer.from(m[2], 'base64'))
+          return send(res, 201, { path: file })
+        }
       }
       if (seg[0] === 'characters' && d.charactersDir) return characters(req, res, d.charactersDir, seg)
+      // ── 사진 분석 — 얼굴 · 체형 · 코스튬 칸을 글로 채운다(생성 비용 없음) ──
+      if (req.method === 'GET' && path === '/analyze/engines')
+        return send(res, 200, (d.engines ?? []).map((e) => ({ id: e.id, name: e.name, unavailable: e.unavailable() })))
+      if (req.method === 'POST' && path === '/analyze') {
+        const b = ((await readBody(req)) ?? {}) as { kind?: unknown; images?: unknown; engine?: unknown; model?: unknown }
+        const kind = b.kind as AnalyzeKind
+        if (!['face', 'body', 'costume'].includes(kind)) return send(res, 400, { error: 'bad_request', message: 'kind는 face · body · costume 중 하나예요' })
+        const list = Array.isArray(b.images) ? (b.images as { path?: unknown; outputId?: unknown }[]) : []
+        const images: string[] = []
+        for (const i of list.slice(0, 4)) {
+          // 아직 이 PC에 없는 결과(보관 기능 전에 만든 것 등)는 지금 받아서 보관한다
+          const p = typeof i?.outputId === 'string' ? await gw.localFile(i.outputId).catch(() => null) : typeof i?.path === 'string' ? i.path : null
+          if (!p || !existsSync(p)) return send(res, 400, { error: 'bad_request', message: '분석할 이미지를 이 PC에서 찾지 못했어요' })
+          images.push(p)
+        }
+        if (!images.length) return send(res, 400, { error: 'bad_request', message: '이미지가 필요해요' })
+        const want = typeof b.engine === 'string' && b.engine ? b.engine : d.engines?.[0]?.id
+        const engine = (d.engines ?? []).find((e) => e.id === want)
+        if (!engine) return send(res, 400, { error: 'bad_request', message: `분석 엔진 '${want ?? ''}'을(를) 찾지 못했어요` })
+        try {
+          const raw = await engine.run({ prompt: analyzePrompt(kind), images, schema: analyzeSchema(kind), model: typeof b.model === 'string' && b.model.trim() ? b.model.trim() : undefined })
+          return send(res, 200, { engine: engine.id, fields: analyzeFields(kind), values: pickFields(kind, raw) })
+        } catch (e) {
+          return send(res, 502, { error: 'analyze_failed', message: (e as Error).message })
+        }
+      }
       // ── Blender로 3D 모델 열기 — 이 PC에 보관된 모델 파일만 연다 ──
       if (req.method === 'GET' && path === '/blender') return send(res, 200, await findBlender())
       if (req.method === 'POST' && seg[0] === 'outputs' && seg[1] && seg[2] === 'open-in-blender') {

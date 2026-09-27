@@ -256,19 +256,26 @@ export class Gateway {
         if (!i.outputId) return i
         const o = this.ledger.output(i.outputId)
         if (!o) throw new GatewayError('bad_request', `입력으로 준 결과를 찾지 못했어요: ${i.outputId}`)
-        const a = this.archiver
-        let key = o.storageKey
-        if (!key && a) {
-          const p = this.providers.get(o.provider)
-          const url = p?.resolveOutput ? await p.resolveOutput(o.url) : o.url
-          key = await a.archive(o, url, { project: o.project })
-          this.ledger.setStorageKey(o.id, key)
-        }
-        const path = key && a?.localPath ? a.localPath(key) : null
+        const path = await this.localFile(i.outputId)
         return path ? { ...i, path, url: undefined } : { ...i, url: o.url }
       })
     )
     return { ...req, inputs }
+  }
+
+  /** 결과의 이 PC 파일 경로 — 아직 보관 전이면 지금 받아서 보관한다(보관할 수 없으면 null) */
+  async localFile(outputId: string): Promise<string | null> {
+    const o = this.ledger.output(outputId)
+    if (!o) return null
+    const a = this.archiver
+    let key = o.storageKey
+    if (!key && a) {
+      const p = this.providers.get(o.provider)
+      const url = p?.resolveOutput ? await p.resolveOutput(o.url) : o.url
+      key = await a.archive(o, url, { project: o.project })
+      this.ledger.setStorageKey(o.id, key)
+    }
+    return key && a?.localPath ? a.localPath(key) : null
   }
 
   // ── 결과 지우기: 이 PC의 보관본 + (삭제 API가 있으면) 서비스 쪽 결과 ─────────

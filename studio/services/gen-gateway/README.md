@@ -78,6 +78,9 @@ node studio/services/gen-gateway/src/cli.ts serve                 # 게이트웨
 | `POST /jobs/:id/delete` | 결과 지우기 — 이 PC의 보관본 + 삭제 API가 있는 서비스(ComfyCloud `DELETE /api/assets/{id}`)의 결과. Tripo · Higgsfield는 삭제 API가 없어 서비스 쪽 사본은 보관 기간 뒤 사라진다. 비용 기록(작업 행)은 남기고 `deleted_at`만 표시 |
 | `GET /tools` · `GET /tools/:id` | 도구(HTML 플러그인) 목록 · 내용. 내장 `gen-gateway/tools/` → 사용자 `<데이터 폴더>/studio/tools/` 순(같은 이름이면 내장 우선) |
 | `GET /characters` · `GET/POST /characters/:id` · `POST /characters/:id/delete` | 캐릭터 파일(`<데이터 폴더>/studio/characters/<id>.json`) — 캐릭터 시트 도구가 쓴다 |
+| `GET/POST /projects/:id/tools/:tool/settings` | 도구별 프로젝트 설정(`<프로젝트>/tools/<도구>.json`) — 예: 캐릭터 시트의 공통 규칙 · 출력 규격 · 기본 복장 · 분석 엔진 |
+| `POST /projects/:id/uploads` | 참고 사진 올리기 `{ dataUrl, name? }`(PNG · JPEG · WebP) → `{ path }`(`<프로젝트>/references/`) |
+| `GET /analyze/engines` · `POST /analyze` | 사진 분석 `{ kind: face·body·costume, images: [{outputId}|{path}], engine?, model? }` → 캐릭터 시트 칸 값. GPT는 앱이 설치한 Codex + 연결한 ChatGPT 계정(생성 비용 없음) |
 | `GET /blender` · `POST /outputs/:id/open-in-blender` | 설치된 Blender(최신 버전 자동 선택, `CCG_BLENDER`로 지정 가능)를 띄워 보관된 3D 모델을 빈 장면에 불러온다 |
 | `POST /jobs/:id/revise` | 승인 전 고치기 `{ params?, prompt? }` — 같은 서비스로 무료 재견적, 작업 id 유지. 틀린 값은 400(원래 값 유지). 스타일이 붙은 작업은 프롬프트를 고치지 않는다 |
 | `GET /jobs` · `/jobs/:id` · `/jobs/:id/wait?timeout=` | 조회 · 완료 대기 |
