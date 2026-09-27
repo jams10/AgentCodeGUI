@@ -95,7 +95,7 @@ function Media({ o, big }: { o: LibraryItem['output'] | null; big?: boolean }): 
       big ? (
         <video className="st-art-media" src={src} controls autoPlay loop onLoadedData={ok} onError={bad} />
       ) : (
-        <video className="st-art-media" src={src} muted loop playsInline preload="metadata" onLoadedData={ok} onError={bad} onMouseEnter={(e) => void e.currentTarget.play().catch(() => {})} onMouseLeave={(e) => e.currentTarget.pause()} />
+        <video className="st-art-media" src={src} muted loop playsInline preload="metadata" onLoadedMetadata={(e) => { const v = e.currentTarget; if (isFinite(v.duration) && v.currentTime === 0) v.currentTime = v.duration / 2 }} onLoadedData={ok} onError={bad} onMouseEnter={(e) => void e.currentTarget.play().catch(() => {})} onMouseLeave={(e) => e.currentTarget.pause()} />
       )
     ) : (
       <img className="st-art-media" src={src} alt="" loading="lazy" onLoad={ok} onError={bad} />
@@ -112,6 +112,8 @@ function Media({ o, big }: { o: LibraryItem['output'] | null; big?: boolean }): 
 interface Draft {
   capability: Job['capability']
   model: string
+  /** 만들기 패널에서 고른 서비스 */
+  provider?: ProviderId
   /** '' = 스타일 없음 */
   styleId: string
   prompt: string
@@ -160,32 +162,66 @@ function OptionField({ o, value, onChange }: { o: ModelOption; value: unknown; o
   )
 }
 
+// 서비스 프리셋 — 만들기 패널은 모델 대신 서비스를 고른다. 서비스마다 검증된 기본 모델이 있고,
+// 입력 이미지 수로 모델이 정해진다(예: 영상은 이미지가 있으면 이미지→영상). 다른 모델은 어시스턴트(채팅)에게 맡긴다.
+interface ServicePreset {
+  provider: ProviderId
+  /** 입력 이미지 수 → 모델 id */
+  pick: (images: number) => string
+  /** 받을 수 있는 입력 이미지 수 — 0이면 입력 없음 */
+  maxImages: number
+  imageHint?: string
+}
+
+const SERVICES_BY_CAP: Partial<Record<Job['capability'], ServicePreset[]>> = {
+  image: [{ provider: 'higgsfield', pick: () => 'soul', maxImages: 0 }],
+  video: [{ provider: 'higgsfield', pick: (n) => (n ? 'seedance-2.0-i2v' : 'seedance-2.0-t2v'), maxImages: 1, imageHint: '(선택) 넣으면 이 이미지로 영상을 만들어요' }],
+  model3d: [{ provider: 'tripo', pick: (n) => (n === 0 ? 'tripo-text-to-3d' : n === 1 ? 'tripo-image-to-3d' : 'tripo-multiview-to-3d'), maxImages: 4, imageHint: '(선택) 1장 = 이미지→3D · 2~4장 = 앞 · 왼쪽 · 뒤 · 오른쪽' }]
+}
+
+/** 모델이 바뀔 때 — 새 모델의 기본값 위에, 새 모델도 받는 이전 값은 그대로 둔다(해상도 · 길이 등) */
+function carryParams(next: ModelInfo | undefined, prev: Record<string, unknown>): Record<string, unknown> {
+  const out = defaults(next)
+  for (const o of next?.options ?? []) {
+    const v = prev[o.key]
+    if (v === undefined || v === '') continue
+    if (o.type === 'enum' && !(o.values ?? []).some((x) => String(x) === String(v))) continue
+    out[o.key] = v
+  }
+  return out
+}
+
 function Composer({ models, styles, draft, setDraft }: { models: ModelInfo[]; styles: Style[]; draft: Draft; setDraft: (d: Draft) => void }): ReactElement {
   const style = styles.find((x) => x.id === draft.styleId) ?? null
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
-  const list = models.filter((m) => m.capability === draft.capability || (m.id === 'comfy-workflow' && draft.capability !== 'audio'))
-  const model = list.find((m) => m.id === draft.model) ?? list[0]
+  const services = SERVICES_BY_CAP[draft.capability] ?? []
+  const service = services.find((x) => x.provider === draft.provider) ?? services[0]
+  const modelId = service?.pick(draft.images.length)
+  const model = models.find((m) => m.id === modelId)
+  const keyOk = !!model?.providers.find((p) => p.id === service?.provider)?.configured
 
   useEffect(() => {
-    if (model && model.id !== draft.model) setDraft({ ...draft, model: model.id, params: defaults(model) })
+    if (!model || !service) return
+    if (model.id !== draft.model || service.provider !== draft.provider) setDraft({ ...draft, provider: service.provider, model: model.id, params: carryParams(model, draft.params) })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [model?.id])
+  }, [model?.id, service?.provider])
 
   const pickImages = async (): Promise<void> => {
     const paths = await window.api.pickAttachments().catch(() => [] as string[])
     const imgs = paths.filter((p) => /\.(png|jpe?g|webp|gif)$/i.test(p))
-    if (imgs.length) setDraft({ ...draft, images: model?.input === 'image' ? [imgs[0]] : [...draft.images, ...imgs].slice(0, 4) })
+    if (imgs.length && service) setDraft({ ...draft, images: [...draft.images, ...imgs].slice(0, service.maxImages) })
   }
 
   const submit = (): void => {
-    if (!model) return
+    if (!model || !service) return
     setBusy(true)
     setMsg(null)
-    const params = Object.fromEntries(Object.entries(draft.params).filter(([, v]) => v !== undefined && v !== ''))
+    const params = Object.fromEntries(Object.entries(draft.params).filter(([k, v]) => v !== undefined && v !== '' && model.options.some((o) => o.key === k)))
     quote({
       capability: draft.capability,
       model: model.id,
+      provider: service.provider,
       prompt: model.prompt === 'none' ? undefined : draft.prompt.trim() || undefined,
       inputs: draft.images.map((p, i) => ({ kind: 'image' as const, path: p, view: model.input === 'images' ? ['front', 'left', 'back', 'right'][i] : undefined })),
       params,
@@ -197,43 +233,34 @@ function Composer({ models, styles, draft, setDraft }: { models: ModelInfo[]; st
       .finally(() => setBusy(false))
   }
 
-  const needsImage = model?.input === 'image' || model?.input === 'images'
-  const missing = !model ? '모델을 골라 주세요' : model.prompt === 'required' && !draft.prompt.trim() ? '프롬프트를 적어 주세요' : needsImage && !draft.images.length ? '입력 이미지를 골라 주세요' : null
+  const missing = !service ? '이 종류를 만들 서비스가 없어요' : !model ? '모델 정보를 불러오는 중…' : model.prompt === 'required' && !draft.prompt.trim() ? '프롬프트를 적어 주세요' : null
 
   return (
     <aside className="st-art-side st-art-compose" aria-label="생성">
       <h2>새로 만들기</h2>
       <div className="st-art-seg" role="tablist" aria-label="만들 것">
         {CAPS.map((c) => (
-          <button key={c} type="button" role="tab" aria-selected={draft.capability === c} className={draft.capability === c ? 'on' : ''} onClick={() => setDraft({ ...draft, capability: c, images: [] })}>
+          <button key={c} type="button" role="tab" aria-selected={draft.capability === c} className={draft.capability === c ? 'on' : ''} onClick={() => setDraft({ ...draft, capability: c, images: [], model: '', params: {} })}>
             {KIND_LABEL[c]}
           </button>
         ))}
       </div>
-      <label className="st-art-field" htmlFor="st-model">
-        <span>모델</span>
-        <select id="st-model" value={model?.id ?? ''} onChange={(e) => {
-          const m = list.find((x) => x.id === e.target.value)
-          setDraft({ ...draft, model: e.target.value, params: defaults(m), images: [] })
-        }}>
-          {list.map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.label}
-              {m.available ? '' : ' — 키 없음'}
-            </option>
-          ))}
-        </select>
-      </label>
-      {model && (
-        <div className="st-art-route">
-          {model.providers.map((p, i) => (
-            <span key={p.id} className={p.configured ? 'ok' : 'off'}>
-              {i + 1}. {PROVIDER_NAME[p.id] ?? p.id}
-              {p.configured ? '' : ' (키 없음)'}
-            </span>
-          ))}
+      <div className="st-art-field">
+        <span>서비스</span>
+        <div className="st-art-svc" role="radiogroup" aria-label="서비스">
+          {services.map((x) => {
+            const on = x.provider === service?.provider
+            const ready = !!models.find((m) => m.id === x.pick(0))?.providers.find((p) => p.id === x.provider)?.configured
+            return (
+              <button key={x.provider} type="button" role="radio" aria-checked={on} className={on ? 'st-pill on' : 'st-pill'} onClick={() => setDraft({ ...draft, provider: x.provider, images: [] })}>
+                {PROVIDER_NAME[x.provider]}
+                {ready ? '' : ' · 키 없음'}
+              </button>
+            )
+          })}
         </div>
-      )}
+        {model && <div className="st-art-model">모델: {model.label} · 다른 모델은 어시스턴트에게 부탁해 보세요</div>}
+      </div>
       {model?.note && <div className="st-usage-note">{model.note}</div>}
       <label className="st-art-field" htmlFor="st-style">
         <span>스타일</span>
@@ -258,22 +285,24 @@ function Composer({ models, styles, draft, setDraft }: { models: ModelInfo[]; st
           <div className="st-gen-prompt st-art-final">{composePrompt(style, draft.prompt) || '—'}</div>
         </div>
       )}
-      {model && model.input !== 'none' && (
+      {service && service.maxImages > 0 && (
         <div className="st-art-field">
-          <span>입력 이미지{model.input === 'optional-image' ? ' (선택)' : model.input === 'images' ? ' (앞 · 왼쪽 · 뒤 · 오른쪽)' : ''}</span>
+          <span>입력 이미지 {service.imageHint}</span>
           <div className="st-art-files">
             {draft.images.map((p, i) => (
               <span key={p} className="st-pill">
-                {model.input === 'images' ? `${['앞', '왼쪽', '뒤', '오른쪽'][i]} · ` : ''}
+                {draft.images.length > 1 ? `${['앞', '왼쪽', '뒤', '오른쪽'][i]} · ` : ''}
                 {baseName(p)}
                 <button type="button" aria-label={`${baseName(p)} 빼기`} onClick={() => setDraft({ ...draft, images: draft.images.filter((x) => x !== p) })}>
                   ×
                 </button>
               </span>
             ))}
-            <button type="button" className="st-pill st-art-add" onClick={() => void pickImages()}>
-              + 이미지 선택
-            </button>
+            {draft.images.length < service.maxImages && (
+              <button type="button" className="st-pill st-art-add" onClick={() => void pickImages()}>
+                + 이미지 선택
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -284,11 +313,11 @@ function Composer({ models, styles, draft, setDraft }: { models: ModelInfo[]; st
           ))}
         </div>
       )}
-      <button type="button" className="st-gloss st-art-go" disabled={busy || !!missing || !model?.available} onClick={submit}>
+      <button type="button" className="st-gloss st-art-go" disabled={busy || !!missing || !keyOk} onClick={submit}>
         {busy ? '견적 받는 중…' : '견적 받기'}
       </button>
-      {!model?.available && model && <div className="st-usage-note">이 모델을 처리할 서비스의 API 키가 없어요.</div>}
-      {missing && model?.available && <div className="st-usage-note">{missing}</div>}
+      {model && service && !keyOk && <div className="st-usage-note">{PROVIDER_NAME[service.provider]} API 키가 없어요 — 설정 → API에서 넣어 주세요.</div>}
+      {missing && keyOk && <div className="st-usage-note">{missing}</div>}
       {msg && <div className={msg.ok ? 'st-usage-note' : 'st-gen-warn'}>{msg.text}</div>}
     </aside>
   )

@@ -60,6 +60,11 @@ node studio/services/gen-gateway/src/cli.ts serve                 # 게이트웨
 | `seedance-2.0-t2v` / `seedance-2.0-i2v` / `kling-2.5-turbo-i2v` | video | Higgsfield |
 | `hf/<모델 경로>` | image · video | Higgsfield 카탈로그의 다른 모델 |
 
+**모델 목록은 일부러 작게 둔다.** Higgsfield에는 모델 목록 API가 없고 모델마다 옵션 형식이 달라서, 검증한 모델만 카탈로그에 둔다.
+- 앱 만들기 패널은 **서비스만** 고른다 — 서비스마다 기본 모델이 있고 입력 이미지 수로 모델이 정해진다(`app/src/studio/ArtSpace.tsx`의 `SERVICES_BY_CAP`).
+- 그 밖의 모델은 어시스턴트(AI)가 `hf/<API 경로>`로 부른다. MCP `list_models`로 검증된 모델을 보고, 없는 모델은 공식 문서에서 경로 · 옵션을 확인한다.
+- 옵션 값이 틀리면 무료 견적 단계에서 서비스가 거절하고, 게이트웨이가 작업을 만들지 않은 채 허용 값이 담긴 오류를 돌려준다 — AI가 고쳐서 다시 요청한다.
+
 라우팅(서비스 우선순위)은 `<데이터 폴더>/studio/routes.json`으로 바꿀 수 있습니다. 형식은 `src/routes.ts`의 `DEFAULT_ROUTES`와 같습니다.
 
 ## 로컬 API (127.0.0.1, `Authorization: Bearer <gateway.json의 token>`)

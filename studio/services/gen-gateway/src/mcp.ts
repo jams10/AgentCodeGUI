@@ -15,13 +15,18 @@ type Json = Record<string, unknown>
 const TOOLS = [
   {
     name: 'generate',
-    description:
+    description: [
       '외부 서비스(ComfyCloud · Tripo · Higgsfield)로 이미지·영상·3D를 생성한다. 비용이 드는 작업이라 사용자가 앱에서 승인해야 실행되며, 이 도구는 승인·완료까지 기다렸다가 결과(또는 거절)를 돌려준다. 거절되면 같은 요청을 다시 보내지 말고 사용자에게 무엇을 바꿀지 물어라.',
+      '모델 고르기: 먼저 list_models로 검증된 모델과 옵션 값을 본다. 사용자가 목록에 없는 Higgsfield 모델(예: Kling O3, Wan, MiniMax, Seedance 2.5, Recraft, Ideogram)을 원하면',
+      "model에 'hf/<API 경로>'를 넣는다. 경로와 옵션 이름·값은 기억에 의존하지 말고 공식 문서(https://docs.higgsfield.ai/docs/models)의 해당 모델 페이지에서 확인한다.",
+      '제출 전에 무료 견적을 먼저 받으므로, 옵션 값이 틀리면 비용 없이 "옵션 값이 맞지 않아요 — …" 오류가 돌아온다. 그 메시지에 나온 허용 값으로 고쳐 다시 요청하라.'
+    ].join(' '),
     inputSchema: {
       type: 'object',
       properties: {
         capability: { type: 'string', enum: ['image', 'video', 'model3d', 'audio'] },
-        model: { type: 'string', description: "예: 'soul', 'seedance-2.0-i2v', 'kling-2.5-turbo-i2v', 'tripo-text-to-3d', 'tripo-image-to-3d', 'comfy-workflow', 또는 'hf/<Higgsfield 모델 경로>'" },
+        model: { type: 'string', description: "list_models의 id(예: 'soul', 'seedance-2.0-t2v', 'tripo-text-to-3d') 또는 'hf/<Higgsfield 모델 API 경로>'(예: 'hf/kling-video/v2.5-turbo/pro/image-to-video')" },
+        provider: { type: 'string', enum: ['higgsfield', 'tripo', 'comfy'], description: '서비스를 고정할 때만. 없으면 라우팅 순서대로(키 없음 · 잔액 부족이면 다음 서비스).' },
         prompt: { type: 'string' },
         inputs: { type: 'array', items: { type: 'object', properties: { kind: { type: 'string', enum: ['image', 'video', 'model'] }, url: { type: 'string' }, path: { type: 'string' } } } },
         params: { type: 'object', description: '모델별 옵션(해상도·길이·종횡비·ComfyCloud workflow JSON 등)' },
@@ -30,6 +35,11 @@ const TOOLS = [
       },
       required: ['capability', 'model']
     }
+  },
+  {
+    name: 'list_models',
+    description: '앱에서 검증한 생성 모델 목록(종류 · 입력 · 옵션 이름과 허용 값 · 처리 서비스와 키 준비 상태)을 조회한다(비용 없음). 여기 없는 Higgsfield 모델은 generate의 hf/<경로>로 부를 수 있다.',
+    inputSchema: { type: 'object', properties: { capability: { type: 'string', enum: ['image', 'video', 'model3d'] } } }
   },
   {
     name: 'generation_status',
@@ -87,6 +97,7 @@ async function call(name: string, args: Json): Promise<string> {
         prompt: args.prompt,
         inputs: args.inputs,
         params: args.params,
+        provider: typeof args.provider === 'string' ? args.provider : undefined,
         origin: { source: 'agent', title: typeof args.title === 'string' ? args.title : undefined },
         style: typeof args.style === 'string' ? args.style : undefined
       }
@@ -101,6 +112,28 @@ async function call(name: string, args: Json): Promise<string> {
   if (name === 'generation_status') {
     const w = (await api(`/jobs/${encodeURIComponent(String(args.id))}`)) as { job: JobRecord; outputs: OutputRecord[] }
     return summary(w.job, w.outputs)
+  }
+  if (name === 'list_models') {
+    type Opt = { key: string; label: string; type: string; values?: unknown[]; default?: unknown; min?: number; max?: number }
+    const list = (await api('/models')) as { id: string; label: string; capability: string; input: string; prompt: string; note?: string; options: Opt[]; providers: { id: string; configured: boolean }[] }[]
+    const cap = typeof args.capability === 'string' ? args.capability : null
+    const optText = (o: Opt): string =>
+      `${o.key}(${o.label}): ${o.values ? o.values.join(' | ') : o.type}${o.min != null || o.max != null ? ` ${o.min ?? ''}~${o.max ?? ''}` : ''}${o.default !== undefined ? ` · 기본 ${String(o.default)}` : ''}`
+    return (
+      list
+        .filter((m) => !cap || m.capability === cap)
+        .map((m) =>
+          [
+            `■ ${m.id} — ${m.label} [${m.capability}]`,
+            `  입력: ${m.input} · 프롬프트: ${m.prompt} · 서비스: ${m.providers.map((p) => `${p.id}${p.configured ? '' : '(키 없음)'}`).join(' → ')}`,
+            m.note && `  참고: ${m.note}`,
+            ...m.options.map((o) => `  - ${optText(o)}`)
+          ]
+            .filter(Boolean)
+            .join('\n')
+        )
+        .join('\n') || '해당 모델이 없어요.'
+    )
   }
   if (name === 'generation_balances') return JSON.stringify(await api('/balances'), null, 2)
   if (name === 'list_styles') {
@@ -153,6 +186,11 @@ rl.on('line', (line) => {
 })
 // 입력이 닫혀도 진행 중인 도구 호출의 응답은 끝까지 보낸다
 const pending = new Set<Promise<void>>()
+// process.exit()로 끊으면 닫히는 중인 fetch 소켓과 겹쳐 Windows libuv가 assert로 죽는다 —
+// 종료 코드만 정하고 남은 핸들이 닫히며 자연스럽게 끝나게 둔다.
 rl.on('close', () => {
-  void Promise.allSettled([...pending]).then(() => process.exit(0))
+  void Promise.allSettled([...pending]).then(() => {
+    process.stdin.pause()
+    process.exitCode = 0
+  })
 })

@@ -81,6 +81,8 @@ export interface LibraryItem {
 export interface QuoteRequest {
   capability: Job['capability']
   model: string
+  /** 서비스 지정 — 없으면 라우팅 순서대로 */
+  provider?: ProviderId
   prompt?: string
   inputs?: { kind: 'image'; path?: string; url?: string; view?: string }[]
   params?: Record<string, unknown>

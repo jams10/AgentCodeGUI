@@ -295,9 +295,10 @@ button.st-pill:hover{ background:linear-gradient(180deg, rgba(255,255,255,.4), r
 .st-art-seg button{ padding:7px 0; border-radius:999px; font-size:13.5px; color:var(--st-text-dim2); }
 .st-art-seg button.on{ color:var(--st-on-gloss); background:var(--st-gloss); box-shadow:inset 0 -2px 6px rgba(0,0,0,.14); }
 .st-art-field{ display:flex; flex-direction:column; gap:6px; font-size:12.5px; color:var(--st-text-dim2); }
-.st-art-route{ display:flex; flex-wrap:wrap; gap:6px; font-size:11.5px; }
-.st-art-route span{ padding:3px 9px; border-radius:999px; background:rgba(255,255,255,.1); }
-.st-art-route span.off{ color:#ffd9a3; background:rgba(255,180,92,.12); }
+.st-art-svc{ display:flex; flex-wrap:wrap; gap:6px; }
+.st-art-svc .st-pill{ padding:7px 14px; font-size:13px; }
+.st-art-svc .st-pill.on{ background:var(--st-gloss); color:var(--st-on-gloss); }
+.st-art-model{ font-size:11.5px; color:var(--st-text-dim); margin-top:2px; }
 .st-art-files{ display:flex; flex-wrap:wrap; gap:6px; }
 .st-art-files .st-pill{ display:inline-flex; align-items:center; gap:6px; padding:5px 10px; font-size:12px; max-width:100%; overflow:hidden; }
 .st-art-files .st-pill button{ font-size:14px; line-height:1; color:var(--st-text-dim2); }
