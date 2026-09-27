@@ -260,6 +260,15 @@ test('Comfy: UI 형식 워크플로는 준비 단계에서 거절한다(작업�
   await assert.rejects(p.prepare({ capability: 'image', model: 'comfy-workflow', params: { workflow: { nodes: [], links: [] } } }), /Export \(API\)/)
 })
 
+test('Comfy GPT Image: 시드를 비우면 요청마다 새 시드를 기록한다(같은 프롬프트가 캐시된 같은 결과로 돌아오지 않게) · 준 시드는 그대로', async () => {
+  const p = new ComfyProvider(() => 'k')
+  const req = { capability: 'image' as const, model: 'gpt-image-2.5-sunburst', prompt: '초상화' }
+  const seeds = new Set<unknown>()
+  for (let i = 0; i < 5; i++) seeds.add((await p.prepare(req)).params?.seed)
+  assert.equal(seeds.size, 5)
+  assert.equal((await p.prepare({ ...req, params: { seed: 42 } })).params?.seed, 42)
+})
+
 test('Comfy: $INPUT_n을 자산 참조로 바꾼다', () => {
   const wf = { '10': { class_type: 'LoadImage', inputs: { image: '$INPUT_0' } }, '11': { inputs: { text: 'keep $INPUT_0 inside text' } } }
   assert.deepEqual(substituteInputs(wf, ['asset-1']), {

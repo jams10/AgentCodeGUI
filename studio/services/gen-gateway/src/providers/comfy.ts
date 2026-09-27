@@ -6,6 +6,7 @@
 //  - 작업별 비용 필드가 없다 → 견적 null, 실제 비용은 게이트웨이가 잔액 차이로 계산한다.
 //  - 결과 URL(/api/v2/assets/{id}/content)은 키가 있어야 열리고 약 6시간짜리 서명 URL로 302 된다 → resolveOutput.
 //  - 잔액 단위는 크레딧. 서버 값은 센트이고 Cloud 배지와 같은 211 크레딧/USD로 환산한다(이전 앱에서 실측한 규칙).
+import { randomInt } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { basename, extname } from 'node:path'
@@ -145,8 +146,13 @@ export class ComfyProvider implements Provider {
 
   /** 워크플로를 작업 기록에 스냅숏으로 담고(파일이 지워져도 다시 만들 수 있게) 프롬프트 자리를 찾아 둔다 */
   async prepare(req: GenerationRequest): Promise<GenerationRequest> {
-    // 내장 모델은 제출 때 워크플로를 새로 만든다 — 여기서는 요청이 맞는지만 확인
-    if (isComfyPreset(req.model)) return (gptImageWorkflow(req), req)
+    // 내장 모델은 제출 때 워크플로를 새로 만든다 — 여기서는 요청이 맞는지 확인하고 시드를 정한다.
+    // 시드를 비워 두면 늘 0이라 같은 프롬프트는 같은 워크플로가 되고, ComfyCloud가 지난 결과를 그대로 돌려준다(캐시).
+    // 요청마다 다른 시드를 기록해 두면 후보가 매번 달라지고, 같은 시드로 다시 만들 수도 있다.
+    if (isComfyPreset(req.model)) {
+      const next = req.params?.seed == null || req.params.seed === '' ? { ...req, params: { ...(req.params ?? {}), seed: randomInt(0, 2_147_483_647) } } : req
+      return (gptImageWorkflow(next), next)
+    }
     if (req.model !== 'comfy-workflow') return req
     const wf = await this.workflowOf(req)
     const slot = findPromptSlot(wf)
