@@ -130,7 +130,7 @@ export function Launcher({ onStart }: { onStart: (id: SpaceId) => void }): React
       <div className="st-field" style={{ ['--st-scale' as string]: scale }}>
         {SPACES.map((s, i) => (
           <div key={s.id} className="st-float" style={{ left: s.x, top: s.y, animationDelay: `${-i * 1.1}s` }}>
-            <button type="button" className="st-bub" aria-label={`${s.title} 열기`} style={{ background: bubbleBg(s) }} onClick={() => setOpen(s.id)}>
+            <button type="button" className="st-bub" aria-label={`${s.title} 열기`} style={{ background: bubbleBg(s) }} onClick={() => (s.id === 'settings' ? onStart(s.id) : setOpen(s.id))}>
               <SpaceIcon id={s.id} />
             </button>
             <div className="st-lbl">{s.title}</div>

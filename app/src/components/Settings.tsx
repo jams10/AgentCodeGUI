@@ -15,6 +15,7 @@ import { AccountSubscription } from './AccountSubscription'
 import { CodexContextCard } from './CodexContextCard'
 import { TranslationSettingsView } from './TranslationSettingsView'
 import { ExternalToolsSettingsView } from './ExternalToolsSettingsView'
+import { StudioApiServices, studioNav } from '../studio/settingsExt' // [studio hook]
 import { useEngineEnvironments } from '../api/engineEnvironment'
 // ★R28 ACCT §1·§3·§4 — 계정 목록·한도의 단일 스토어 + 「사용 중」 역인덱스.
 import {
@@ -3235,7 +3236,7 @@ export function SettingsModal({
   }, [onClose])
 
   const q = navQ.trim().toLowerCase()
-  const groups = navGroups().map((g) => ({
+  const groups = studioNav(navGroups()).map((g) => ({ // [studio hook] AgentStudio에 없는 항목을 뺀다
     ...g,
     items: g.items.filter((it) => !q || (it.label + ' ' + it.keys).toLowerCase().includes(q))
   })).filter((g) => g.items.length > 0)
@@ -3282,6 +3283,7 @@ export function SettingsModal({
               {view === 'account' && <AccountView />}
               {view === 'version' && <EngineView />}
               {view === 'api' && <ApiView />}
+              {view === 'api' && <StudioApiServices />} {/* [studio hook] 외부 생성 서비스 키 */}
               {view === 'external-tools' && <ExternalToolsSettingsView />}
               {view === 'display' && <DisplayView />}
               {view === 'language' && <LanguageView />}

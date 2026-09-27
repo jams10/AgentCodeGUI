@@ -430,27 +430,37 @@ html.studio-theme.studio-theme[data-space="art"] body{
 }
 
 /* ---- 설정 공간 ---- */
-.st-set{ position:fixed; left:0; right:0; top:52px; bottom:0; overflow:auto; padding:10px 16px 28px; font-family:var(--st-font); color:#fff; }
-.st-set-col{ max-width:760px; margin:0 auto; display:flex; flex-direction:column; gap:16px; }
-.st-set-intro h2{ font-size:20px; font-weight:400; margin-bottom:6px; }
-.st-set-intro p{ font-family:'Gowun Dodum', var(--font-sans); font-size:14px; line-height:1.6; color:var(--st-text-soft); margin:0 0 4px; }
-.st-set-card{
-  border-radius:24px; border:1px solid rgba(255,255,255,.26); padding:20px 22px; display:flex; flex-direction:column; gap:12px;
-  background:linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,.04)); box-shadow:inset 0 1px 0 rgba(255,255,255,.3), 0 14px 36px rgba(0,0,0,.25);
+.st-set{ position:fixed; left:0; right:0; top:52px; bottom:0; display:flex; flex-direction:column; overflow:hidden; padding:10px 16px 16px; }
+
+/* 설정 공간 — 원본 설정 창을 공간 본문으로. 오버레이(어두운 막 · 가운데 정렬 · 닫기 버튼)만 풀고 안쪽은 원본 그대로 */
+.st-set-common{ flex:1; min-height:0; width:100%; max-width:1240px; margin:0 auto; color:var(--text); font-family:var(--font-sans); }
+.st-set-common .set-overlay{ position:static; inset:auto; height:100%; padding:0; background:none; animation:none; }
+.st-set-common .set-modal{ width:100%; height:100%; animation:none; box-shadow:0 18px 50px -20px rgba(0,0,0,.35); }
+.st-set-common .set-x{ display:none; }
+.st-set-common [data-st-hidden]{ display:none !important; }
+/* 채팅(원본 App) 안의 설정 창은 뜨지 않는다 — 설정 공간으로 옮겨 연다(한 프레임 깜빡임 방지) */
+.studio-app .set-overlay{ display:none !important; }
+/* API 탭의 생성 서비스 카드 */
+.st-svc .apn{ font-weight:400; color:var(--text-2); }
+.st-svc-facts{ display:flex; flex-wrap:wrap; gap:4px 16px; margin-top:10px; font-size:12px; color:var(--text-2); }
+.st-svc-msg{ margin-top:8px; font-size:12px; color:var(--text-2); }
+.st-svc-msg.bad{ color:var(--red, #f19a9a); }
+.st-svc-link{ color:var(--accent); text-decoration:underline; text-underline-offset:2px; font-size:inherit; }
+/* 설정 공간에 끼워 넣은 원본 설정 창도 슬레이트 톤으로 */
+html.studio-theme[data-space="settings"]{
+  --bg: rgba(38,46,56,.98);
+  --inset: rgba(6,8,12,.38);
+  --text-2: rgba(226,232,238,.74);
+  --text-3: rgba(206,214,222,.54);
+  --text-4: rgba(196,204,214,.36);
+  --accent: #bccbd9;
+  --accent-2: #dde6ee;
+  --accent-soft: rgba(188,203,217,.15);
+  --accent-line: rgba(188,203,217,.40);
+  --on-accent: #1c2530;
+  --blue: #aebfd0;
+  --blue-soft: rgba(174,191,208,.15);
 }
-.st-set-head{ display:flex; justify-content:space-between; align-items:flex-start; gap:14px; }
-.st-set-head h3{ font-size:18px; font-weight:400; }
-.st-set-what{ font-size:12.5px; color:var(--st-text-dim); margin-top:3px; }
-.st-set-badge{ flex-shrink:0; font-size:12px; padding:4px 12px; border-radius:999px; background:rgba(255,255,255,.1); color:var(--st-text-dim); white-space:nowrap; }
-.st-set-badge.on{ background:rgba(var(--st-accent-rgb),.2); border:1px solid rgba(var(--st-accent-rgb),.55); color:#fff; }
-.st-set-facts{ display:flex; flex-wrap:wrap; gap:6px 16px; font-size:12.5px; color:var(--st-text-soft); padding:9px 12px; border-radius:12px; background:var(--st-well); }
-.st-set-input{ display:flex; gap:6px; align-items:center; }
-.st-set-input input{ flex:1; font-family:var(--font-mono); letter-spacing:.3px; }
-.st-set-hint{ font-size:12px; color:var(--st-text-dim); line-height:1.5; }
-.st-set-link{ color:var(--st-accent); font-size:12px; padding:0 2px; text-decoration:underline; text-underline-offset:2px; }
-.st-set-actions{ display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
-.st-set-actions .st-pill{ padding:8px 14px; font-size:13px; }
-.st-set button:disabled{ opacity:.55; cursor:default; }
 
 /* ---- 생성 승인 센터 ---- */
 /* 카드 묶음 — 스크롤 영역은 사각형으로 잘리므로, 카드 그림자가 번질 여백(패딩)을 안쪽에 둔다.

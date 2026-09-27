@@ -29,6 +29,8 @@ AgentStudio는 [UnrealFactory/AgentCodeGUI](https://github.com/UnrealFactory/Age
 |---|---|
 | `crates/ccg-store/src/lib.rs` `app_home()` | 기본 데이터 폴더 이름을 빌드 시 `CCG_DEFAULT_HOME_DIR`로 바꿀 수 있게 함. 없으면 원본과 같음. |
 | `app/src/main.tsx` | 메인 창 루트를 `<App />` 대신 `<StudioRoot />`로 연다(import 1줄 + 렌더 1줄). |
+| `app/src/App.tsx` `onOpenSettings` 아래 + import | 2줄 — 채팅이 설정 창을 열려 하면(사이드바 설정 버튼 · API 과금 가드) Studio 설정 공간으로 보낸다(`studioRouteSettings`). |
+| `app/src/components/Settings.tsx` | 3줄 — import 1줄, 레일 목록을 `studioNav()`로 거름, API 탭 아래 `<StudioApiServices />`. 모두 `app/src/studio/settingsExt.tsx`. |
 | `app/src/App.tsx` `<WelcomeState>` | `variant={cwd ? 'agent' : 'chat'}` 1줄 — 폴더 없는 대화는 일반 대화 문구(원본 SessionWindow와 같은 규칙). |
 | `src-tauri/src/main.rs` | `mod studio;` 1줄 + setup에서 `studio::start()` 1줄(엔진 부팅 전) — 생성 게이트웨이 실행. |
 | `src-tauri/src/ipc/mod.rs` `dispatch()` | 맨 앞 1줄 — `studio:*` 채널을 `src-tauri/src/studio.rs`로. |
@@ -51,6 +53,20 @@ AgentStudio는 [UnrealFactory/AgentCodeGUI](https://github.com/UnrealFactory/Age
   홈으로 돌아가도 내리지 않고 숨긴다. 원본 App이 바뀌면 채팅은 자동으로 따라간다.
 - `studio.css` — `html.studio-theme`에서 원본 CSS 변수를 Aero 값으로 덮는다(원본 CSS 수정 없음) + Studio 셸 스타일.
 - `Launcher.tsx` · `spaces.tsx` — 버블 런처, LiveArea, 작업 공간 정의 표.
+- `SettingsSpace.tsx` — 설정 공간. 원본 `SettingsModal`을 그대로 공간 본문으로 쓴다(홈에서 설정을 누르면 바로 열림).
+  Claude · GPT 계정은 원본 Account, 생성 서비스 키는 API 탭 아래(`settingsExt.tsx`).
+
+### 설정 정리 (원본 항목 중 뺀 것)
+
+원본 코드는 그대로 두고 레일에서만 뺀다 — `settingsExt.tsx`의 `HIDDEN` 목록에서 지우면 되살아난다.
+
+| 항목 | 뺀 이유 |
+|---|---|
+| External Tools | 내 프로그램을 대화에 잇는 개발자용 규격 안내. 게임 제작 공간을 만들 때 다시 검토. |
+| Code (LSP) · Explorer | 파일 뷰어 코드 심볼 · 탐색기 숨김 필터 — 코딩 전용. |
+| Updates | 원본(AgentCodeGUI) 릴리스 업데이트 · 패치노트 — Studio 빌드엔 맞지 않음. |
+| (문구) `~/.agentcodegui3` | 원본에 고정된 데이터 폴더 이름 — 설정 공간이 화면 글자만 `~/.agentstudio`로 바꿔 보여 준다. |
+| Display의 「유리」 구역 | Studio 테마가 배경을 칠해서 값이 효과가 없음(`SettingsSpace.tsx`가 제목 글자로 찾아 숨김). |
 - `usage.tsx` — Claude(`getUsage`) · Codex(`codexAuth.accountsUsage`) 한도 패널. 외부 서비스 크레딧은 생성 게이트웨이 연결 후 채운다.
 
 아직 원본 이름이 남아 있는 곳 (새 설계에서 연결 지점으로 처리 예정):

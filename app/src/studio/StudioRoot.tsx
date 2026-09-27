@@ -5,6 +5,7 @@
 // 이후 홈으로 돌아가도 **내리지 않는다**(숨김) — 도는 대화와 엔진 연결을 끊지 않기 위해서다.
 import { useCallback, useEffect, useState, type ReactElement } from 'react'
 import App from '../App'
+import type { SettingsView } from '../components/Settings'
 import { getPref, setPref } from '../lib/prefs'
 import { SIDEBAR_AUTOHIDE } from '../lib/sidebarAutohide'
 import { ApprovalCenter } from './ApprovalCenter'
@@ -90,11 +91,22 @@ export function StudioRoot(): ReactElement {
   // 아트 어시스턴트가 원본 채팅을 빌려 쓸 때 — App을 (아직 안 떴다면) 띄운다
   const ensureApp = useCallback(() => setAppMounted(true), [])
 
-  const go = (next: Space): void => {
+  const go = useCallback((next: Space): void => {
     setSpace(next)
     setPref(SPACE_PREF, next)
     if (next === 'chat') setAppMounted(true)
-  }
+  }, [])
+
+  // 설정 — 채팅(원본 App)의 설정 버튼 · API 과금 가드도 여기로 온다(settingsExt의 studioRouteSettings).
+  const [settingsOpen, setSettingsOpen] = useState<{ view?: SettingsView; n: number }>({ n: 0 })
+  useEffect(() => {
+    const on = (e: Event): void => {
+      setSettingsOpen((o) => ({ view: (e as CustomEvent<SettingsView | undefined>).detail, n: o.n + 1 }))
+      go('settings')
+    }
+    window.addEventListener('studio:settings', on)
+    return () => window.removeEventListener('studio:settings', on)
+  }, [go])
 
   return (
     <div className="studio" data-space={space}>
@@ -105,7 +117,7 @@ export function StudioRoot(): ReactElement {
         </div>
       )}
       {space === 'art' && <ArtSpace ensureApp={ensureApp} />}
-      {space === 'settings' && <SettingsSpace />}
+      {space === 'settings' && <SettingsSpace open={settingsOpen} />}
       {space === 'home' && <Launcher onStart={(id) => go(id)} />}
       <ApprovalCenter />
     </div>

@@ -68,6 +68,7 @@ import { ChangedFilesModal } from './components/ChangedFilesModal'
 import { GitModal, type GitViewerOverride } from './components/GitModal'
 import { ImageViewer } from './components/ImageViewer'
 import { SettingsModal } from './components/Settings'
+import { studioRouteSettings } from './studio/settingsExt' // [studio hook]
 import { EngineGate } from './components/EngineGate'
 import { EngineUpdateGate } from './components/EngineUpdateGate'
 import { AppUpdateGate } from './components/AppUpdateGate'
@@ -1886,6 +1887,7 @@ function MainApp({ user }: { user: AppUser }) {
 
   // stable handlers for the memoized Sidebar / WorkBar
   const onOpenSettings = useEvent(() => setSettingsOpen(true))
+  useEffect(() => { if (settingsOpen && studioRouteSettings(settingsView)) (setSettingsOpen(false), setSettingsView(undefined)) }, [settingsOpen, settingsView]) // [studio hook] 설정은 Studio 설정 공간에서 연다
   // 모든 파일은 코드 뷰어 카드 하나로 연다 — 변경된 파일이면 뷰어가 diff 마킹
   // (추가 틴트·삭제 헤어라인·룰러)을 얹으므로 LSP 심볼 탐색과 변경 표시가 공존한다.
   // 일반 경로 열기는 Git 오버라이드를 지운다 — 직전에 커밋 스냅샷을 봤어도 새 파일은 평소대로.
