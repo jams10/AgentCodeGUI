@@ -117,7 +117,8 @@ fn home_dir() -> PathBuf {
 pub fn app_home() -> PathBuf {
     match std::env::var("CCG_HOME") {
         Ok(v) if !v.is_empty() => absolutize(Path::new(&v)),
-        _ => home_dir().join(".agentcodegui3"),
+        // [studio hook] 포크 빌드는 CCG_DEFAULT_HOME_DIR로 기본 홈 폴더 이름을 바꾼다(없으면 원본 그대로).
+        _ => home_dir().join(option_env!("CCG_DEFAULT_HOME_DIR").unwrap_or(".agentcodegui3")),
     }
 }
 

@@ -1,0 +1,115 @@
+# AgentStudio · 원본(UnrealFactory/AgentCodeGUI) 동기화
+# 1) 포크 main을 원본 main으로 fast-forward (main은 원본의 거울 — 직접 커밋 금지)
+# 2) 원본 변경을 studio/main에 머지한 브랜치를 만들고, 타입체크를 통과하면 PR을 연다
+#    충돌이 나면 PR 대신 충돌 파일 목록을 담은 이슈를 연다
+# 예약 실행은 기본 브랜치(studio/main)에 있는 워크플로만 돈다.
+name: Studio · upstream sync
+
+on:
+  schedule:
+    - cron: '0 18 * * 0' # 매주 월요일 03:00 KST
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: studio-upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      WORK_BRANCH: studio/main
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: studio/main
+          fetch-depth: 0
+
+      - name: Fetch upstream
+        run: |
+          git config user.name  "agentstudio-sync[bot]"
+          git config user.email "agentstudio-sync@users.noreply.github.com"
+          git remote add upstream https://github.com/UnrealFactory/AgentCodeGUI.git
+          git fetch --no-tags upstream main
+          git fetch --no-tags origin main
+          echo "UPSTREAM_SHA=$(git rev-parse --short upstream/main)" >> "$GITHUB_ENV"
+
+      - name: Mirror main (fast-forward only)
+        run: |
+          if ! git merge-base --is-ancestor origin/main upstream/main; then
+            echo "::error::포크 main에 원본에 없는 커밋이 있습니다. main은 원본 거울이어야 합니다."
+            exit 1
+          fi
+          git push origin upstream/main:refs/heads/main
+
+      - name: Check whether studio/main already has upstream
+        id: need
+        run: |
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "up_to_date=true" >> "$GITHUB_OUTPUT"
+            echo "studio/main에 원본 ${UPSTREAM_SHA}이 이미 반영되어 있습니다."
+          else
+            echo "up_to_date=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Merge upstream into a sync branch
+        id: merge
+        if: steps.need.outputs.up_to_date == 'false'
+        run: |
+          SYNC="sync/upstream-${UPSTREAM_SHA}"
+          echo "SYNC_BRANCH=$SYNC" >> "$GITHUB_ENV"
+          git switch -c "$SYNC"
+          if git merge --no-ff upstream/main -m "Merge upstream ${UPSTREAM_SHA} into ${WORK_BRANCH}"; then
+            echo "conflict=false" >> "$GITHUB_OUTPUT"
+          else
+            git diff --name-only --diff-filter=U > conflicts.txt
+            git merge --abort
+            echo "conflict=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Report conflicts as an issue
+        if: steps.merge.outputs.conflict == 'true'
+        run: |
+          TITLE="원본 동기화 충돌: upstream ${UPSTREAM_SHA}"
+          if gh issue list --state open --search "$TITLE in:title" --json number --jq '.[0].number' | grep -q .; then
+            echo "같은 충돌 이슈가 이미 열려 있습니다."; exit 0
+          fi
+          {
+            echo "원본 \`${UPSTREAM_SHA}\`을 \`${WORK_BRANCH}\`에 머지하다 충돌이 났습니다."
+            echo
+            echo "충돌 파일:"
+            sed 's/^/- `/; s/$/`/' conflicts.txt
+            echo
+            echo "로컬에서 해결: \`git fetch upstream && git switch ${WORK_BRANCH} && git merge upstream/main\`"
+            echo "연결 지점 목록은 \`studio/FORK.md\`를 보세요."
+          } > body.md
+          gh issue create --title "$TITLE" --body-file body.md
+
+      - uses: actions/setup-node@v4
+        if: steps.merge.outputs.conflict == 'false'
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Typecheck merged result
+        if: steps.merge.outputs.conflict == 'false'
+        run: |
+          npm ci --ignore-scripts
+          npm run typecheck:app
+
+      - name: Open pull request
+        if: steps.merge.outputs.conflict == 'false'
+        run: |
+          git push --force origin "$SYNC_BRANCH"
+          if gh pr list --head "$SYNC_BRANCH" --state open --json number --jq '.[0].number' | grep -q .; then
+            echo "PR이 이미 열려 있습니다."; exit 0
+          fi
+          gh pr create --base "$WORK_BRANCH" --head "$SYNC_BRANCH" \
+            --title "원본 동기화: upstream ${UPSTREAM_SHA}" \
+            --body "원본 \`UnrealFactory/AgentCodeGUI\` main(\`${UPSTREAM_SHA}\`)을 머지했습니다. 충돌 없음, \`typecheck:app\` 통과. 로컬 빌드(\`node studio/scripts/build.mjs\`)로 확인 후 머지하세요."

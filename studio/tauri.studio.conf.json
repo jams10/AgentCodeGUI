@@ -1,0 +1,18 @@
+{
+  "productName": "AgentStudio",
+  "mainBinaryName": "AgentStudio",
+  "identifier": "com.jams10.agentstudio",
+  "plugins": {
+    "updater": {
+      "endpoints": ["https://github.com/jams10/AgentCodeGUI/releases/latest/download/latest.json"]
+    }
+  },
+  "bundle": {
+    "createUpdaterArtifacts": false,
+    "publisher": "AgentStudio",
+    "homepage": "https://github.com/jams10/AgentCodeGUI",
+    "copyright": "Copyright (c) 2026 AgentStudio (fork of AgentCodeGUI)",
+    "shortDescription": "AgentStudio — 채팅 · 게임 제작 · 아트 · 리서치 작업 공간",
+    "longDescription": "AgentStudio — AgentCodeGUI 포크. 작업 공간별 에이전트와 외부 생성 도구(Tripo · Higgsfield · ComfyCloud) 통합."
+  }
+}
