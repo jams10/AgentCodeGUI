@@ -22,7 +22,7 @@ export class GatewayError extends Error {
   }
 }
 
-export type GatewayEvent = { type: 'job'; job: JobRecord; outputs?: OutputRecord[] } | { type: 'balance'; provider: ProviderId; balance: Balance } | { type: 'styles' }
+export type GatewayEvent = { type: 'job'; job: JobRecord; outputs?: OutputRecord[] } | { type: 'balance'; provider: ProviderId; balance: Balance } | { type: 'styles' } | { type: 'providers' }
 
 export interface GatewayOptions {
   ledger: Ledger
@@ -103,6 +103,17 @@ export class Gateway {
       this.onEvent({ type: 'balance', provider: id, balance: b })
     }
     return b
+  }
+
+  /** 키 확인 — 과금 없는 호출 한 번. 결과 문구를 돌려주고, 실패는 예외로 올린다. */
+  async verify(id: ProviderId): Promise<string> {
+    const p = this.providers.get(id)
+    if (!p) throw new GatewayError('not_found', `${id} 서비스가 없어요`)
+    if (!p.configured()) throw new GatewayError('no_key', 'API 키가 없어요')
+    if (p.verify) return p.verify()
+    const b = await this.balance(id)
+    if (!b) return '인증 확인됨'
+    return `인증 확인됨 · 잔액 ${b.unit === 'usd' ? '$' + b.amount.toFixed(2) : Math.round(b.amount).toLocaleString('ko-KR') + ' 크레딧'}`
   }
 
   async balances(): Promise<Record<string, Balance | null | { error: string }>> {

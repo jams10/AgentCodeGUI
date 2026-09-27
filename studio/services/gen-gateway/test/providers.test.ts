@@ -133,6 +133,14 @@ test('Higgsfield: 완료 → images/video 결과, nsfw → 실패(과금 없음)
   assert.match(n.error ?? '', /과금 없음/)
 })
 
+test('Higgsfield: 연결 확인은 견적(과금 없음)으로, 인증 오류는 그대로 올린다', async () => {
+  const ok = mockFetch(() => ({ body: { credits: '1.5', usd: '0.094' } }))
+  assert.match(await new HiggsfieldProvider(() => 'a:b', ok.f).verify(), /인증 확인됨/)
+  assert.equal(ok.calls[0].url, 'https://api.higgsfield.ai/estimate/higgsfield-ai/soul/standard')
+  const bad = mockFetch(() => ({ status: 401, body: { detail: 'Invalid credentials' } }))
+  await assert.rejects(new HiggsfieldProvider(() => 'a:b', bad.f).verify(), /401.*Invalid credentials/)
+})
+
 test('Higgsfield: 잔액 API가 없으므로 null', async () => {
   assert.equal(await new HiggsfieldProvider(() => 'a:b').balance(), null)
 })

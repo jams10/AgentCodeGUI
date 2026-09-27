@@ -9,6 +9,7 @@ import { getPref, setPref } from '../lib/prefs'
 import { SIDEBAR_AUTOHIDE } from '../lib/sidebarAutohide'
 import { ApprovalCenter } from './ApprovalCenter'
 import { ArtSpace } from './ArtSpace'
+import { SettingsSpace } from './SettingsSpace'
 import { Launcher } from './Launcher'
 import { SPACES, SpaceIcon, type SpaceId } from './spaces'
 import { UsageButton, UsagePanel, useStudioUsage } from './usage'
@@ -104,6 +105,7 @@ export function StudioRoot(): ReactElement {
         </div>
       )}
       {space === 'art' && <ArtSpace ensureApp={ensureApp} />}
+      {space === 'settings' && <SettingsSpace />}
       {space === 'home' && <Launcher onStart={(id) => go(id)} />}
       <ApprovalCenter />
     </div>

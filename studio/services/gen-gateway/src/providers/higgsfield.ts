@@ -113,6 +113,13 @@ export class HiggsfieldProvider implements Provider {
     }
   }
 
+  /** 키 확인 — 잔액 API가 없어서 견적(과금 없음)을 한 번 받아 본다. 인증 오류는 그대로 올린다. */
+  async verify(): Promise<string> {
+    const r = await requestJson<{ usd?: unknown }>(this.fetchImpl, `${BASE}/estimate/${HIGGSFIELD_MODELS.soul.path}`, { headers: this.headers(), body: { prompt: 'connection check' }, timeoutMs: 15000 })
+    const usd = num(r.usd)
+    return usd == null ? '인증 확인됨' : `인증 확인됨 (Soul 이미지 1장 견적 $${usd.toFixed(3)})`
+  }
+
   async submit(req: GenerationRequest): Promise<{ remoteId: string }> {
     const path = pathOf(req)
     if (!path) throw new Error(`Higgsfield 모델 경로를 알 수 없어요: ${req.model}`)

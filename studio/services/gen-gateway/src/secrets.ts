@@ -49,7 +49,14 @@ function hintOf(value: string): string {
   return v.length <= 8 ? '••••' : `••••${v.slice(-4)}`
 }
 
-export class SecretStore {
+/** 서버가 쓰는 키 보관함의 모양 — 테스트는 메모리 구현을 넣는다 */
+export interface KeyStore {
+  list(): { provider: ProviderId; hint: string; updatedAt: number }[]
+  set(provider: ProviderId, value: string): Promise<void>
+  remove(provider: ProviderId): boolean
+}
+
+export class SecretStore implements KeyStore {
   private readonly file: string
   private readonly cache = new Map<ProviderId, string>()
 

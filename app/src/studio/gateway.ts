@@ -188,7 +188,7 @@ async function streamLoop(): Promise<void> {
           buf = buf.slice(cut + 2)
           const line = chunk.split('\n').find((l) => l.startsWith('data: '))
           if (!line) continue
-          const e = JSON.parse(line.slice(6)) as { type: 'job'; job: Job; outputs?: Output[] } | { type: 'balance'; provider: ProviderId; balance: Balance } | { type: 'styles' }
+          const e = JSON.parse(line.slice(6)) as { type: 'job'; job: Job; outputs?: Output[] } | { type: 'balance'; provider: ProviderId; balance: Balance } | { type: 'styles' } | { type: 'providers' }
           if (e.type === 'job') {
             upsert(e.job, e.outputs)
             if (e.job.state === 'succeeded') {
@@ -196,6 +196,7 @@ async function streamLoop(): Promise<void> {
               void gw<Spend[]>(`/spend?since=${Date.now() - 30 * 24 * 60 * 60 * 1000}`).then((spend) => set({ spend }))
             }
           } else if (e.type === 'styles') set({ stylesVersion: state.stylesVersion + 1 })
+          else if (e.type === 'providers') void refreshAll(true).catch(() => {})
           else set({ balances: { ...state.balances, [e.provider]: e.balance } })
         }
       }
@@ -230,6 +231,17 @@ export const reject = (id: string): Promise<Job> => gw<Job>(`/jobs/${id}/reject`
 export const cancel = (id: string): Promise<Job> => gw<Job>(`/jobs/${id}/cancel`, { method: 'POST' }).then((j) => (upsert(j), j))
 export const outputUrl = (id: string): Promise<{ url: string; localPath?: string; stored: boolean }> => gw(`/outputs/${id}/url`)
 export const refreshBalances = (): Promise<void> => refreshAll(true)
+export interface KeyInfo {
+  provider: ProviderId
+  configured: boolean
+  hint: string | null
+  updatedAt: number | null
+}
+export const listKeys = (): Promise<KeyInfo[]> => gw<KeyInfo[]>('/keys')
+/** 키 원문은 게이트웨이로 바로 보내고 화면에는 남기지 않는다 — 돌아오는 것은 끝 4자리 힌트뿐 */
+export const saveKey = (p: ProviderId, key: string): Promise<{ ok: boolean; hint: string | null }> => gw(`/keys/${p}`, { body: { key } })
+export const deleteKey = (p: ProviderId): Promise<{ ok: boolean }> => gw(`/keys/${p}/delete`, { body: {} })
+export const testKey = (p: ProviderId): Promise<{ ok: boolean; message: string }> => gw(`/keys/${p}/test`, { body: {} })
 export const listStyles = (): Promise<Style[]> => gw<Style[]>('/styles')
 export const createStyle = (s: StyleInput): Promise<Style> => gw<Style>('/styles', { body: s })
 export const updateStyle = (id: string, s: Partial<StyleInput>): Promise<Style> => gw<Style>(`/styles/${id}`, { body: s })

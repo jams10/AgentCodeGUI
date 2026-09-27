@@ -400,6 +400,29 @@ html.studio-theme.studio-theme[data-space="art"] body{
   .st-art-filter{ display:none; }
 }
 
+/* ---- 설정 공간 ---- */
+.st-set{ position:fixed; left:0; right:0; top:52px; bottom:0; overflow:auto; padding:10px 16px 28px; font-family:var(--st-font); color:#fff; }
+.st-set-col{ max-width:760px; margin:0 auto; display:flex; flex-direction:column; gap:16px; }
+.st-set-intro h2{ font-size:20px; font-weight:400; margin-bottom:6px; }
+.st-set-intro p{ font-family:'Gowun Dodum', var(--font-sans); font-size:14px; line-height:1.6; color:var(--st-text-soft); margin:0 0 4px; }
+.st-set-card{
+  border-radius:24px; border:1px solid rgba(255,255,255,.26); padding:20px 22px; display:flex; flex-direction:column; gap:12px;
+  background:linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,.04)); box-shadow:inset 0 1px 0 rgba(255,255,255,.3), 0 14px 36px rgba(0,0,0,.25);
+}
+.st-set-head{ display:flex; justify-content:space-between; align-items:flex-start; gap:14px; }
+.st-set-head h3{ font-size:18px; font-weight:400; }
+.st-set-what{ font-size:12.5px; color:var(--st-text-dim); margin-top:3px; }
+.st-set-badge{ flex-shrink:0; font-size:12px; padding:4px 12px; border-radius:999px; background:rgba(255,255,255,.1); color:var(--st-text-dim); white-space:nowrap; }
+.st-set-badge.on{ background:rgba(var(--st-accent-rgb),.2); border:1px solid rgba(var(--st-accent-rgb),.55); color:#fff; }
+.st-set-facts{ display:flex; flex-wrap:wrap; gap:6px 16px; font-size:12.5px; color:var(--st-text-soft); padding:9px 12px; border-radius:12px; background:var(--st-well); }
+.st-set-input{ display:flex; gap:6px; align-items:center; }
+.st-set-input input{ flex:1; font-family:var(--font-mono); letter-spacing:.3px; }
+.st-set-hint{ font-size:12px; color:var(--st-text-dim); line-height:1.5; }
+.st-set-link{ color:var(--st-accent); font-size:12px; padding:0 2px; text-decoration:underline; text-underline-offset:2px; }
+.st-set-actions{ display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.st-set-actions .st-pill{ padding:8px 14px; font-size:13px; }
+.st-set button:disabled{ opacity:.55; cursor:default; }
+
 /* ---- 생성 승인 센터 ---- */
 /* 카드 묶음 — 스크롤 영역은 사각형으로 잘리므로, 카드 그림자가 번질 여백(패딩)을 안쪽에 둔다.
    그렇지 않으면 둥근 카드 뒤로 잘린 그림자가 박스 모양으로 남는다. 여백은 클릭이 아래로 통과한다. */

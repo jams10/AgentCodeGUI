@@ -62,11 +62,11 @@ export const SPACES: SpaceDef[] = [
     light: '#c7b4ff', tint: '#7b5cf0', dark: '#4527a8', ready: false, x: 555, y: 290
   },
   {
-    id: 'settings', title: '설정', en: 'Settings', cta: '설정 열기',
-    desc: '계정과 연결된 서비스, 저장소를 관리해요.',
-    does: ['Claude · Codex 계정', '생성 서비스 API 키', '클라우드 저장소 연결'],
+    id: 'settings', title: '설정', en: 'Settings', cta: '연결 관리',
+    desc: '외부 생성 서비스의 API 키를 넣고 연결을 확인해요.',
+    does: ['ComfyCloud · Higgsfield · Tripo API 키', '키 연결 확인 · 잔액 · 30일 사용액', '키는 이 PC에서 암호화해 보관'],
     tools: [],
-    light: '#f2f7fb', tint: '#a9bccd', dark: '#5f7489', ready: false, x: 865, y: 310
+    light: '#f2f7fb', tint: '#a9bccd', dark: '#5f7489', ready: true, x: 865, y: 310
   }
 ]
 

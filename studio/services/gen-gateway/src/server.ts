@@ -8,7 +8,7 @@ import type { ModelInfo } from './models.ts'
 import { pathToFileURL } from 'node:url'
 import { Gateway, GatewayError, type GatewayEvent } from './gateway.ts'
 import type { Ledger } from './ledger.ts'
-import type { SecretStore } from './secrets.ts'
+import type { KeyStore } from './secrets.ts'
 import type { GenerationRequest, JobRecord, JobState, Provider, ProviderId, StyleInput } from './types.ts'
 
 export const VERSION = '0.1.0'
@@ -19,7 +19,7 @@ const STATES: JobState[] = ['awaiting_approval', 'rejected', 'submitting', 'runn
 export interface ServerDeps {
   gateway: Gateway
   ledger: Ledger
-  secrets: SecretStore | null
+  secrets: KeyStore | null
   providers: Provider[]
   infoFile: string | null
   /** 로컬 보관 폴더 — 'local:' 저장 키의 기준 */
@@ -77,6 +77,18 @@ function asRequest(b: unknown): GenerationRequest {
     provider: typeof o.provider === 'string' ? (o.provider as ProviderId) : undefined,
     style: typeof o.style === 'string' && o.style.trim() ? o.style.trim() : undefined
   }
+}
+
+const KEY_PROVIDERS: ProviderId[] = ['comfy', 'tripo', 'higgsfield']
+
+/** 키 모양 확인 — 서비스에 보내기 전에 흔한 실수(공백 · 빈 값 · 형식)를 잡는다. 문제가 없으면 null. */
+export function keyProblem(p: ProviderId, key: string): string | null {
+  if (!key) return '키를 입력해 주세요'
+  if (key.length > 500) return '키가 너무 길어요'
+  if (/\s/.test(key)) return '키에 공백이 들어 있어요 — 앞뒤 공백 · 줄바꿈 없이 붙여 넣어 주세요'
+  if (p === 'higgsfield' && !/^[^:]+:[^:]+$/.test(key)) return 'Higgsfield 키는 "KEY_ID:KEY_SECRET" 형식이에요(콜론으로 이어 붙이기)'
+  if (key.length < 8) return '키가 너무 짧아요'
+  return null
 }
 
 const MAX_STYLE_TEXT = 2000
@@ -163,6 +175,37 @@ export async function startServer(d: ServerDeps): Promise<RunningServer> {
             return { ...m, providers, available: providers.some((x) => x.configured) }
           })
         )
+      }
+      // ── API 키 (설정 화면) — 원문은 받기만 하고 절대 돌려주지 않는다(끝 4자리 힌트만) ──
+      if (seg[0] === 'keys') {
+        if (!d.secrets) return send(res, 503, { error: 'no_keystore', message: '키 보관함을 쓸 수 없어요' })
+        if (req.method === 'GET' && seg.length === 1) {
+          const hints = new Map(d.secrets.list().map((k) => [k.provider, k]))
+          return send(res, 200, KEY_PROVIDERS.map((p) => ({ provider: p, configured: hints.has(p), hint: hints.get(p)?.hint ?? null, updatedAt: hints.get(p)?.updatedAt ?? null })))
+        }
+        const p = seg[1] as ProviderId
+        if (!KEY_PROVIDERS.includes(p)) return send(res, 404, { error: 'not_found' })
+        if (req.method === 'POST' && seg.length === 2) {
+          const b = ((await readBody(req)) ?? {}) as { key?: unknown }
+          const key = typeof b.key === 'string' ? b.key.trim() : ''
+          const bad = keyProblem(p, key)
+          if (bad) throw new GatewayError('bad_request', bad)
+          await d.secrets.set(p, key)
+          broadcast({ type: 'providers' })
+          return send(res, 200, { ok: true, hint: d.secrets.list().find((k) => k.provider === p)?.hint ?? null })
+        }
+        if (req.method === 'POST' && seg[2] === 'delete') {
+          const removed = d.secrets.remove(p)
+          broadcast({ type: 'providers' })
+          return send(res, 200, { ok: removed })
+        }
+        if (req.method === 'POST' && seg[2] === 'test') {
+          try {
+            return send(res, 200, { ok: true, message: await gw.verify(p) })
+          } catch (e) {
+            return send(res, 200, { ok: false, message: (e as Error).message })
+          }
+        }
       }
       // ── 스타일 ──
       if (req.method === 'GET' && path === '/styles') return send(res, 200, d.ledger.styles())

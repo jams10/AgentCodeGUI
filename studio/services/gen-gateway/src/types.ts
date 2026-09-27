@@ -105,6 +105,8 @@ export interface Provider {
   cancel?(remoteId: string): Promise<void>
   /** 인증이 필요하거나 만료되는 결과 URL을 지금 열 수 있는 URL로 바꾼다(없으면 저장된 URL 그대로) */
   resolveOutput?(url: string): Promise<string>
+  /** 키가 맞는지 과금 없이 확인한다(없으면 balance()로 확인) */
+  verify?(): Promise<string>
 }
 
 export type JobState =
