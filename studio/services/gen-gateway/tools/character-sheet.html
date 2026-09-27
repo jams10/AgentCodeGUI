@@ -17,7 +17,7 @@ textarea{min-height:70px;resize:vertical}input:focus,select:focus,textarea:focus
 .top{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:14px 20px;border-bottom:1px solid var(--line);background:var(--surface)}
 .top select{width:auto;min-width:220px}.top .status{margin-left:auto;font-size:12px;color:var(--muted)}
 .layout{display:grid;grid-template-columns:210px minmax(0,1fr);min-height:calc(100vh - 62px)}
-nav{border-right:1px solid var(--line);padding:16px 10px;display:flex;flex-direction:column;gap:4px}
+nav{border-right:1px solid var(--line);padding:16px 10px;display:flex;flex-direction:column;gap:4px;position:sticky;top:0;align-self:start;height:calc(100vh - 62px);overflow:auto}
 nav button{display:flex;gap:10px;align-items:center;text-align:left;background:transparent;border:1px solid transparent;color:var(--muted);border-radius:9px;padding:9px 10px;font-size:13px}
 nav button b{width:22px;height:22px;border-radius:6px;background:#2a343f;color:var(--accent);display:grid;place-items:center;font-size:11px;flex-shrink:0}
 nav button.on{background:#2a3f37;border-color:#466554;color:#d8f9eb}nav button.done b{background:var(--accent-bg)}
@@ -40,7 +40,8 @@ details.p summary{cursor:pointer;color:var(--blue);font-size:12px;margin-top:8px
 .cand.full img{aspect-ratio:2/3}
 .cand.wide{width:300px}.cand.wide img,.cand.wide .ph{aspect-ratio:16/9;object-fit:contain}
 .cand .ph{display:grid;place-items:center;aspect-ratio:4/5;color:var(--dim);font-size:11px}
-.cand .bar{display:flex;gap:4px;padding:5px}.cand .bar .btn{flex:1;padding:4px 6px;font-size:11px}
+.cand .bar{display:flex;flex-wrap:wrap;gap:4px;padding:5px}.cand .bar .btn{flex:1 1 44%;padding:4px 6px;font-size:11px}.btn.danger{color:var(--danger)}
+.vid .x{border:0;background:transparent;color:var(--danger);font-size:13px;padding:0 0 0 6px;cursor:pointer}
 .cand.chosen{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)}.cand .tag{position:absolute;top:5px;left:5px;background:var(--accent);color:#11241c;border-radius:6px;padding:1px 7px;font-size:10px;font-weight:800}
 .jobs{font-size:12px;color:var(--muted);margin-top:8px}.jobs span{display:inline-block;margin-right:10px}
 .state{display:grid;grid-template-columns:150px minmax(0,1fr);gap:14px;padding:14px 0;border-top:1px solid var(--line)}
@@ -50,8 +51,20 @@ details.p summary{cursor:pointer;color:var(--blue);font-size:12px;margin-top:8px
 .vids{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;font-size:12px}
 .vid{border:1px solid var(--line);border-radius:8px;padding:4px 8px;color:var(--muted)}.vid.ok{color:var(--accent);cursor:pointer}
 .locked{opacity:.5;pointer-events:none}
+select.count{width:auto;padding:7px 8px}
+.cand .num{position:absolute;top:5px;right:5px;background:#000a;color:var(--text);border-radius:6px;padding:0 6px;font-size:10px}
+.cand .edit-note{font-size:10px;color:var(--muted);padding:4px 6px 0;line-height:1.35;max-height:40px;overflow:hidden}
+.cand.editing{border-color:var(--blue);box-shadow:0 0 0 2px var(--blue)}
+.cands .cand{width:150px}.cands .cand.wide{width:300px}
+.editbox{margin-top:12px;border:1px solid #3b5a78;border-radius:10px;padding:12px;background:#15202b}.editbox label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
+.refill{margin-top:12px;padding-top:10px;border-top:1px dashed var(--line)}
+.navgap{flex:1;min-height:18px;border-bottom:1px solid var(--line);margin:8px 4px}code{font-size:12px;background:#10151b;border-radius:5px;padding:1px 5px}
 .toast{position:fixed;right:18px;bottom:18px;background:#1f2b27;border:1px solid #466554;border-radius:10px;padding:10px 14px;font-size:13px;max-width:420px}
 .toast.bad{background:#2d1f1f;border-color:#6b3a36}
+.group{margin:8px 0 26px}.gh{font-size:18px;margin:0 0 4px}.group > .note{margin:0 0 12px}
+.ctabs{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 14px}.ctabs button{border:1px solid var(--line);background:var(--surface2);color:var(--muted);border-radius:999px;padding:6px 14px;font-size:13px;font-weight:650}
+.ctabs button.on{background:var(--accent-bg);border-color:#466554;color:#d8f9eb}.ctabs .add{background:transparent;border-style:dashed}
+.card.photo{background:var(--surface2)}.card.photo .row{align-items:center}.refthumb{width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid var(--line)}
 </style>
 </head>
 <body>
@@ -61,6 +74,7 @@ details.p summary{cursor:pointer;color:var(--blue);font-size:12px;margin-top:8px
   <button type="button" class="btn quiet" id="importV2">v2 시트 JSON 불러오기</button>
   <button type="button" class="btn quiet" id="deleteChar">캐릭터 삭제</button>
   <input type="file" id="importFile" accept=".json,application/json" hidden>
+  <input type="file" id="photoFile" accept="image/png,image/jpeg,image/webp" hidden>
   <span class="status" id="status" aria-live="polite">불러오는 중…</span>
 </div>
 <div class="layout">
@@ -76,22 +90,31 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 
 // ── 입력 항목 ────────────────────────────────────────────────
 const F = {
-  identity: [['name','캐릭터 이름','예: 서린'],['job','직업','예: 동네 수리점 직원'],['gender','성별','예: 여성'],['age','나이대','예: 20대 후반'],['firstImpression','첫인상','예: 둥근 얼굴과 짙은 눈썹으로 단단하고 친근한 인상','textarea',true],['personality','성격 · 감정 표현 방식 · 선택','예: 무뚝뚝한 편이라 기뻐도 크게 웃지 않고 눈으로 웃는다. 쑥스러우면 시선을 피한다.','textarea',true]],
-  face: [['faceShape','얼굴형','예: 짧은 타원형, 볼에 살이 약간 있음'],['eyes','눈','예: 길고 약간 처진 눈'],['eyebrows','눈썹','예: 짙고 곧은 눈썹'],['nose','코','예: 낮은 콧대, 둥근 코끝'],['mouth','입 · 입술','예: 보통 크기 입, 아랫입술이 조금 두꺼움'],['jaw','턱 · 광대','예: 둥근 턱, 약간 넓은 광대'],['skinTone','피부 톤','예: 중간 밝기의 웜 베이지'],['hair','헤어스타일','예: 검은 턱 길이 단발, 귀 뒤로 넘김']],
+  identity: [['name','캐릭터 이름','예: 서린'],['job','직업','예: 동네 수리점 직원'],['gender','성별','예: 여성'],['age','나이대','예: 20대 후반']],
+  face: [['faceShape','얼굴형','예: 짧은 타원형, 볼에 살이 약간 있음'],['eyes','눈','예: 길고 약간 처진 눈'],['eyebrows','눈썹','예: 짙고 곧은 눈썹'],['nose','코','예: 낮은 콧대, 둥근 코끝'],['mouth','입 · 입술','예: 보통 크기 입, 아랫입술이 조금 두꺼움'],['jaw','턱 · 광대','예: 둥근 턱, 약간 넓은 광대'],['skinTone','피부 톤','예: 중간 밝기의 웜 베이지'],['hair','헤어스타일','예: 검은 턱 길이 단발, 귀 뒤로 넘김'],['firstImpression','첫인상','예: 둥근 얼굴과 짙은 눈썹으로 단단하고 친근한 인상','textarea',true],['personality','성격 · 감정 표현 방식 · 선택','예: 무뚝뚝한 편이라 기뻐도 크게 웃지 않고 눈으로 웃는다. 쑥스러우면 시선을 피한다.','textarea',true]],
   body: [['proportion','등신 · 신체 비율','예: 7.5등신, 다리가 긴 편, 머리는 작은 편','text',true],['bodyDescription','체형 요약','예: 평균 체격에 하체가 조금 더 발달한 체형','textarea',true],['frame','골격','예: 중간 골격'],['neck','목','예: 보통 길이와 굵기'],['shoulderDescription','어깨','예: 보통 너비, 완만한 어깨선'],['chestDescription','가슴 · 흉곽','예: 보통 볼륨, 흉곽이 납작하지 않음'],['waistDescription','허리','예: 완만하게 들어간 허리'],['hipDescription','골반 · 엉덩이','예: 골반이 어깨보다 약간 넓음'],['armDescription','팔','예: 전완이 단단하고 팔은 보통 굵기'],['legDescription','다리','예: 허벅지가 탄탄하고 종아리는 보통'],['muscleDescription','근육','예: 하체와 전완에 근육이 조금 보임'],['fatDescription','체지방','예: 복부와 볼에 부드러운 볼륨']],
   // 설정 메모 — 이미지 모델은 숫자를 재현하지 못하고, 치수 표현은 안전 검사에 걸릴 수 있어 프롬프트에 넣지 않는다
   memo: [['heightCm','키 (cm)','예: 168'],['weightKg','몸무게 (kg)','예: 61'],['shoulderCm','어깨너비 (cm)',''],['chestCm','가슴둘레 (cm)',''],['underbustCm','밑가슴둘레 (cm)',''],['cupSize','컵 · 사이즈 표기',''],['waistCm','허리둘레 (cm)',''],['hipCm','엉덩이둘레 (cm)',''],['armCm','위팔둘레 (cm)',''],['thighCm','허벅지둘레 (cm)',''],['muscleKg','골격근량 (kg)',''],['bodyFatPct','체지방률 (%)','']],
-  costume: [['costume','기본 코스튬 · 색 / 소재 / 핏','예: 짙은 남색 면 작업 재킷, 흰 라운드 티셔츠, 스트레이트 핏 회색 면바지','textarea',true],['accessories','액세서리 · 소지품','예: 검은 스포츠 시계, 작은 은색 귀걸이','textarea',true],['shoes','신발','예: 흰색 가죽 운동화, 낮은 굽'],['heldItem','손에 드는 물건 · 선택','예: 접은 작업용 장갑']]
+  costume: [['costume','코스튬 · 색 / 소재 / 핏','예: 짙은 남색 면 작업 재킷, 흰 라운드 티셔츠, 스트레이트 핏 회색 면바지','textarea',true],['accessories','액세서리 · 소지품','예: 검은 스포츠 시계, 작은 은색 귀걸이','textarea',true],['shoes','신발','예: 흰색 가죽 운동화, 낮은 굽'],['heldItem','손에 드는 물건 · 선택','예: 접은 작업용 장갑']]
 }
 const RATIO = { portrait: { '4:5': [1024, 1280], '3:4': [1024, 1360], '1:1': [1024, 1024] }, full: { '2:3': [1024, 1536], '3:4': [1152, 1536], '9:16': [1152, 2048] } }
-// 턴어라운드 시트 — 네 방향을 한 장에 가로로(같이 만들어야 방향끼리 일관된다)
+// 턴어라운드 · 코스튬 시트 — 한 장에 가로로(같이 만들어야 방향 · 파츠끼리 일관된다)
 const SHEET = [2048, 1152]
 // 기준 자세 — 모든 캐릭터 공통 고정. 턴어라운드의 바탕이고, 실제 포즈는 상태별 전신에서 바뀐다
 const BASE_POSE = '앞을 똑바로 보고 선 자세. 몸과 얼굴이 정면, 체중은 양발에 고르게, 발은 어깨너비보다 조금 좁게 벌린다. 팔은 몸 옆에 자연스럽게 내리되 몸통에서 살짝 떨어뜨려 옷과 몸의 실루엣이 보인다.'
-const DEFAULT_SETTINGS = { portraitRatio: '4:5', fullRatio: '2:3', background: '밝은 회색 단색 배경', constraints: '', model: 'gpt-image-2.5-sunburst', quality: 'medium', variations: 2, videoSeconds: 4, videoResolution: '480p' }
+const DEFAULT_OUTFIT = '몸에 딱 달라붙는 무지 짙은 회색 스포츠웨어 — 반팔 컴프레션 상의와 발목 길이 컴프레션 레깅스. 로고 · 무늬 · 글자 없음. 맨발.'
+// 캐릭터 제작 공통 규칙 시작값 — "설정"에서 고친다(한 줄에 하나)
+const DEFAULT_RULES = [
+  '완전히 가상의 인물 한 명. 설정한 외모를 임의로 미화하거나 과장하지 않는다.',
+  '첫인상을 표현하려고 미소 · 분노 · 피로 같은 상태를 추가하지 않는다.',
+  '중립적인 정면 조명, 실제 피부 질감, 고른 노출. 과도한 보정 · 광각 왜곡 · 극적인 역광 없음.',
+  '스캔라인 · 노이즈 · VHS 번짐 같은 화면 효과는 넣지 않는다(나중에 일괄 후처리).',
+  '글자 · 이름표 · 치수선 · UI · 체력바 · 테두리 · 콜라주 · 추가 인물 없음.'
+].join('\n')
+const DEFAULT_SETTINGS = { rules: DEFAULT_RULES, analysisEngine: 'codex', analysisModel: '', portraitRatio: '4:5', fullRatio: '2:3', background: '중간 톤 중성 회색(#808080 정도) 단색 배경. 무늬 · 그라데이션 · 비네팅 없음', constraints: '', model: 'gpt-image-2.5-sunburst', quality: 'medium', videoSeconds: 4, videoResolution: '480p', baseOutfit: DEFAULT_OUTFIT }
 
 // ── 공통 상태 규격 — 모든 캐릭터 · 코스튬에 같은 문구 ──────────────
-// bust: 상반신(메인 UI) 8개, full: 전신(상세창) 6개. idle은 기준 이미지 자체를 쓴다.
+// bust: 상반신(메인 UI) 8개, full: 전신(상세창) 6개. idle은 코스튬 기준 이미지 자체를 쓴다.
 const STATES = [
   { id: 'idle', name: '기본', note: '평상시', loop: true, full: true,
     face: '무표정. 눈과 입 주변의 힘을 풀고 입을 편하게 다문다. 정면 시선.', bust: '어깨 수평, 편안한 중립 자세.', fullPose: '기본 서기 자세.',
@@ -122,22 +145,57 @@ const STATES = [
 ]
 
 // ── 문서 ────────────────────────────────────────────────────
+// v4: 캐릭터 원형(base — 공통 기본 복장) + 코스튬 목록(costumes — 코스튬마다 시트 · 기준 이미지 · 상태)
 let doc = null
 let step = 0
 let saveTimer = null
 const thumbs = new Map()
-const newDoc = () => ({ schema: 'studio-character', version: 3, name: '', values: {}, settings: { variations: 2, constraints: '' }, costumes: [{ id: 'base', name: '기본 코스튬' }], base: { portrait: { cands: [], chosen: null }, faceSheet: { cands: [], chosen: null }, full: { cands: [], chosen: null }, fullSheet: { cands: [], chosen: null } }, states: { bust: {}, full: {} }, pending: [] })
+const slot = () => ({ cands: [], chosen: null })
+const newCostume = (name) => ({ id: 'k' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), name, values: {}, ref: null, sheet: slot(), portrait: slot(), full: slot(), states: { bust: {}, full: {} } })
+const newDoc = () => { const c = newCostume('기본 코스튬'); c.id = 'base'; return { schema: 'studio-character', version: 4, name: '', values: {}, settings: { constraints: '' }, base: { portrait: slot(), faceSheet: slot(), full: slot(), fullSheet: slot() }, costumes: [c], current: 'base', pending: [] } }
 const v = (id) => String(doc.values[id] ?? '').trim()
-// 출력 설정 — 테마 · 비율 · 모델 · 품질 · 영상은 프로젝트 설정(프로젝트마다 하나), 후보 수 · 추가 제약만 캐릭터별
+const cur = () => doc.costumes.find((c) => c.id === doc.current) || doc.costumes[0]
+const costumeById = (id) => doc.costumes.find((c) => c.id === id)
+const cv = (c, id) => String(c.values?.[id] ?? '').trim()
+// 설정 — 이 프로젝트의 캐릭터 시트 공통값(TOOLSET: 규칙 · 출력 · 기본 복장 · 분석 엔진) 위에 캐릭터별 덮어쓰기
 let PROJ = null
+let TOOLSET = {}
+let toolTimer = null
+let ENGINES = null
+const TOOL_KEYS = Object.keys(DEFAULT_SETTINGS).filter((k) => k !== 'constraints')
+/** 칸별 이번 요청 장 수 — 기본 1장. 저장하지 않는다 */
+const counts = {}
+function saveTool() {
+  clearTimeout(toolTimer)
+  setStatus('설정 저장 중…')
+  toolTimer = setTimeout(async () => {
+    try { await studio.settings.save(TOOLSET); setStatus('설정 저장됨') } catch (e) { setStatus('설정 저장 실패: ' + e.message) }
+  }, 400)
+}
 const OVERRIDABLE = ['model', 'quality', 'portraitRatio', 'fullRatio', 'background', 'videoSeconds', 'videoResolution']
 const overrides = () => Object.fromEntries(Object.entries(doc.settings.overrides || {}).filter(([k, v]) => OVERRIDABLE.includes(k) && v !== '' && v != null))
-const S = () => ({ ...DEFAULT_SETTINGS, ...(PROJ?.settings || {}), ...overrides(), variations: doc.settings.variations ?? 2, constraints: doc.settings.constraints ?? '' })
+const base = () => ({ ...DEFAULT_SETTINGS, ...TOOLSET })
+const S = () => ({ ...base(), ...overrides(), constraints: doc.settings.constraints ?? '' })
 
+/** v3(옷 입은 기준 이미지 하나) → v4. 예전 기준 이미지 · 상태는 기본 코스튬 쪽으로 옮기고, 원형은 새로 만든다 */
+function migrate(d) {
+  const fresh = newDoc()
+  if ((d.version ?? 3) >= 4) return { ...fresh, ...d, settings: { ...(d.settings || {}) }, base: { ...fresh.base, ...(d.base || {}) }, costumes: (d.costumes?.length ? d.costumes : fresh.costumes).map((c) => ({ ...newCostume(c.name), ...c, states: { bust: {}, full: {}, ...(c.states || {}) } })) }
+  const c = fresh.costumes[0]
+  for (const k of F.costume.map((f) => f[0])) if (d.values?.[k] != null) c.values[k] = d.values[k]
+  if (d.base?.portrait) c.portrait = d.base.portrait
+  if (d.base?.full) c.full = d.base.full
+  c.states = { bust: {}, full: {}, ...(d.states || {}) }
+  const values = { ...(d.values || {}) }
+  for (const k of F.costume.map((f) => f[0])) delete values[k]
+  const keyOf = (k) => (k.startsWith('base.portrait') ? 'c.base.portrait' + k.slice(13) : k.startsWith('base.full') && !k.startsWith('base.fullSheet') ? 'c.base.full' + k.slice(9) : /^(bust|full)\./.test(k) ? 'c.base.' + k : null)
+  const pending = (d.pending || []).map((p) => ({ ...p, key: keyOf(p.key) })).filter((p) => p.key)
+  return { ...fresh, id: d.id, name: d.name, values, settings: { ...(d.settings || {}) }, costumes: [c], pending }
+}
 
 function toast(text, bad = false) {
   const t = $('toast'); t.textContent = text; t.className = 'toast' + (bad ? ' bad' : ''); t.hidden = false
-  clearTimeout(toast.t); toast.t = setTimeout(() => (t.hidden = true), 5000)
+  clearTimeout(toast.t); toast.t = setTimeout(() => (t.hidden = true), 6000)
 }
 function setStatus(text) { $('status').textContent = text }
 function save() {
@@ -156,119 +214,203 @@ const block = (title, lines) => { const t = lines.filter(Boolean).join('\n'); re
 const person = () => block('인물', [line('성별', v('gender')), line('나이대', v('age')), line('직업', v('job')), line('첫인상 (얼굴 구조 · 헤어 · 복장으로만 표현, 표정으로 표현하지 않음)', v('firstImpression'))])
 const face = () => block('얼굴 — 고정', [line('얼굴형', v('faceShape')), line('눈', v('eyes')), line('눈썹', v('eyebrows')), line('코', v('nose')), line('입 · 입술', v('mouth')), line('턱 · 광대', v('jaw')), line('피부 톤', v('skinTone')), line('헤어', v('hair'))])
 const body = (full) => block(full ? '체형' : '체형 — 상반신에 보이는 부분', [line('등신 · 신체 비율 (머리 크기 대비 키 — 이 비율을 지킨다)', v('proportion')), line('체형 요약', v('bodyDescription')), line('골격', v('frame')), line('목', v('neck')), line('어깨', v('shoulderDescription')), line('가슴 · 흉곽', v('chestDescription')), full && line('허리', v('waistDescription')), full && line('골반 · 엉덩이', v('hipDescription')), line('팔', v('armDescription')), full && line('다리', v('legDescription')), line('근육', v('muscleDescription')), line('체지방', v('fatDescription'))])
-const costume = (full) => block(full ? '의상 — 고정' : '의상 — 프레임 안에 보이는 부분만', [line('기본 코스튬', v('costume')), line('액세서리 · 소지품', v('accessories')), full && line('신발', v('shoes')), full && (v('heldItem') ? line('손에 든 물건 (편안하게 낮게 든다)', v('heldItem')) : '- 손은 빈손으로 자연스럽게 둔다')])
+const costume = (c, full) => block(full ? '코스튬 — 고정' : '코스튬 — 프레임 안에 보이는 부분만', [line('의상', cv(c, 'costume')), line('액세서리 · 소지품', cv(c, 'accessories')), full && line('신발', cv(c, 'shoes')), full && (cv(c, 'heldItem') ? line('손에 든 물건 (편안하게 낮게 든다)', cv(c, 'heldItem')) : '- 손은 빈손으로 자연스럽게 둔다')])
+const outfit = () => String(S().baseOutfit || DEFAULT_OUTFIT).trim()
+const outfitBlock = (full) => block('복장 — 모든 캐릭터 공통 기본 복장 (체형을 보이기 위한 옷)', ['- ' + outfit(), full ? '- 옷이 몸에 밀착해 어깨 · 가슴 · 허리 · 골반 · 다리의 윤곽이 그대로 드러난다.' : '- 목 · 어깨 · 쇄골 라인이 보인다.', '- 액세서리 · 소품 · 겉옷 없음. 머리카락 외에 얼굴 · 몸을 가리는 것 없음.'])
 const rules = () => block('공통 규칙', [
   ...String(S().rules || '').split('\n').map((l) => l.trim()).filter(Boolean).map((l) => '- ' + l),
   S().constraints && '- ' + S().constraints
 ])
-const bg = () => S().background || '밝은 회색 단색 배경'
-const pose = () => BASE_POSE
+const bg = () => S().background || DEFAULT_SETTINGS.background
 const proportionRule = () => (v('proportion') ? `신체 비율은 ${v('proportion')}을 지킨다.` : '실제 성인 비율(약 7~7.5등신)을 지킨다 — 머리가 커 보이거나 다리가 짧아 보이지 않게.')
 const camFull = () => '카메라는 인물의 허리 높이에서 수평으로, 충분히 떨어져 망원 렌즈로 찍은 것처럼 원근 왜곡이 없다(위에서 내려다보지 않는다). ' + proportionRule() + ' 원근으로 머리나 다리를 과장하지 않는다.'
 const VIEWS = '왼쪽부터 정면, 오른쪽 반측면(약 45도), 오른쪽 측면(90도 옆모습), 후면'
 const sheetRules = ['- 인물이 제자리에서 돌아선 것이다. 카메라 높이 · 거리 · 조명은 네 컷 모두 같다.', '- 컷 사이에 여백만 둔다. 선 · 테두리 · 라벨 · 번호 · 글자를 넣지 않는다.']
+const portraitFrame = '- 머리카락 끝을 포함한 머리 전체, 목, 양쪽 어깨와 가슴 위쪽까지. 허리 아래와 손은 프레임 밖. 머리 위와 어깨 옆에 작은 여백.'
+const fullFrame = '- 머리카락 끝부터 발끝까지 모두 보이는 정면 전신. 머리 위 · 몸 양옆 · 발밑에 작은 여백을 두어 잘리는 곳이 없다.'
+const refsBlock = (lines) => block('참조 이미지', lines.map((l, i) => l && `- 이미지 ${i + 1}: ${l}`))
 
+// A. 캐릭터 원형 — 공통 기본 복장
 function portraitPrompt() {
   return [
-    `게임 메인 UI에 쓸 가상 인물의 기본 상반신 초상화 한 장. 세로 ${S().portraitRatio}.`,
-    person(), face(), body(false), costume(false),
-    block('구도 — 고정', ['- 증명사진처럼 얼굴과 상체가 정면. 얼굴은 가운데, 카메라는 눈높이. 고개 · 어깨가 돌아가지 않는다.', '- 머리카락 끝을 포함한 머리 전체, 목, 양쪽 어깨와 가슴 위쪽까지. 허리 아래와 손은 프레임 밖. 머리 위와 어깨 옆에 작은 여백.', '- 무표정, 입은 편하게 다물고, 정면 시선. 어깨는 수평.', '- 배경: ' + bg() + '.']),
+    `게임 캐릭터의 원형(얼굴 기준) 상반신 초상화 한 장. 세로 ${S().portraitRatio}.`,
+    person(), face(), body(false), outfitBlock(false),
+    block('구도 — 고정', ['- 증명사진처럼 얼굴과 상체가 정면. 얼굴은 가운데, 카메라는 눈높이. 고개 · 어깨가 돌아가지 않는다.', portraitFrame, '- 무표정, 입은 편하게 다물고, 정면 시선. 어깨는 수평.', '- 배경: ' + bg()]),
     rules()
   ].filter(Boolean).join('\n\n')
 }
 function faceSheetPrompt() {
   return [
-    '첨부한 이미지 1(기준 초상화)의 인물로 만든 얼굴 턴어라운드 캐릭터 시트 한 장. 가로 16:9.',
-    block('참조', ['- 이미지 1의 얼굴 구조 · 나이 · 피부 톤 · 헤어 · 의상을 그대로 유지한다. 새 인물로 바꾸지 않는다.']),
-    person(), face(), costume(false),
-    block('구도 — 고정', [`- 같은 인물의 머리 · 목 · 어깨 · 가슴 위쪽까지 네 컷을 가로 한 줄로: ${VIEWS}.`, '- 네 컷의 머리 크기 · 눈높이 · 어깨 높이를 맞춰 정렬한다. 카메라는 눈높이 수평, 원근 왜곡 없음.', '- 모든 컷 무표정, 입은 편하게 다문다. 시선은 몸이 향한 방향.', '- 측면 컷은 코 · 입 · 턱선의 옆 윤곽과 귀가, 후면 컷은 뒷머리 모양 · 길이와 옷 뒷면이 보인다.', ...sheetRules, '- 배경: ' + bg() + '. 이미지 1과 같은 조명 · 색감.']),
+    '첨부한 이미지 1(원형 초상화)의 인물로 만든 얼굴 턴어라운드 캐릭터 시트 한 장. 가로 16:9.',
+    refsBlock(['원형 초상화 — 얼굴 구조 · 나이 · 피부 톤 · 헤어 · 복장을 그대로 유지한다. 새 인물로 바꾸지 않는다.']),
+    person(), face(), outfitBlock(false),
+    block('구도 — 고정', [`- 같은 인물의 머리 · 목 · 어깨 · 가슴 위쪽까지 네 컷을 가로 한 줄로: ${VIEWS}.`, '- 네 컷의 머리 크기 · 눈높이 · 어깨 높이를 맞춰 정렬한다. 카메라는 눈높이 수평, 원근 왜곡 없음.', '- 모든 컷 무표정, 입은 편하게 다문다. 시선은 몸이 향한 방향.', '- 측면 컷은 코 · 입 · 턱선의 옆 윤곽과 귀가, 후면 컷은 뒷머리 모양 · 길이가 보인다.', ...sheetRules, '- 배경: ' + bg() + ' 이미지 1과 같은 조명 · 색감.']),
     rules()
   ].filter(Boolean).join('\n\n')
 }
 function fullPrompt() {
-  const sheet = doc.base.faceSheet.chosen
   return [
-    `첨부한 이미지 1의 기본 초상화와 같은 인물의 정면 전신 이미지 한 장. 캐릭터 상세창용. 세로 ${S().fullRatio}.`,
-    block('참조', ['- 이미지 1의 얼굴 · 나이 · 피부 톤 · 헤어 · 상반신 의상을 그대로 유지한다. 새 인물로 바꾸지 않는다.', sheet && '- 이미지 2는 같은 인물의 얼굴 턴어라운드 시트(정면 · 반측면 · 측면 · 후면)다. 머리 모양과 옆 · 뒤 윤곽을 여기에 맞춘다.', '- 아래 설정은 초상화에 보이지 않는 하체 · 신발 · 체형을 보완한다.']),
-    person(), face(), body(true), costume(true),
-    block('구도 — 고정', ['- 머리카락 끝부터 신발 밑창까지 모두 보이는 정면 전신. 머리 위 · 몸 양옆 · 발밑에 작은 여백을 두어 잘리는 곳이 없다.', '- 기본 자세: ' + pose(), '- 무표정, 편하게 다문 입, 정면 시선.', '- ' + camFull() + ' 확대 컷 · 측면 · 후면을 함께 넣지 않는다.', '- 배경: ' + bg() + '. 기본 초상화와 같은 조명 · 색감 · 의상 재질.']),
+    `첨부한 이미지 1의 원형 초상화와 같은 인물의 원형(체형 기준) 정면 전신 이미지 한 장. 세로 ${S().fullRatio}.`,
+    refsBlock(['원형 초상화 — 얼굴 · 나이 · 피부 톤 · 헤어를 그대로 유지한다. 새 인물로 바꾸지 않는다.', doc.base.faceSheet.chosen && '얼굴 턴어라운드 시트 — 머리 모양과 옆 · 뒤 윤곽을 여기에 맞춘다.']),
+    person(), face(), body(true), outfitBlock(true),
+    block('구도 — 고정', [fullFrame, '- 기본 자세: ' + BASE_POSE, '- 무표정, 편하게 다문 입, 정면 시선.', '- ' + camFull() + ' 확대 컷 · 측면 · 후면을 함께 넣지 않는다.', '- 배경: ' + bg() + ' 원형 초상화와 같은 조명 · 색감.']),
     rules()
   ].filter(Boolean).join('\n\n')
 }
 function fullSheetPrompt() {
   return [
-    '첨부한 이미지 1(기준 전신)의 인물로 만든 전신 턴어라운드 캐릭터 시트 한 장. 가로 16:9.',
-    block('참조', ['- 이미지 1의 얼굴 · 헤어 · 체형 · 의상 · 신발 · 소품을 그대로 유지한다.', '- 이미지 2(얼굴 턴어라운드 시트)로 옆 · 뒤에서 본 얼굴과 머리 모양을 맞춘다.']),
-    person(), face(), body(true), costume(true),
-    block('구도 — 고정', [`- 머리카락 끝부터 신발 밑창까지 보이는 전신 네 컷을 가로 한 줄로: ${VIEWS}.`, '- 네 컷 모두 이미지 1과 같은 기본 자세를 각 방향에서 본 모습이다: ' + pose(), '- 네 컷의 키 · 머리 높이 · 발 위치를 맞춰 정렬한다. 머리 위와 발밑에 작은 여백.', '- ' + camFull(), '- 후면 컷은 옷 뒷면 · 뒷머리 · 신발 뒤축이 보인다.', ...sheetRules, '- 모든 컷 무표정. 배경: ' + bg() + '. 이미지 1과 같은 조명 · 색감.']),
+    '첨부한 이미지 1(원형 전신)의 인물로 만든 전신 턴어라운드 캐릭터 시트 한 장. 가로 16:9.',
+    refsBlock(['원형 전신 — 얼굴 · 헤어 · 체형 · 복장을 그대로 유지한다.', '얼굴 턴어라운드 시트 — 옆 · 뒤에서 본 얼굴과 머리 모양을 맞춘다.']),
+    person(), face(), body(true), outfitBlock(true),
+    block('구도 — 고정', [`- 머리카락 끝부터 발끝까지 보이는 전신 네 컷을 가로 한 줄로: ${VIEWS}.`, '- 네 컷 모두 이미지 1과 같은 기본 자세를 각 방향에서 본 모습이다: ' + BASE_POSE, '- 네 컷의 키 · 머리 높이 · 발 위치를 맞춰 정렬한다. 머리 위와 발밑에 작은 여백.', '- ' + camFull(), '- 측면 · 후면 컷에서 등 · 엉덩이 · 종아리의 윤곽이 보인다.', ...sheetRules, '- 모든 컷 무표정. 배경: ' + bg() + ' 이미지 1과 같은 조명 · 색감.']),
     rules()
   ].filter(Boolean).join('\n\n')
 }
-// 상태 이미지에 붙이는 참조 — 기준 이미지가 1번, 확정한 시트가 있으면 뒤에
-function stateRefs(kind) {
+
+// B. 코스튬 — 시트(옷만) → 코스튬 기준 초상화 · 전신 → 상태
+function costumeSheetPrompt(c) {
+  return [
+    c.ref ? '첨부한 이미지 1(참고 패션 사진) 속 옷차림을 파츠별로 분리해 정리한 코스튬 시트 한 장. 가로 16:9.' : '아래 코스튬의 파츠를 정리한 코스튬 시트 한 장. 가로 16:9.',
+    c.ref && refsBlock(['참고 패션 사진 — 옷 · 신발 · 액세서리의 디자인 · 색 · 소재 · 디테일을 그대로 옮긴다. 사진 속 사람 · 얼굴 · 배경은 옮기지 않는다.']),
+    block('코스튬 파츠', [line('의상', cv(c, 'costume')), line('액세서리 · 소지품', cv(c, 'accessories')), line('신발', cv(c, 'shoes')), line('손에 드는 물건', cv(c, 'heldItem'))]),
+    block('구도 — 고정', ['- 사람 · 마네킹 · 옷걸이 없이 옷만. 상의 · 하의 · 겉옷 · 신발 · 액세서리 · 소지품을 겹치지 않게 가지런히 펼쳐 놓은 정면 플랫레이.', '- 각 파츠는 앞면이 보이고 실제 크기 비율을 지킨다. 신발은 한 켤레를 옆모습으로.', '- 고른 정면 조명, 옷의 색 · 소재 질감이 정확히 보인다.', '- 선 · 라벨 · 번호 · 글자 · 브랜드 로고 없음.', '- 배경: ' + bg()]),
+  ].filter(Boolean).join('\n\n')
+}
+const sheetRef = (c) => c.sheet?.chosen
+function costumePortraitPrompt(c) {
+  return [
+    `첨부한 이미지 1(원형 초상화)의 인물에게 아래 코스튬을 입힌 상반신 기준 초상화 한 장. 세로 ${S().portraitRatio}. 게임 메인 UI용.`,
+    refsBlock(['원형 초상화 — 얼굴 · 헤어 · 구도 · 카메라 · 조명 · 배경을 그대로 유지하고 복장만 바꾼다.', '얼굴 턴어라운드 시트 — 얼굴 참고. 시트의 운동복은 입히지 않는다.', sheetRef(c) && '코스튬 시트 — 이 옷을 입힌다. 디자인 · 색 · 소재 · 디테일을 그대로 옮긴다.']),
+    costume(c, false), body(false),
+    block('구도 — 고정', ['- 이미지 1과 같은 구도: 증명사진처럼 정면, 얼굴은 가운데, 카메라는 눈높이.', portraitFrame, '- 옷은 이 인물의 체형에 맞게 자연스럽게 입혀진다. 체형을 바꾸지 않는다.', '- 무표정, 입은 편하게 다물고, 정면 시선.', '- 배경: ' + bg()]),
+    rules()
+  ].filter(Boolean).join('\n\n')
+}
+function costumeFullPrompt(c) {
+  return [
+    `첨부한 이미지 1(원형 전신)의 인물에게 아래 코스튬을 입힌 정면 전신 기준 이미지 한 장. 세로 ${S().fullRatio}. 캐릭터 상세창용.`,
+    refsBlock(['원형 전신 — 얼굴 · 체형 · 자세 · 구도 · 카메라 · 조명 · 배경을 그대로 유지하고 복장만 바꾼다.', '전신 턴어라운드 시트 — 체형 참고. 시트의 운동복은 입히지 않는다.', sheetRef(c) && '코스튬 시트 — 이 옷을 입힌다. 디자인 · 색 · 소재 · 디테일을 그대로 옮긴다.', c.portrait.chosen && '코스튬 초상화 — 같은 코스튬의 상반신. 얼굴 · 옷의 윗부분을 여기에 맞춘다.']),
+    costume(c, true), body(true),
+    block('구도 — 고정', [fullFrame, '- 기본 자세: ' + BASE_POSE, '- 옷은 이 인물의 체형에 맞게 자연스럽게 입혀진다. 체형을 바꾸지 않는다.', '- 무표정, 편하게 다문 입, 정면 시선.', '- ' + camFull(), '- 배경: ' + bg()]),
+    rules()
+  ].filter(Boolean).join('\n\n')
+}
+// 상태 이미지의 참조 — 코스튬 기준 이미지가 1번, 원형 시트 · 코스튬 초상화가 뒤에
+function stateRefs(c, kind) {
   const B = doc.base
   const list = kind === 'full'
-    ? [[B.full.chosen, '기준 전신'], [B.fullSheet.chosen, '전신 턴어라운드 시트 — 방향이 바뀌는 자세의 몸 · 옷 · 뒷모습 참고'], [B.portrait.chosen, '기준 초상화 — 얼굴 참고']]
-    : [[B.portrait.chosen, '기준 초상화'], [B.faceSheet.chosen, '얼굴 턴어라운드 시트 — 고개가 기울거나 돌아갈 때 얼굴 윤곽 참고']]
+    ? [[c.full.chosen, '코스튬 전신(기준)'], [B.fullSheet.chosen, '원형 전신 턴어라운드 시트 — 방향이 바뀌는 자세의 체형 · 뒷모습 참고. 시트의 운동복은 입히지 않는다'], [c.portrait.chosen, '코스튬 초상화 — 얼굴 참고']]
+    : [[c.portrait.chosen, '코스튬 초상화(기준)'], [B.faceSheet.chosen, '원형 얼굴 턴어라운드 시트 — 고개가 기울거나 돌아갈 때 얼굴 윤곽 참고. 시트의 운동복은 입히지 않는다']]
   return list.filter(([id]) => id)
 }
-function statePrompt(kind, st) {
+function statePrompt(c, kind, st) {
   const full = kind === 'full'
-  const refs = stateRefs(kind)
+  const refs = stateRefs(c, kind)
   return [
-    full ? `첨부한 이미지 1(기준 전신)과 같은 장면에서 [${st.name}] 상태의 전신 이미지 한 장.` : `첨부한 이미지 1(기준 초상화)과 같은 장면에서 [${st.name}] 상태의 상반신 초상화 한 장.`,
+    full ? `첨부한 이미지 1(코스튬 전신)과 같은 장면에서 [${st.name}] 상태의 전신 이미지 한 장.` : `첨부한 이미지 1(코스튬 초상화)과 같은 장면에서 [${st.name}] 상태의 상반신 초상화 한 장.`,
     refs.length > 1 && block('참조', refs.slice(1).map(([, label], i) => `- 이미지 ${i + 2}: ${label}. 결과는 한 컷이고 시트처럼 여러 방향을 넣지 않는다.`)),
-    block('그대로 유지', ['- 같은 인물 · 얼굴 구조 · 헤어 · 의상 · 소품 · 체형.', full ? '- 같은 카메라 · 구도 · 배경 · 조명. 머리부터 신발까지 모두 보인다.' : '- 같은 카메라 · 구도 · 얼굴 크기와 위치 · 배경 · 조명. 머리 전체 · 목 · 양 어깨 · 가슴 위쪽까지.', '- 상태 때문에 체중 · 근육 · 얼굴 살을 바꾸지 않는다.']),
+    block('그대로 유지', ['- 같은 인물 · 얼굴 구조 · 헤어 · 코스튬 · 소품 · 체형.', full ? '- 같은 카메라 · 구도 · 배경 · 조명. 머리부터 발끝까지 모두 보인다.' : '- 같은 카메라 · 구도 · 얼굴 크기와 위치 · 배경 · 조명. 머리 전체 · 목 · 양 어깨 · 가슴 위쪽까지.', '- 상태 때문에 체중 · 근육 · 얼굴 살을 바꾸지 않는다.']),
     st.free
       ? block('이 상태에서 바꿀 것 — 강도만 공통, 표현 방식은 이 인물답게', ['- 표정: ' + st.face, '- 자세: ' + (full ? st.fullPose : st.bust), '- 강도: ' + st.intensity, line('이 인물의 성격 · 감정 표현 방식', v('personality')), !v('personality') && line('이 인물 (나이 · 직업 · 인상으로 표현 방식을 짐작한다)', [v('age'), v('job'), v('firstImpression')].filter(Boolean).join(' · '))])
       : block('이 상태에서 바꿀 것 — 모든 캐릭터 공통 규격', ['- 표정: ' + st.face, '- 자세: ' + (full ? st.fullPose : st.bust)]),
     block('금지', ['- 피부색 변화 · 발광 · 상태 아이콘 · 이펙트 · 글자 · 여러 컷 합성 없음.', '- 가장 상태가 잘 읽히는 한 순간의 정지 자세. 잔상 없음.'])
   ].filter(Boolean).join('\n\n')
 }
+// 후보 고치기 — 고른 후보를 참조로 넣고 적은 곳만 바꾼다(여러 번 고쳐 가며 최종 얼굴을 정한다)
+function editPrompt(note) {
+  return [
+    '첨부한 이미지 1을 고친 버전 한 장. 아래 [고칠 점]만 바꾸고 나머지는 이미지 1 그대로 둔다.',
+    block('고칠 점', String(note).split('\n').map((l) => l.trim()).filter(Boolean).map((l) => '- ' + l)),
+    block('그대로 유지', ['- 고칠 점에 없는 얼굴 생김새 · 헤어 · 복장 · 체형은 이미지 1과 같다. 다른 사람이 되지 않는다.', '- 구도 · 카메라 · 얼굴 크기와 위치 · 조명 · 배경 · 이미지 비율이 이미지 1과 같다.', '- 표정은 고칠 점에 없으면 이미지 1과 같다.', '- 보정 · 뷰티 필터 · 화장을 새로 더하지 않는다.']),
+    rules()
+  ].filter(Boolean).join('\n\n')
+}
+/** 칸의 이미지 크기 — 기준 이미지는 종류대로, 상태는 상반신 · 전신 */
+function sizeOf(key) {
+  const p = key.split('.')
+  if (p[0] === 'base') return ANCHORS[key].size
+  if (p.length === 3) return ANCHORS[p[2]].size
+  return p[2] === 'full' ? 'full' : 'portrait'
+}
+let editing = null // { key, outputId }
+const editNotes = {}
+function genEdit(key, from, note, n) {
+  if (!note.trim()) return toast('고칠 점을 적어 주세요.', true)
+  const src = slotOf(key).cands.find((c) => c.outputId === from)
+  const title = `${doc.name || '캐릭터'} · 고치기 — ${note.trim().split('\n')[0].slice(0, 40)}`
+  editing = null
+  request(key, { capability: 'image', model: S().model, prompt: editPrompt(note), inputs: [img(from)], params: imageParams(sizeOf(key)), origin: { title } }, n, { from, note: note.trim(), depth: (src?.depth || 0) + 1 })
+}
+
 function videoPrompt(st) {
   return [st.motion, st.loop ? 'The first and last frames should match closely so it can loop.' : 'Ends holding the same expression and pose as the first frame.', 'Keep the exact same person, face, outfit, framing and background as the input image. Static camera: no camera movement, no zoom, no cuts. No text, no subtitles, no added effects.'].filter(Boolean).join(' ')
 }
 
+// ── 칸(slot) 주소 ────────────────────────────────────────────
+// base.<portrait|faceSheet|full|fullSheet> · c.<코스튬>.<sheet|portrait|full> · c.<코스튬>.<bust|full>.<상태> (+ '.video')
+function slotOf(key) {
+  const p = key.split('.')
+  if (p[0] === 'base') return doc.base[p[1]]
+  const c = costumeById(p[1])
+  if (!c) return null
+  if (p.length === 3) return (c[p[2]] ??= slot())
+  c.states[p[2]] ??= {}
+  return (c.states[p[2]][p[3]] ??= { cands: [], chosen: null, videos: [] })
+}
+function allSlots() {
+  const list = Object.values(doc.base)
+  for (const c of doc.costumes) list.push(c.sheet, c.portrait, c.full, ...Object.values(c.states.bust || {}), ...Object.values(c.states.full || {}))
+  return list.filter(Boolean)
+}
+
 // ── 생성 요청 ───────────────────────────────────────────────
-const slotOf = (key) => { const [a, b] = key.split('.'); if (a === 'base') return doc.base[b]; doc.states[a][b] ??= { cands: [], chosen: null, videos: [] }; return doc.states[a][b] }
 function imageParams(kind) {
+  if (kind === 'sheet') return { quality: S().quality, width: SHEET[0], height: SHEET[1], n: 1 }
   const [w, h] = kind === 'full' ? RATIO.full[S().fullRatio] : RATIO.portrait[S().portraitRatio]
   return { quality: S().quality, width: w, height: h, n: 1 }
 }
-async function request(key, req, times = 1) {
+async function request(key, req, times = 1, lineage = null) {
   const made = []
   for (let i = 0; i < times; i++) {
     try {
       const j = await studio.generate(req)
-      doc.pending.push({ jobId: j.id, key, state: j.state })
+      doc.pending.push({ jobId: j.id, key, state: j.state, ...(lineage || {}) })
       made.push(j)
     } catch (e) { toast('요청 실패: ' + e.message, true); break }
   }
   if (made.length) { toast(`견적 ${made.length}건을 만들었어요 — 앱의 승인 카드에서 승인해 주세요.`); save(); render() }
 }
-const BASE = {
-  portrait: { name: '기준 초상화', prompt: () => portraitPrompt(), refs: () => [], params: () => imageParams('portrait') },
-  faceSheet: { name: '얼굴 시트', prompt: () => faceSheetPrompt(), refs: () => [doc.base.portrait.chosen], params: () => ({ ...imageParams('portrait'), width: SHEET[0], height: SHEET[1] }) },
-  full: { name: '기준 전신', prompt: () => fullPrompt(), refs: () => [doc.base.portrait.chosen, doc.base.faceSheet.chosen], params: () => imageParams('full') },
-  fullSheet: { name: '전신 시트', prompt: () => fullSheetPrompt(), refs: () => [doc.base.full.chosen, doc.base.faceSheet.chosen], params: () => ({ ...imageParams('full'), width: SHEET[0], height: SHEET[1] }) }
+const img = (outputId) => ({ kind: 'image', outputId })
+const B = () => doc.base
+// 기준 이미지 종류 — 이름 · 프롬프트 · 참조 · 크기
+const ANCHORS = {
+  'base.portrait': { name: '원형 초상화', prompt: () => portraitPrompt(), refs: () => [], size: 'portrait' },
+  'base.faceSheet': { name: '얼굴 턴어라운드', prompt: () => faceSheetPrompt(), refs: () => [img(B().portrait.chosen)], size: 'sheet' },
+  'base.full': { name: '원형 전신', prompt: () => fullPrompt(), refs: () => [img(B().portrait.chosen), B().faceSheet.chosen && img(B().faceSheet.chosen)], size: 'full' },
+  'base.fullSheet': { name: '전신 턴어라운드', prompt: () => fullSheetPrompt(), refs: () => [img(B().full.chosen), img(B().faceSheet.chosen)], size: 'sheet' },
+  sheet: { name: '코스튬 시트', prompt: (c) => costumeSheetPrompt(c), refs: (c) => [c.ref && { kind: 'image', path: c.ref }], size: 'sheet' },
+  portrait: { name: '코스튬 초상화', prompt: (c) => costumePortraitPrompt(c), refs: (c) => [img(B().portrait.chosen), img(B().faceSheet.chosen), sheetRef(c) && img(sheetRef(c))], size: 'portrait' },
+  full: { name: '코스튬 전신', prompt: (c) => costumeFullPrompt(c), refs: (c) => [img(B().full.chosen), img(B().fullSheet.chosen), sheetRef(c) && img(sheetRef(c)), c.portrait.chosen && img(c.portrait.chosen)], size: 'full' }
 }
-function genBase(which) {
-  const b = BASE[which]
-  const refs = b.refs().filter(Boolean)
-  const inputs = refs.length ? refs.map((outputId) => ({ kind: 'image', outputId })) : undefined
-  request('base.' + which, { capability: 'image', model: S().model, prompt: b.prompt(), inputs, params: b.params(), origin: { title: `${doc.name || '캐릭터'} · ${b.name}` } }, Math.max(1, Math.min(4, Number(S().variations) || 1)))
+function genAnchor(key) {
+  const p = key.split('.')
+  const c = p[0] === 'c' ? costumeById(p[1]) : null
+  const a = ANCHORS[c ? p[2] : key]
+  const inputs = a.refs(c).filter((x) => x && (x.outputId || x.path))
+  const title = `${doc.name || '캐릭터'} · ${c ? c.name + ' ' : ''}${a.name}`
+  request(key, { capability: 'image', model: S().model, prompt: a.prompt(c), inputs: inputs.length ? inputs : undefined, params: imageParams(a.size), origin: { title } }, Math.max(1, Math.min(4, Number(counts[key]) || 1)))
 }
-function genState(kind, st) {
-  const anchor = kind === 'full' ? doc.base.full.chosen : doc.base.portrait.chosen
-  if (!anchor) return toast('먼저 기준 이미지를 확정해 주세요.', true)
-  const inputs = stateRefs(kind).map(([outputId]) => ({ kind: 'image', outputId }))
-  request(`${kind}.${st.id}`, { capability: 'image', model: S().model, prompt: statePrompt(kind, st), inputs, params: imageParams(kind === 'full' ? 'full' : 'portrait'), origin: { title: `${doc.name} · ${kind === 'full' ? '전신' : '상반신'} ${st.name}` } })
+function genState(c, kind, st) {
+  const anchor = kind === 'full' ? c.full.chosen : c.portrait.chosen
+  if (!anchor) return toast('먼저 코스튬 기준 이미지를 확정해 주세요.', true)
+  const inputs = stateRefs(c, kind).map(([outputId]) => img(outputId))
+  request(`c.${c.id}.${kind}.${st.id}`, { capability: 'image', model: S().model, prompt: statePrompt(c, kind, st), inputs, params: imageParams(kind === 'full' ? 'full' : 'portrait'), origin: { title: `${doc.name} · ${c.name} · ${kind === 'full' ? '전신' : '상반신'} ${st.name}` } })
 }
-function stateStill(kind, st) { return st.id === 'idle' ? (kind === 'full' ? doc.base.full.chosen : doc.base.portrait.chosen) : slotOf(`${kind}.${st.id}`).chosen }
-function genVideo(kind, st) {
-  const still = stateStill(kind, st)
+function stateStill(c, kind, st) { return st.id === 'idle' ? (kind === 'full' ? c.full.chosen : c.portrait.chosen) : slotOf(`c.${c.id}.${kind}.${st.id}`).chosen }
+function genVideo(c, kind, st) {
+  const still = stateStill(c, kind, st)
   if (!still) return toast('먼저 이 상태의 정지 이미지를 확정해 주세요.', true)
-  request(`${kind}.${st.id}.video`, { capability: 'video', model: 'seedance-2.0-i2v', provider: 'higgsfield', prompt: videoPrompt(st), inputs: [{ kind: 'image', outputId: still }], params: { duration: Number(S().videoSeconds) || 4, resolution: S().videoResolution || '480p', generate_audio: false }, origin: { title: `${doc.name} · ${kind === 'full' ? '전신' : '상반신'} ${st.name} 영상` } })
+  request(`c.${c.id}.${kind}.${st.id}.video`, { capability: 'video', model: 'seedance-2.0-i2v', provider: 'higgsfield', prompt: videoPrompt(st), inputs: [img(still)], params: { duration: Number(S().videoSeconds) || 4, resolution: S().videoResolution || '480p', generate_audio: false }, origin: { title: `${doc.name} · ${c.name} · ${kind === 'full' ? '전신' : '상반신'} ${st.name} 영상` } })
 }
 
 // 작업 상태 반영 — 성공하면 결과를 그 칸의 후보(영상은 영상 목록)에 넣는다
@@ -280,10 +422,10 @@ function applyJob(j) {
   doc.pending = doc.pending.filter((x) => x.jobId !== j.id)
   if (j.state === 'succeeded') {
     const isVideo = p.key.endsWith('.video')
-    const slot = slotOf(isVideo ? p.key.slice(0, -6) : p.key)
-    for (const o of j.outputs ?? []) {
-      if (isVideo && o.kind === 'video') (slot.videos ??= []).push({ jobId: j.id, outputId: o.id })
-      if (!isVideo && o.kind === 'image') slot.cands.push({ jobId: j.id, outputId: o.id })
+    const s = slotOf(isVideo ? p.key.slice(0, -6) : p.key)
+    if (s) for (const o of j.outputs ?? []) {
+      if (isVideo && o.kind === 'video') (s.videos ??= []).push({ jobId: j.id, outputId: o.id })
+      if (!isVideo && o.kind === 'image') s.cands.push({ jobId: j.id, outputId: o.id, ...(p.from ? { from: p.from, note: p.note, depth: p.depth } : {}) })
     }
   } else if (j.state === 'failed') toast('생성 실패: ' + (j.error || '이유를 알 수 없어요'), true)
   save()
@@ -291,98 +433,229 @@ function applyJob(j) {
 }
 studio.on((ev, j) => { if (ev === 'job' && applyJob(j)) render() })
 
+// ── 사진 → 칸 채우기 · 참고 사진 올리기 ─────────────────────
+/** 파일을 골라 긴 변 1600px JPEG로 줄인다 — { dataUrl, thumb, name } 또는 null */
+function pickPhoto() {
+  return new Promise((resolve) => {
+    const input = $('photoFile')
+    input.value = ''
+    input.onchange = async () => {
+      const f = input.files[0]
+      if (!f) return resolve(null)
+      try {
+        const url = URL.createObjectURL(f)
+        const im = new Image(); im.src = url; await im.decode()
+        const shrink = (max, q) => { const k = Math.min(1, max / Math.max(im.naturalWidth, im.naturalHeight)); const cv = document.createElement('canvas'); cv.width = Math.round(im.naturalWidth * k); cv.height = Math.round(im.naturalHeight * k); cv.getContext('2d').drawImage(im, 0, 0, cv.width, cv.height); return cv.toDataURL('image/jpeg', q) }
+        const out = { dataUrl: shrink(1600, 0.9), thumb: shrink(240, 0.8), name: f.name }
+        URL.revokeObjectURL(url)
+        resolve(out)
+      } catch { toast('이미지를 읽지 못했어요(PNG · JPEG · WebP)', true); resolve(null) }
+    }
+    input.click()
+  })
+}
+let analyzing = null
+/** 사진(파일 또는 라이브러리)을 분석해 칸을 채운다. target: 'doc'(얼굴 · 체형) 또는 코스튬 */
+async function fillFromPhoto(kind, source, target) {
+  let image = null
+  if (source && typeof source === 'object') image = source
+  else if (source === 'library') { const r = await studio.pickImage(); if (!r) return; image = { outputId: r.outputId } }
+  else { const ph = await pickPhoto(); if (!ph) return; setStatus('사진 올리는 중…'); image = { path: (await studio.upload(ph.dataUrl, ph.name)).path } }
+  analyzing = kind; render(); setStatus('AI가 사진을 분석하는 중… (10~30초)')
+  try {
+    const r = await studio.analyze(kind, [image], { engine: S().analysisEngine, model: S().analysisModel })
+    const vals = target === 'doc' ? doc.values : target.values
+    const filled = Object.entries(r.values).filter(([, val]) => val)
+    const clash = filled.filter(([k, val]) => String(vals[k] ?? '').trim() && String(vals[k]).trim() !== val)
+    const overwrite = !clash.length || confirm(`이미 적은 칸 ${clash.length}개가 있어요. 분석 결과로 덮어쓸까요?\n(취소하면 빈 칸만 채워요)`)
+    let n = 0
+    for (const [k, val] of filled) if (overwrite || !String(vals[k] ?? '').trim()) { vals[k] = val; n++ }
+    save(); toast(`사진에서 ${n}칸을 채웠어요. 확인하고 고쳐 주세요.`); setStatus('분석 끝')
+  } catch (e) { toast('분석 실패: ' + e.message, true); setStatus('분석 실패') }
+  analyzing = null; render()
+}
+async function costumeFromPhoto(c) {
+  const ph = await pickPhoto(); if (!ph) return
+  setStatus('사진 올리는 중…')
+  try {
+    const { path } = await studio.upload(ph.dataUrl, ph.name)
+    c.ref = path; c.refThumb = ph.thumb; save()
+    analyzing = 'costume'; render(); setStatus('AI가 옷차림을 분석하는 중… (10~30초)')
+    const r = await studio.analyze('costume', [{ path }], { engine: S().analysisEngine, model: S().analysisModel })
+    const filled = Object.entries(r.values).filter(([, val]) => val)
+    const clash = filled.filter(([k]) => cv(c, k))
+    const overwrite = !clash.length || confirm(`이 코스튬에 이미 적은 칸 ${clash.length}개가 있어요. 분석 결과로 덮어쓸까요?\n(취소하면 빈 칸만 채워요)`)
+    for (const [k, val] of filled) if (overwrite || !cv(c, k)) c.values[k] = val
+    save(); toast('옷차림을 칸에 채웠어요. 제작 단계의 ⑤ 코스튬 시트에서 이 사진으로 옷만 정리한 시트를 요청할 수 있어요.'); setStatus('분석 끝')
+  } catch (e) { toast('실패: ' + e.message, true); setStatus('실패') }
+  analyzing = null; render()
+}
+
 // ── 화면 ────────────────────────────────────────────────────
-const STEPS = ['기본 정보', '얼굴', '체형', '기본 코스튬', '출력', '검토', '제작']
-function fieldHtml([id, label, ph, type, full]) {
-  const val = esc(doc.values[id] ?? '')
-  const ctl = type === 'textarea' ? `<textarea id="f_${id}" data-f="${id}" placeholder="${esc(ph)}">${val}</textarea>` : `<input id="f_${id}" data-f="${id}" placeholder="${esc(ph)}" value="${val}">`
+const STEPS = ['기본 정보', '얼굴', '체형', '코스튬', '이 캐릭터 출력', '검토', '제작', '설정']
+const LAST = STEPS.length - 1
+function fieldHtml([id, label, ph, type, full], vals = doc.values, attr = 'data-f') {
+  const val = esc(vals[id] ?? '')
+  const ctl = type === 'textarea' ? `<textarea id="f_${id}" ${attr}="${id}" placeholder="${esc(ph)}">${val}</textarea>` : `<input id="f_${id}" ${attr}="${id}" placeholder="${esc(ph)}" value="${val}">`
   return `<div class="field${full ? ' full' : ''}"><label for="f_${id}">${esc(label)}</label>${ctl}</div>`
 }
-const fields = (list) => `<div class="fields">${list.map(fieldHtml).join('')}</div>`
+const fields = (list, vals, attr) => `<div class="fields">${list.map((f) => fieldHtml(f, vals, attr)).join('')}</div>`
 function sel(id, opts, cur) { return `<select id="s_${id}" data-s="${id}">${opts.map(([val, label]) => `<option value="${esc(val)}"${String(cur) === String(val) ? ' selected' : ''}>${esc(label)}</option>`).join('')}</select>` }
+const photoBar = (kind, what, extra = '') => `<div class="card photo"><div class="row"><div><b>사진에서 채우기</b><div class="note">${what} 사진을 주면 AI(설정 → AI 분석)가 생김새를 글로 옮겨 칸을 채워요. 생성 비용은 없어요. ${extra}채운 뒤 직접 고쳐 주세요.</div></div><span class="spacer"></span>
+  ${analyzing === kind ? '<span class="note">분석 중…</span>' : `<button type="button" class="btn" data-fill="${kind}|file">사진 파일</button><button type="button" class="btn quiet" data-fill="${kind}|library">라이브러리에서</button>`}</div></div>`
 
 function stepHtml() {
   switch (step) {
-    case 0: return `<h1>1 · 기본 정보</h1><p class="lead">이름은 이미지에 글자로 들어가지 않아요. 첫인상은 표정이 아니라 얼굴 구조 · 헤어 · 복장으로 표현돼요.</p><div class="card">${fields(F.identity)}</div>`
-    case 1: return `<h1>2 · 얼굴</h1><p class="lead">얼굴 구조 · 피부 · 헤어만 적어요. 표정은 적지 않아요 — 기본은 모두 무표정이에요.</p><div class="card">${fields(F.face)}</div>`
-    case 2: return `<h1>3 · 체형</h1><p class="lead">눈에 보이는 형태를 말로 적어요. 숫자는 아래 "설정 메모"에 — 프롬프트에는 들어가지 않아요.</p><div class="card">${fields(F.body)}<details class="memo"><summary>설정 메모 · 수치 (프롬프트에 넣지 않음)</summary><p class="note">이미지 모델은 치수를 정확히 재현하지 못하고, 신체 치수 표현은 생성이 거절될 수 있어서 설정 자료로만 보관해요.</p>${fields(F.memo)}</details></div>`
-    case 3: return `<h1>4 · 기본 코스튬</h1><p class="lead">각 물품에 색 · 소재 · 핏을 함께 적어요. 분위기(시대 · 장르 · 조명 느낌)도 의상과 소품 묘사로 만들어요. 다른 코스튬은 기본 세트가 완성된 뒤 이 옷만 바꿔서 만들어요.</p>
-      <div class="card">${fields(F.costume)}</div>`
+    case 0: return `<h1>1 · 기본 정보</h1><p class="lead">이름은 이미지에 글자로 들어가지 않아요. 성별 · 나이대는 얼굴 사진으로도 채울 수 있어요(2단계).</p><div class="card">${fields(F.identity)}</div>`
+    case 1: return `<h1>2 · 얼굴</h1><p class="lead">얼굴 구조 · 피부 · 헤어는 생김새만 적고 표정은 적지 않아요 — 기본은 모두 무표정이에요. 첫인상은 표정이 아니라 얼굴 구조 · 헤어 · 복장으로 표현되고, 성격 · 감정 표현 방식은 기쁨 · 환호처럼 인물마다 다르게 표현하는 상태에만 쓰여요.</p>${photoBar('face', '얼굴이 잘 보이는', '첫인상 · 성격은 사진에서 받는 인상으로 짐작한 값이니 캐릭터에 맞게 다듬어 주세요. ')}<div class="card">${fields(F.face)}</div>`
+    case 2: return `<h1>3 · 체형</h1><p class="lead">눈에 보이는 형태를 말로 적어요. 숫자는 아래 "설정 메모"에 — 프롬프트에는 들어가지 않아요.</p>${photoBar('body', '전신이 보이는')}<div class="card">${fields(F.body)}<details class="memo"><summary>설정 메모 · 수치 (프롬프트에 넣지 않음)</summary><p class="note">이미지 모델은 치수를 정확히 재현하지 못하고, 신체 치수 표현은 생성이 거절될 수 있어서 설정 자료로만 보관해요.</p>${fields(F.memo)}</details></div>`
+    case 3: return costumeStepHtml()
     case 4: {
-      const P = { ...DEFAULT_SETTINGS, ...(PROJ?.settings || {}) }
+      const P = base()
       const o = doc.settings.overrides || {}
-      const osel = (key, label, opts) => `<div class="field"><label for="o_${key}">${label}</label><select id="o_${key}" data-o="${key}"><option value="">프로젝트 기본 · ${esc((opts.find(([v]) => String(v) === String(P[key])) || [0, P[key]])[1])}</option>${opts.map(([val, l]) => `<option value="${esc(val)}"${String(o[key] ?? '') === String(val) ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select></div>`
-      const rulesList = String(P.rules || '').split('\n').map((l) => l.trim()).filter(Boolean)
-      return `<h1>5 · 출력</h1><p class="lead">기본값은 <b>프로젝트 설정</b>(아트 화면 왼쪽 "프로젝트 설정")을 따르고, 이 캐릭터만 다르게 하려면 아래에서 바꿔요.</p>
+      const osel = (key, label, opts) => `<div class="field"><label for="o_${key}">${label}</label><select id="o_${key}" data-o="${key}"><option value="">설정 기본 · ${esc((opts.find(([v]) => String(v) === String(P[key])) || [0, P[key]])[1])}</option>${opts.map(([val, l]) => `<option value="${esc(val)}"${String(o[key] ?? '') === String(val) ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select></div>`
+      return `<h1>5 · 이 캐릭터 출력</h1><p class="lead">기본값은 맨 아래 <b>설정</b>(이 프로젝트의 모든 캐릭터 공통)을 따라요. 이 캐릭터만 다르게 하려면 아래에서 바꿔요.</p>
       <div class="card"><h2>출력 규격</h2><div class="fields" style="margin-top:12px">
-        ${osel('model', '이미지 모델', [['gpt-image-2.5-sunburst', 'GPT Image 2.5 Sunburst'], ['gpt-image-2.5-flare', 'GPT Image 2.5 Flare']])}
-        ${osel('quality', '이미지 품질', [['low', 'low · 테스트'], ['medium', 'medium'], ['high', 'high'], ['xhigh', 'xhigh']])}
-        ${osel('portraitRatio', '상반신 비율', [['4:5', '4:5'], ['3:4', '3:4'], ['1:1', '1:1']])}
-        ${osel('fullRatio', '전신 비율', [['2:3', '2:3'], ['3:4', '3:4'], ['9:16', '9:16']])}
-        ${osel('videoSeconds', '영상 길이', [[4, '4초'], [5, '5초'], [6, '6초']])}
-        ${osel('videoResolution', '영상 해상도', [['480p', '480p'], ['720p', '720p']])}
-        <div class="field"><label for="s_variations">기준 이미지 후보 수</label>${sel('variations', [[1, '1장'], [2, '2장'], [3, '3장'], [4, '4장']], S().variations)}</div>
-        <div class="field full"><label for="o_background">배경 (비우면 프로젝트 기본 · ${esc(P.background)})</label><input id="o_background" data-o="background" value="${esc(o.background ?? '')}" placeholder="${esc(P.background)}"></div>
+        ${osel('model', '이미지 모델', OPTS.model)}
+        ${osel('quality', '이미지 품질', OPTS.quality)}
+        ${osel('portraitRatio', '상반신 비율', OPTS.portraitRatio)}
+        ${osel('fullRatio', '전신 비율', OPTS.fullRatio)}
+        ${osel('videoSeconds', '영상 길이', OPTS.videoSeconds)}
+        ${osel('videoResolution', '영상 해상도', OPTS.videoResolution)}
+        <div class="field full"><label for="o_background">배경 (비우면 설정 기본 · ${esc(P.background)})</label><input id="o_background" data-o="background" value="${esc(o.background ?? '')}" placeholder="${esc(P.background)}"></div>
       </div></div>
-      <div class="card"><h2>공통 제작 규칙 <span class="note">— 프로젝트 설정 → 공통 규칙에서 고쳐요</span></h2><ul class="note" style="margin:10px 0 0;padding-left:18px">${rulesList.map((l) => `<li>${esc(l)}</li>`).join('') || '<li>(없음)</li>'}</ul>
-        <div class="field full" style="margin-top:12px"><label for="s_constraints">이 캐릭터만 추가 제약 · 선택</label><textarea id="s_constraints" data-s="constraints" placeholder="예: 눈을 가리는 앞머리 제외, 옷에 로고나 글자 없음">${esc(S().constraints)}</textarea></div></div>`
+      <div class="card"><h2>이 캐릭터만 추가 제약 <span class="note">— 공통 규칙은 설정에서 고쳐요</span></h2>
+        <div class="field full" style="margin-top:12px"><textarea id="s_constraints" data-s="constraints" aria-label="이 캐릭터만 추가 제약" placeholder="예: 눈을 가리는 앞머리 제외, 옷에 로고나 글자 없음">${esc(S().constraints)}</textarea></div></div>`
     }
     case 5: return reviewHtml()
     case 6: return boardHtml()
+    case 7: return settingsHtml()
   }
+}
+const OPTS = {
+  model: [['gpt-image-2.5-sunburst', 'GPT Image 2.5 Sunburst'], ['gpt-image-2.5-flare', 'GPT Image 2.5 Flare']],
+  quality: [['low', 'low · 테스트'], ['medium', 'medium'], ['high', 'high'], ['xhigh', 'xhigh']],
+  portraitRatio: [['4:5', '4:5'], ['3:4', '3:4'], ['1:1', '1:1']],
+  fullRatio: [['2:3', '2:3'], ['3:4', '3:4'], ['9:16', '9:16']],
+  videoSeconds: [[4, '4초'], [5, '5초'], [6, '6초']],
+  videoResolution: [['480p', '480p'], ['720p', '720p']]
+}
+// 설정 — 이 프로젝트의 모든 캐릭터 공통(<프로젝트>/tools/character-sheet.json)
+function settingsHtml() {
+  const T = base()
+  if (!ENGINES) studio.analyzeEngines().then((l) => { ENGINES = l; if (step === LAST) render() }).catch(() => { ENGINES = [] })
+  const tsel = (key, label, opts) => `<div class="field"><label for="t_${key}">${label}</label><select id="t_${key}" data-t="${key}">${opts.map(([val, l]) => `<option value="${esc(val)}"${String(T[key]) === String(val) ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select></div>`
+  const engines = ENGINES?.length ? ENGINES : [{ id: T.analysisEngine, name: T.analysisEngine, unavailable: null }]
+  const bad = ENGINES?.find((e) => e.id === T.analysisEngine)?.unavailable
+  return `<h1>설정</h1><p class="lead">이 프로젝트의 <b>모든 캐릭터</b>에 공통으로 쓰는 캐릭터 시트 설정이에요. 캐릭터마다 다르게 하려면 5단계 "이 캐릭터 출력"에서 바꿔요. 프로젝트 폴더의 <code>tools/character-sheet.json</code>에 저장돼요.</p>
+    <div class="card"><h2>출력 규격</h2><div class="fields" style="margin-top:12px">
+      ${tsel('model', '이미지 모델', OPTS.model)}${tsel('quality', '이미지 품질', OPTS.quality)}
+      ${tsel('portraitRatio', '상반신 비율', OPTS.portraitRatio)}${tsel('fullRatio', '전신 비율', OPTS.fullRatio)}
+      ${tsel('videoSeconds', '영상 길이', OPTS.videoSeconds)}${tsel('videoResolution', '영상 해상도', OPTS.videoResolution)}
+      <div class="field full"><label for="t_background">공통 배경</label><input id="t_background" data-t="background" value="${esc(T.background)}"></div>
+    </div></div>
+    <div class="card"><h2>공통 기본 복장</h2><p class="note">캐릭터 원형(얼굴 · 전신 · 턴어라운드)에 모든 캐릭터가 똑같이 입어요. 체형이 드러나도록 몸에 붙는 옷으로 적어요.</p>
+      <div class="field full" style="margin-top:10px"><textarea id="t_baseOutfit" data-t="baseOutfit" aria-label="공통 기본 복장">${esc(T.baseOutfit)}</textarea></div></div>
+    <div class="card"><h2>공통 제작 규칙</h2><p class="note">모든 캐릭터 이미지 프롬프트에 들어가요. 한 줄에 하나씩.</p>
+      <div class="field full" style="margin-top:10px"><textarea id="t_rules" data-t="rules" rows="7" aria-label="공통 제작 규칙" style="min-height:150px">${esc(T.rules)}</textarea></div>
+      <div class="row" style="margin-top:10px"><span class="spacer"></span><button type="button" class="btn small quiet" data-reset-tool="1">규칙 · 기본 복장을 시작값으로</button></div></div>
+    <div class="card"><h2>AI 분석</h2><p class="note">사진에서 얼굴 · 체형 · 코스튬 칸을 채울 때 쓰는 AI예요. 앱에 연결한 계정으로 돌아서 생성 비용은 들지 않아요.</p>
+      <div class="fields" style="margin-top:12px">${tsel('analysisEngine', '분석 엔진', engines.map((e) => [e.id, e.unavailable ? `${e.name} — 사용 불가` : e.name]))}
+      <div class="field"><label for="t_analysisModel">모델 (비우면 계정 기본)</label><input id="t_analysisModel" data-t="analysisModel" value="${esc(T.analysisModel)}" placeholder="예: gpt-5.5"></div></div>
+      ${bad ? `<p class="warn">${esc(bad)}</p>` : ''}</div>`
+}
+const costumeTabs = (attr) => `<div class="ctabs" role="tablist" aria-label="코스튬">${doc.costumes.map((c) => `<button type="button" role="tab" aria-selected="${c.id === cur().id}" class="${c.id === cur().id ? 'on' : ''}" ${attr}="${esc(c.id)}">${esc(c.name || '이름 없음')}</button>`).join('')}<button type="button" class="add" data-add-costume="1">+ 코스튬</button></div>`
+function costumeStepHtml() {
+  const c = cur()
+  return `<h1>4 · 코스튬</h1><p class="lead">게임에서 입을 옷이에요. 캐릭터 원형(공통 기본 복장)을 만든 뒤 코스튬마다 이 옷을 입힌 기준 이미지와 상태 이미지를 따로 만들어요. 분위기(시대 · 장르 · 조명 느낌)도 의상과 소품 묘사로 만들어요.</p>
+    ${costumeTabs('data-costume')}
+    <div class="card photo"><div class="row">${c.refThumb ? `<img class="refthumb" src="${c.refThumb}" alt="참고 패션 사진">` : ''}<div><b>패션 사진에서 만들기</b><div class="note">패션 사진을 주면 AI가 옷차림을 칸에 채우고, 제작 단계에서 이 사진의 옷만 파츠별로 정리한 코스튬 시트를 만들 수 있어요.</div></div><span class="spacer"></span>
+      ${analyzing === 'costume' ? '<span class="note">분석 중…</span>' : `<button type="button" class="btn" data-costume-photo="1">${c.ref ? '다른 사진' : '사진 고르기'}</button>`}${c.ref && analyzing !== 'costume' ? '<button type="button" class="btn quiet" data-costume-unref="1">사진 빼기</button>' : ''}</div></div>
+    <div class="card"><div class="fields" style="margin-bottom:14px"><div class="field"><label for="c_name">코스튬 이름</label><input id="c_name" data-cname="1" value="${esc(c.name)}"></div>
+      <div class="field" style="align-self:end;text-align:right">${doc.costumes.length > 1 ? '<button type="button" class="btn quiet" data-del-costume="1">이 코스튬 지우기</button>' : ''}</div></div>
+      ${fields(F.costume, c.values, 'data-cf')}</div>`
 }
 function reviewHtml() {
-  const sec = (title, list, st) => `<div class="card"><div class="row"><h2>${title}</h2><span class="spacer"></span><button type="button" class="btn small" data-go="${st}">고치기</button></div><dl>${list.map(([id, label]) => `<dt>${esc(label)}</dt><dd class="${v(id) ? '' : 'empty'}">${esc(v(id) || '비어 있음')}</dd>`).join('')}</dl></div>`
-  const missing = ['name', 'gender', 'age', 'faceShape', 'hair', 'costume'].filter((id) => !v(id))
+  const c = cur()
+  const sec = (title, list, st, vals = doc.values) => `<div class="card"><div class="row"><h2>${title}</h2><span class="spacer"></span><button type="button" class="btn small" data-go="${st}">고치기</button></div><dl>${list.map(([id, label]) => { const x = String(vals[id] ?? '').trim(); return `<dt>${esc(label)}</dt><dd class="${x ? '' : 'empty'}">${esc(x || '비어 있음')}</dd>` }).join('')}</dl></div>`
+  const missing = ['name', 'gender', 'age', 'faceShape', 'hair'].filter((id) => !v(id))
   return `<h1>6 · 검토</h1><p class="lead">빠진 곳을 확인하고 최종 프롬프트를 봐요. 고치려면 각 칸의 "고치기"를 눌러요.</p>
-    ${missing.length ? `<p class="warn">비어 있는 중요 항목: ${missing.map((id) => esc([...F.identity, ...F.face, ...F.costume].find((f) => f[0] === id)?.[1])).join(' · ')}</p>` : ''}
-    <div class="review">${sec('기본 정보', F.identity, 0)}${sec('얼굴', F.face, 1)}${sec('체형', F.body, 2)}${sec('기본 코스튬', F.costume, 3)}</div>
-    <div class="card"><div class="row"><h2>출력 (프로젝트 설정)</h2><span class="spacer"></span><button type="button" class="btn small" data-go="4">보기</button></div><p class="note">${esc(S().model)} · 품질 ${esc(S().quality)} · 상반신 ${esc(S().portraitRatio)} · 전신 ${esc(S().fullRatio)} · 영상 ${esc(S().videoSeconds)}초 ${esc(S().videoResolution)}</p></div>
-    <div class="card"><h2>최종 프롬프트 · 기준 초상화</h2><pre class="prompt">${esc(portraitPrompt())}</pre>
+    ${missing.length ? `<p class="warn">비어 있는 중요 항목: ${missing.map((id) => esc([...F.identity, ...F.face].find((f) => f[0] === id)?.[1])).join(' · ')}</p>` : ''}
+    <div class="review">${sec('기본 정보', F.identity, 0)}${sec('얼굴', F.face, 1)}${sec('체형', F.body, 2)}${sec('코스튬 · ' + esc(c.name), F.costume, 3, c.values)}</div>
+    <div class="card"><div class="row"><h2>출력</h2><span class="spacer"></span><button type="button" class="btn small" data-go="4">보기</button></div><p class="note">${esc(S().model)} · 품질 ${esc(S().quality)} · 상반신 ${esc(S().portraitRatio)} · 전신 ${esc(S().fullRatio)} · 영상 ${esc(S().videoSeconds)}초 ${esc(S().videoResolution)}</p></div>
+    <div class="card"><h2>최종 프롬프트 · 원형 초상화</h2><pre class="prompt">${esc(portraitPrompt())}</pre>
     <div class="row" style="margin-top:12px"><span class="spacer"></span><button type="button" class="btn primary" data-go="6">제작으로 →</button></div></div>`
 }
-function candHtml(key, slot, full, wide = false) {
+function candHtml(key, s, full, wide = false) {
   const pend = doc.pending.filter((p) => p.key === key)
-  const items = slot.cands.map((c) => {
+  const num = new Map(s.cands.map((c, i) => [c.outputId, i + 1]))
+  const items = s.cands.map((c, i) => {
     const src = thumbs.get(c.outputId)
     if (src === undefined) loadThumb(c.outputId)
-    const chosen = slot.chosen === c.outputId
-    return `<div class="cand${full ? ' full' : ''}${wide ? ' wide' : ''}${chosen ? ' chosen' : ''}">${chosen ? '<span class="tag">확정</span>' : ''}${src ? `<img src="${src}" alt="">` : `<div class="ph">${src === '' ? '미리보기 없음' : '미리보기…'}</div>`}<div class="bar"><button type="button" class="btn" data-choose="${key}|${c.outputId}">${chosen ? '확정됨' : '확정'}</button><button type="button" class="btn quiet" data-reveal="${c.outputId}" aria-label="파일 보기">파일</button></div></div>`
+    const chosen = s.chosen === c.outputId
+    const isEdit = editing && editing.key === key && editing.outputId === c.outputId
+    const origin = c.from ? `#${num.get(c.from) ?? '?'}을 고침: ${c.note}` : ''
+    return `<div class="cand${full ? ' full' : ''}${wide ? ' wide' : ''}${chosen ? ' chosen' : ''}${isEdit ? ' editing' : ''}" title="${esc(origin)}"><span class="num">#${i + 1}${c.from ? ` ← #${num.get(c.from) ?? '?'}` : ''}</span>${chosen ? '<span class="tag">확정</span>' : ''}${src ? `<img src="${src}" alt="">` : `<div class="ph">${src === '' ? '미리보기 없음' : '미리보기…'}</div>`}${c.note ? `<div class="edit-note">${esc(c.note)}</div>` : ''}<div class="bar"><button type="button" class="btn" data-choose="${key}|${c.outputId}">${chosen ? '확정됨' : '확정'}</button><button type="button" class="btn" data-edit="${key}|${c.outputId}">고치기</button><button type="button" class="btn quiet" data-reveal="${c.outputId}" aria-label="파일 보기">파일</button><button type="button" class="btn quiet danger" data-del="${c.jobId}" aria-label="#${i + 1} 지우기">삭제</button></div></div>`
   }).join('')
-  return `${items ? `<div class="cands">${items}</div>` : ''}${pend.length ? `<div class="jobs">${pend.map((p) => `<span>⏳ ${esc(stateLabel(p.state))}</span>`).join('')}</div>` : ''}`
+  const ed = editing && editing.key === key ? editing : null
+  const edBox = ed ? `<div class="editbox"><label for="editNote"><b>#${num.get(ed.outputId)} 고치기</b> — 바꿀 곳만 적어요. 한 줄에 하나. 나머지는 그대로 둬요.</label>
+    <textarea id="editNote" data-edit-note="1" placeholder="예: 왼쪽 쌍꺼풀을 오른쪽보다 조금 더 짙게&#10;피부에 모공과 잔털이 보이게, 광택 없이&#10;그라데이션 립 화장을 빼고 입술 본래 색으로">${esc(editNotes[key + '|' + ed.outputId] || '')}</textarea>
+    <div class="row" style="margin-top:8px"><span class="spacer"></span><select class="count" data-edit-count="1" aria-label="요청할 장 수">${[1, 2, 3, 4].map((n) => `<option value="${n}"${(ed.n || 1) === n ? ' selected' : ''}>${n}장</option>`).join('')}</select><button type="button" class="btn quiet" data-edit-cancel="1">취소</button><button type="button" class="btn primary" data-edit-go="1">고친 후보 요청</button></div></div>` : ''
+  return `${items ? `<div class="cands">${items}</div>` : ''}${edBox}${pend.length ? `<div class="jobs">${pend.map((p) => `<span>⏳ ${p.from ? `#${num.get(p.from) ?? '?'} 고치는 중 · ` : ''}${esc(stateLabel(p.state))}</span>`).join('')}</div>` : ''}`
 }
 const stateLabel = (s) => ({ awaiting_approval: '승인 대기 — 앱의 카드에서 승인', submitting: '제출 중', running: '생성 중' })[s] || '대기 중'
+function anchorCard(key, title, open, why, prompt, shape, extra = '') {
+  const s = slotOf(key)
+  return `<div class="card ${open ? '' : 'locked'}"><div class="row"><h2>${title}</h2><span class="note">${esc(why)}</span><span class="spacer"></span><select class="count" data-count="${key}" aria-label="요청할 장 수" ${open ? '' : 'disabled'}>${[1, 2, 3, 4].map((n) => `<option value="${n}"${(counts[key] || 1) === n ? ' selected' : ''}>${n}장</option>`).join('')}</select><button type="button" class="btn primary" data-gen-anchor="${key}" ${open ? '' : 'disabled'}>${s.cands.length ? '후보 더 요청' : '요청'}</button></div>
+    <details class="p"><summary>프롬프트 보기</summary><pre class="prompt">${esc(prompt)}</pre></details>${candHtml(key, s, shape === 'full', shape === 'sheet')}${extra}</div>`
+}
 function boardHtml() {
-  const P = doc.base.portrait, FS = doc.base.faceSheet, B = doc.base.full, BS = doc.base.fullSheet
-  const baseCard = (which, title, open, why, prompt, wide, tall) => `<div class="card ${open ? '' : 'locked'}"><div class="row"><h2>${title}</h2><span class="note">${esc(why)}</span><span class="spacer"></span><button type="button" class="btn primary" data-gen-base="${which}" ${open ? '' : 'disabled'}>후보 ${esc(S().variations)}장 요청</button></div>
-      <details class="p"><summary>프롬프트 보기</summary><pre class="prompt">${esc(prompt)}</pre></details>${candHtml('base.' + which, doc.base[which], tall, wide)}</div>`
+  const b = doc.base, c = cur()
+  const P = b.portrait.chosen, FS = b.faceSheet.chosen, BF = b.full.chosen, BS = b.fullSheet.chosen
+  const CP = c.portrait.chosen, CF = c.full.chosen
+  const pre = `c.${c.id}`
   const stRow = (kind, st) => {
-    const key = `${kind}.${st.id}`
-    const slot = slotOf(key)
-    const still = stateStill(kind, st)
-    const vids = (slot.videos ?? []).map((x, i) => `<span class="vid ok" data-reveal="${x.outputId}">영상 ${i + 1} · 파일</span>`).join('')
+    const key = `${pre}.${kind}.${st.id}`
+    const s = slotOf(key)
+    const still = stateStill(c, kind, st)
+    const anchor = kind === 'full' ? CF : CP
+    const vids = (s.videos ?? []).map((x, i) => `<span class="vid ok"><span data-reveal="${x.outputId}">영상 ${i + 1} · 파일</span><button type="button" class="x" data-del="${x.jobId}" aria-label="영상 ${i + 1} 지우기">×</button></span>`).join('')
     const vpend = doc.pending.filter((p) => p.key === key + '.video').map((p) => `<span class="vid">⏳ ${esc(stateLabel(p.state))}</span>`).join('')
     return `<div class="state"><div class="name"><b>${esc(st.name)}<span class="pill${st.loop ? '' : ' once'}">${st.loop ? '반복' : '순간'}</span></b><small>${esc(st.note)}</small></div><div>
-      ${st.id === 'idle' ? `<p class="note">기준 ${kind === 'full' ? '전신' : '초상화'}를 그대로 써요.</p>` : `<div class="row"><button type="button" class="btn small" data-gen-state="${kind}|${st.id}" ${(kind === 'full' ? BS.chosen : FS.chosen) ? '' : 'disabled'}>이미지 요청</button><span class="note">${slot.chosen ? '확정됨' : slot.cands.length ? '후보에서 확정해 주세요' : ''}</span></div>${candHtml(key, slot, kind === 'full')}`}
+      ${st.id === 'idle' ? `<p class="note">코스튬 ${kind === 'full' ? '전신' : '초상화'}를 그대로 써요.</p>` : `<div class="row"><button type="button" class="btn small" data-gen-state="${kind}|${st.id}" ${anchor ? '' : 'disabled'}>이미지 요청</button><span class="note">${s.chosen ? '확정됨' : s.cands.length ? '후보에서 확정해 주세요' : ''}</span></div>${candHtml(key, s, kind === 'full')}`}
       <div class="vids"><button type="button" class="btn small" data-gen-video="${kind}|${st.id}" ${still ? '' : 'disabled'}>영상 요청 (${esc(S().videoSeconds)}초 · ${esc(S().videoResolution)})</button>${vids}${vpend}</div>
-      <details class="p"><summary>프롬프트 보기</summary><pre class="prompt">${esc(st.id === 'idle' ? '(기준 이미지 사용)' : statePrompt(kind, st))}\n\n── 영상 ──\n${esc(videoPrompt(st))}</pre></details>
+      <details class="p"><summary>프롬프트 보기</summary><pre class="prompt">${esc(st.id === 'idle' ? '(코스튬 기준 이미지 사용)' : statePrompt(c, kind, st))}\n\n── 영상 ──\n${esc(videoPrompt(st))}</pre></details>
     </div></div>`
   }
-  const todo = (kind) => STATES.filter((st) => (kind === 'bust' || st.full) && st.id !== 'idle' && !slotOf(`${kind}.${st.id}`).chosen && !doc.pending.some((p) => p.key === `${kind}.${st.id}`))
-  return `<h1>7 · 제작</h1><p class="lead">요청하면 앱에 승인 카드가 떠요. 승인해서 만들어진 후보 중 하나를 "확정"하면 다음 단계가 열려요. 얼굴 → 얼굴 시트 → 전신 → 전신 시트 순서로 인물을 굳힌 뒤, 상태는 기준 이미지와 시트를 함께 참조해 만들어요.</p>
-    ${baseCard('portrait', '① 기준 초상화 · 얼굴 클로즈업', true, '', portraitPrompt(), false, false)}
-    ${baseCard('faceSheet', '② 얼굴 턴어라운드 · 정면 · 반측면 · 측면 · 후면', !!P.chosen, P.chosen ? '확정한 초상화를 참조해요' : '① 확정 후 열려요', faceSheetPrompt(), true, false)}
-    ${baseCard('full', '③ 기준 전신', !!FS.chosen, FS.chosen ? '초상화 · 얼굴 시트를 참조해요' : '② 확정 후 열려요', fullPrompt(), false, true)}
-    ${baseCard('fullSheet', '④ 전신 턴어라운드 · 정면 · 반측면 · 측면 · 후면', !!B.chosen, B.chosen ? '기준 전신 · 얼굴 시트를 참조해요' : '③ 확정 후 열려요', fullSheetPrompt(), true, false)}
-    <div class="card ${FS.chosen ? '' : 'locked'}"><div class="row"><h2>⑤ 상반신 상태 · 메인 UI</h2><span class="note">${FS.chosen ? '' : '② 확정 후 열려요'}</span><span class="spacer"></span><button type="button" class="btn" data-batch="bust" ${FS.chosen && todo('bust').length ? '' : 'disabled'}>남은 상태 ${todo('bust').length}개 한 번에 요청</button></div>
+  const todo = (kind) => STATES.filter((st) => (kind === 'bust' || st.full) && st.id !== 'idle' && !slotOf(`${pre}.${kind}.${st.id}`).chosen && !doc.pending.some((p) => p.key === `${pre}.${kind}.${st.id}`))
+  const hasCostume = F.costume.some(([id]) => cv(c, id)) || c.ref
+  return `<h1>7 · 제작</h1><p class="lead">요청하면 앱에 승인 카드가 떠요. 기본은 한 장씩 — 마음에 안 들면 "후보 더 요청"으로 더 뽑고, 후보 중 하나를 "확정"하면 다음 단계가 열려요.</p>
+    <div class="group"><h2 class="gh">A · 캐릭터 원형 <span class="note">— 공통 기본 복장으로 얼굴과 체형을 굳혀요. 모든 코스튬이 이걸 참조해요.</span></h2><p class="note">기본 복장: ${esc(outfit())}</p>
+    ${anchorCard('base.portrait', '① 원형 초상화', true, '머리 · 목 · 어깨가 보이는 얼굴 기준 한 장 — 모든 이미지가 이 얼굴을 따라요. 여러 장 뽑고 "고치기"로 다듬어 최종 얼굴을 정해요', portraitPrompt(), 'portrait', P ? `<div class="row refill"><span class="note">고쳐서 확정한 얼굴과 얼굴 칸의 글이 다를 수 있어요 — 다음 단계 프롬프트가 이 글을 써요.</span><span class="spacer"></span>${analyzing === 'face' ? '<span class="note">분석 중…</span>' : '<button type="button" class="btn small" data-refill-face="1">확정 얼굴로 얼굴 칸 다시 채우기</button>'}</div>` : '')}
+    ${anchorCard('base.faceSheet', '② 얼굴 턴어라운드 · 정면 · 반측면 · 측면 · 후면', !!P, P ? '원형 초상화를 참조해요' : '① 확정 후 열려요', faceSheetPrompt(), 'sheet')}
+    ${anchorCard('base.full', '③ 원형 전신', !!FS, FS ? '초상화 · 얼굴 시트를 참조해요' : '② 확정 후 열려요', fullPrompt(), 'full')}
+    ${anchorCard('base.fullSheet', '④ 전신 턴어라운드 · 정면 · 반측면 · 측면 · 후면', !!BF, BF ? '원형 전신 · 얼굴 시트를 참조해요' : '③ 확정 후 열려요', fullSheetPrompt(), 'sheet')}</div>
+    <div class="group"><h2 class="gh">B · 코스튬 <span class="note">— 원형에 옷을 입히고, 그 옷으로 상태 이미지 · 영상을 만들어요.</span></h2>
+    ${costumeTabs('data-board-costume')}
+    ${hasCostume ? '' : '<p class="warn">이 코스튬의 옷이 비어 있어요 — 4단계 코스튬에서 적거나 패션 사진으로 채워 주세요.</p>'}
+    ${anchorCard(`${pre}.sheet`, `⑤ 코스튬 시트 · 옷만 정리 <span class="note">(선택 · 권장)</span>`, !!hasCostume, c.ref ? '패션 사진을 참조해요' : '코스튬 글로 만들어요', costumeSheetPrompt(c), 'sheet')}
+    ${anchorCard(`${pre}.portrait`, `⑥ 코스튬 초상화`, !!(P && FS && hasCostume), P && FS ? `원형 초상화 · 얼굴 시트${sheetRef(c) ? ' · 코스튬 시트' : ''}를 참조해요` : '② 확정 후 열려요', costumePortraitPrompt(c), 'portrait')}
+    ${anchorCard(`${pre}.full`, `⑦ 코스튬 전신`, !!(BF && BS && hasCostume), BF && BS ? `원형 전신 · 전신 시트${sheetRef(c) ? ' · 코스튬 시트' : ''}${CP ? ' · 코스튬 초상화' : ''}를 참조해요` : '④ 확정 후 열려요', costumeFullPrompt(c), 'full')}
+    <div class="card ${CP ? '' : 'locked'}"><div class="row"><h2>⑧ 상반신 상태 · 메인 UI</h2><span class="note">${CP ? '' : '⑥ 확정 후 열려요'}</span><span class="spacer"></span><button type="button" class="btn" data-batch="bust" ${CP && todo('bust').length ? '' : 'disabled'}>남은 상태 ${todo('bust').length}개 한 번에 요청</button></div>
       ${STATES.map((st) => stRow('bust', st)).join('')}</div>
-    <div class="card ${BS.chosen ? '' : 'locked'}"><div class="row"><h2>⑥ 전신 상태 · 상세창</h2><span class="note">${BS.chosen ? '' : '④ 확정 후 열려요'}</span><span class="spacer"></span><button type="button" class="btn" data-batch="full" ${BS.chosen && todo('full').length ? '' : 'disabled'}>남은 상태 ${todo('full').length}개 한 번에 요청</button></div>
-      ${STATES.filter((s) => s.full).map((st) => stRow('full', st)).join('')}</div>`
+    <div class="card ${CF ? '' : 'locked'}"><div class="row"><h2>⑨ 전신 상태 · 상세창</h2><span class="note">${CF ? '' : '⑦ 확정 후 열려요'}</span><span class="spacer"></span><button type="button" class="btn" data-batch="full" ${CF && todo('full').length ? '' : 'disabled'}>남은 상태 ${todo('full').length}개 한 번에 요청</button></div>
+      ${STATES.filter((s) => s.full).map((st) => stRow('full', st)).join('')}</div></div>`
 }
+let renderQueued = false
 function render() {
+  if (renderQueued) return
+  renderQueued = true
+  requestAnimationFrame(() => { renderQueued = false; renderNow() })
+}
+function renderNow() {
   if (!doc) { $('main').innerHTML = '<p class="note">캐릭터를 고르거나 새로 만들어 주세요.</p>'; $('steps').innerHTML = ''; return }
-  const filled = [F.identity, F.face, F.body, F.costume].map((l) => l.some(([id]) => v(id)))
-  $('steps').innerHTML = STEPS.map((name, i) => `<button type="button" data-step="${i}" class="${i === step ? 'on' : ''}${filled[i] ? ' done' : ''}"><b>${i + 1}</b>${esc(name)}</button>`).join('')
+  const filled = [F.identity, F.face, F.body].map((l) => l.some(([id]) => v(id))).concat(doc.costumes.some((c) => F.costume.some(([id]) => cv(c, id))))
+  $('steps').innerHTML = STEPS.map((name, i) => `${i === LAST ? '<span class="navgap"></span>' : ''}<button type="button" data-step="${i}" class="${i === step ? 'on' : ''}${filled[i] ? ' done' : ''}"><b>${i === LAST ? '⚙' : i + 1}</b>${esc(name)}</button>`).join('')
   const sy = scrollY
   $('main').innerHTML = stepHtml() + (step < 6 ? `<div class="nav-foot"><button type="button" class="btn quiet" data-step="${step - 1}" ${step === 0 ? 'disabled' : ''}>← 이전</button><button type="button" class="btn primary" data-step="${step + 1}">다음 →</button></div>` : '')
   scrollTo(0, sy)
@@ -401,28 +674,53 @@ async function loadThumb(id) {
 document.addEventListener('input', (e) => {
   const t = e.target
   if (t.dataset.f) { doc.values[t.dataset.f] = t.value; save(); if (t.dataset.f === 'name') doc.name = t.value }
+  if (t.dataset.cf) { cur().values[t.dataset.cf] = t.value; save() }
+  if (t.dataset.cname) { cur().name = t.value; save() }
+  if (t.dataset.editNote && editing) editNotes[editing.key + '|' + editing.outputId] = t.value
   if (t.dataset.s && t.tagName !== 'SELECT') { doc.settings[t.dataset.s] = t.value; save() }
   if (t.dataset.o && t.tagName !== 'SELECT') { (doc.settings.overrides ??= {})[t.dataset.o] = t.value; save() }
+  if (t.dataset.t && t.tagName !== 'SELECT') { TOOLSET[t.dataset.t] = t.value; saveTool() }
 })
 document.addEventListener('change', (e) => {
   const t = e.target
+  if (t.dataset.cname) render()
+  if (t.dataset.count) { counts[t.dataset.count] = Number(t.value) || 1; render() }
+  if (t.dataset.editCount && editing) editing.n = Number(t.value) || 1
   if (t.dataset.s && t.tagName === 'SELECT') { doc.settings[t.dataset.s] = t.value; save(); render() }
   if (t.dataset.o && t.tagName === 'SELECT') { (doc.settings.overrides ??= {})[t.dataset.o] = t.value; save(); render() }
+  if (t.dataset.t && t.tagName === 'SELECT') { TOOLSET[t.dataset.t] = t.dataset.t === 'videoSeconds' ? Number(t.value) : t.value; saveTool(); render() }
 })
 document.addEventListener('click', (e) => {
   const b = e.target.closest('button,[data-reveal]')
   if (!b || b.disabled) return
   const d = b.dataset
-  if (d.step != null) { step = Math.max(0, Math.min(6, Number(d.step))); scrollTo(0, 0); render() }
+  const c = cur()
+  if (d.step != null) { step = Math.max(0, Math.min(LAST, Number(d.step))); scrollTo(0, 0); render() }
+  else if (d.resetTool) { if (!confirm('공통 제작 규칙과 기본 복장을 시작값으로 되돌릴까요?')) return; TOOLSET.rules = DEFAULT_SETTINGS.rules; TOOLSET.baseOutfit = DEFAULT_SETTINGS.baseOutfit; saveTool(); render() }
   else if (d.go != null) { step = Number(d.go); scrollTo(0, 0); render() }
-  else if (d.genBase) genBase(d.genBase)
-  else if (d.genState) { const [k, id] = d.genState.split('|'); genState(k, STATES.find((s) => s.id === id)) }
-  else if (d.genVideo) { const [k, id] = d.genVideo.split('|'); genVideo(k, STATES.find((s) => s.id === id)) }
-  else if (d.batch) { const kind = d.batch; STATES.filter((st) => (kind === 'bust' || st.full) && st.id !== 'idle' && !slotOf(`${kind}.${st.id}`).chosen && !doc.pending.some((p) => p.key === `${kind}.${st.id}`)).forEach((st) => genState(kind, st)) }
+  else if (d.costume || d.boardCostume) { doc.current = d.costume || d.boardCostume; save(); render() }
+  else if (d.addCostume) { const n = newCostume(`코스튬 ${doc.costumes.length + 1}`); doc.costumes.push(n); doc.current = n.id; save(); if (step !== 3) { step = 3; scrollTo(0, 0) } render() }
+  else if (d.delCostume) {
+    if (doc.costumes.length < 2 || !confirm(`'${c.name}' 코스튬을 시트에서 뺄까요? 만든 이미지는 아트 라이브러리에 남아요.`)) return
+    doc.costumes = doc.costumes.filter((x) => x.id !== c.id); doc.current = doc.costumes[0].id; doc.pending = doc.pending.filter((p) => !p.key.startsWith(`c.${c.id}.`)); save(); render()
+  }
+  else if (d.fill) { const [kind, src] = d.fill.split('|'); fillFromPhoto(kind, src, 'doc') }
+  else if (d.del) removeJob(d.del)
+  else if (d.refillFace) fillFromPhoto('face', { outputId: doc.base.portrait.chosen }, 'doc')
+  else if (d.edit) { const i = d.edit.lastIndexOf('|'); editing = { key: d.edit.slice(0, i), outputId: d.edit.slice(i + 1), n: 1 }; render(); setTimeout(() => $('editNote')?.focus(), 60) }
+  else if (d.editCancel) { editing = null; render() }
+  else if (d.editGo && editing) genEdit(editing.key, editing.outputId, editNotes[editing.key + '|' + editing.outputId] || '', editing.n || 1)
+  else if (d.costumePhoto) costumeFromPhoto(c)
+  else if (d.costumeUnref) { c.ref = null; c.refThumb = null; save(); render() }
+  else if (d.genAnchor) genAnchor(d.genAnchor)
+  else if (d.genState) { const [k, id] = d.genState.split('|'); genState(c, k, STATES.find((s) => s.id === id)) }
+  else if (d.genVideo) { const [k, id] = d.genVideo.split('|'); genVideo(c, k, STATES.find((s) => s.id === id)) }
+  else if (d.batch) { const kind = d.batch; STATES.filter((st) => (kind === 'bust' || st.full) && st.id !== 'idle' && !slotOf(`c.${c.id}.${kind}.${st.id}`).chosen && !doc.pending.some((p) => p.key === `c.${c.id}.${kind}.${st.id}`)).forEach((st) => genState(c, kind, st)) }
   else if (d.choose) {
-    const [key, oid] = d.choose.split('|'); const slot = slotOf(key)
-    if (slot.chosen && slot.chosen !== oid && key.startsWith('base.') && !confirm('기준 이미지를 바꾸면 이미 만든 상태 이미지와 맞지 않을 수 있어요. 바꿀까요?')) return
-    slot.chosen = oid; save(); render()
+    const i = d.choose.lastIndexOf('|'); const key = d.choose.slice(0, i); const oid = d.choose.slice(i + 1); const s = slotOf(key)
+    const isAnchor = key.startsWith('base.') || key.split('.').length === 3
+    if (s.chosen && s.chosen !== oid && isAnchor && !confirm('기준 이미지를 바꾸면 이미 만든 다음 단계 이미지와 맞지 않을 수 있어요. 바꿀까요?')) return
+    s.chosen = oid; save(); render()
   } else if (d.reveal) studio.reveal(d.reveal).catch(() => toast('이 PC에 보관된 파일이 없어요.', true))
 })
 $('charSelect').addEventListener('change', (e) => open(e.target.value))
@@ -444,9 +742,14 @@ $('importFile').addEventListener('change', async (e) => {
     const vals = j?.values
     if (!vals || typeof vals !== 'object') throw new Error('v2 캐릭터 시트 JSON이 아니에요')
     doc = newDoc(); doc.id = 'c' + Date.now().toString(36)
-    const known = new Set([...F.identity, ...F.face, ...F.body, ...F.memo, ...F.costume].map((x) => x[0]))
-    for (const [k, val] of Object.entries(vals)) if (known.has(k) && (typeof val === 'string' || typeof val === 'number')) doc.values[k] = String(val)
-    // 비율 · 배경은 프로젝트 설정을 따른다 — 캐릭터별 추가 제약만 옮긴다
+    const known = new Set([...F.identity, ...F.face, ...F.body, ...F.memo].map((x) => x[0]))
+    const cknown = new Set(F.costume.map((x) => x[0]))
+    for (const [k, val] of Object.entries(vals)) {
+      if (typeof val !== 'string' && typeof val !== 'number') continue
+      if (known.has(k)) doc.values[k] = String(val)
+      else if (cknown.has(k)) doc.costumes[0].values[k] = String(val)
+    }
+    // 비율 · 배경은 캐릭터 시트 설정을 따른다 — 캐릭터별 추가 제약만 옮긴다
     if (typeof vals.constraints === 'string') doc.settings.constraints = vals.constraints
     doc.name = v('name') || '불러온 캐릭터'
     await studio.characters.save(doc.id, doc); await refreshList(); $('charSelect').value = doc.id; step = 5; render(); toast('v2 시트를 불러왔어요. 검토 단계에서 확인해 주세요.')
@@ -455,23 +758,62 @@ $('importFile').addEventListener('change', async (e) => {
 
 async function refreshList(keep = true) {
   const list = await studio.characters.list()
-  const cur = doc?.id
+  const curId = doc?.id
   $('charSelect').innerHTML = list.length ? list.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('') : '<option value="">캐릭터 없음</option>'
-  if (keep && cur) $('charSelect').value = cur
+  if (keep && curId) $('charSelect').value = curId
   return list
 }
 async function open(id) {
   if (!id) return
   const d = await studio.characters.get(id)
-  const fresh = newDoc()
-  doc = { ...fresh, ...d, settings: { ...(d.settings || {}) }, base: { ...fresh.base, ...(d.base || {}) } }
+  const old = (d.version ?? 3) < 4
+  doc = migrate(d)
   // 이미 제작을 시작한 캐릭터는 제작 단계부터 연다
-  step = doc.base.portrait.chosen || doc.base.portrait.cands.length || doc.pending.length ? 6 : 0
+  step = allSlots().some((s) => s.cands.length) || doc.pending.length ? 6 : 0
   // 창을 닫아 둔 사이 끝난 작업을 반영한다
   for (const p of [...doc.pending]) { try { const j = await studio.job(p.jobId); if (j) applyJob(j) } catch { /* 모름 */ } }
+  await prune()
+  if (old) { save(); toast('새 구조(캐릭터 원형 + 코스튬)로 옮겼어요. 예전 기준 이미지 · 상태는 "기본 코스튬"에 있고, 원형은 새로 만들어요.') }
   render(); setStatus('불러옴')
 }
-studio.project().then((p) => { PROJ = p }).catch(() => {}).then(() => refreshList()).then((list) => (list.length ? open(list[0].id) : (render(), setStatus('새 캐릭터를 만들어 시작해요')))).catch((e) => setStatus('불러오기 실패: ' + e.message))
+// 후보 · 영상 지우기 — 이 PC 파일과 서비스 쪽 결과까지. 그 작업의 결과를 모든 칸에서 빼고, 확정이었으면 푼다
+async function removeJob(jobId) {
+  const used = allSlots().filter((s) => [...(s.cands || []), ...(s.videos || [])].some((c) => c.jobId === jobId))
+  const wasChosen = used.some((s) => (s.cands || []).some((c) => c.jobId === jobId && c.outputId === s.chosen))
+  if (!confirm(`이 결과를 지울까요?${wasChosen ? '\n확정한 이미지예요 — 지우면 확정이 풀려요.' : ''}\n이 PC의 파일과 ComfyCloud 서버 사본까지 지워요. 되돌릴 수 없어요.`)) return
+  try {
+    await studio.deleteJob(jobId)
+  } catch (e) { return toast('지우지 못했어요: ' + e.message, true) }
+  for (const s of used) {
+    if ((s.cands || []).some((c) => c.jobId === jobId && c.outputId === s.chosen)) s.chosen = null
+    s.cands = (s.cands || []).filter((c) => c.jobId !== jobId)
+    if (s.videos) s.videos = s.videos.filter((c) => c.jobId !== jobId)
+  }
+  if (editing && !allSlots().some((s) => (s.cands || []).some((c) => c.outputId === editing.outputId))) editing = null
+  save(); render(); toast('지웠어요.')
+}
+// 아트 화면에서 지운 결과는 후보 · 영상에서 빼고, 확정이었으면 확정을 푼다.
+// 지운 작업도 기록은 남고 결과만 비므로 "작업은 있는데 그 결과가 없음"일 때만 뺀다(연결 실패는 그대로 둔다).
+async function prune() {
+  const slots = allSlots()
+  const ids = new Set(slots.flatMap((s) => [...(s.cands || []), ...(s.videos || [])].map((c) => c.jobId)))
+  const alive = new Map()
+  await Promise.all([...ids].map(async (id) => {
+    try { const j = await studio.job(id); if (j) alive.set(id, new Set((j.outputs || []).map((o) => o.id))) } catch { /* 모름 */ }
+  }))
+  const gone = (c) => alive.get(c.jobId)?.has(c.outputId) === false
+  let n = 0
+  for (const s of slots) {
+    const cands = (s.cands || []).filter((c) => !gone(c))
+    const videos = (s.videos || []).filter((c) => !gone(c))
+    n += (s.cands || []).length - cands.length + (s.videos || []).length - videos.length
+    if (s.chosen && (s.cands || []).some((c) => c.outputId === s.chosen && gone(c))) s.chosen = null
+    s.cands = cands
+    if (s.videos) s.videos = videos
+  }
+  if (n) { save(); toast(`지운 결과 ${n}개를 시트에서 뺐어요.`) }
+}
+Promise.all([studio.project().then((p) => { PROJ = p }).catch(() => {}), studio.settings.get().then((t) => { TOOLSET = t && typeof t === 'object' ? Object.fromEntries(Object.entries(t).filter(([k]) => TOOL_KEYS.includes(k))) : {} }).catch(() => {})]).then(() => refreshList()).then((list) => (list.length ? open(list[0].id) : (render(), setStatus('새 캐릭터를 만들어 시작해요')))).catch((e) => setStatus('불러오기 실패: ' + e.message))
 })()
 </script>
 </body>
