@@ -426,101 +426,34 @@ function ProjectList({ onOpen }: { onOpen: (id: string) => void }): ReactElement
 }
 
 // ── 프로젝트 설정(새로 만들기 · 고치기) ─────────────────────
-const RATIOS_PORTRAIT = ['4:5', '3:4', '1:1']
-const RATIOS_FULL = ['2:3', '3:4', '9:16']
-
-type SettingsTab = 'basic' | 'rules' | 'output'
-
+// 모든 도구에 공통인 것만 — 이름 · 피할 것. 캐릭터 시트의 규칙 · 출력 · 기본 복장 · 분석 엔진은 캐릭터 시트의 "설정"에 있다.
 function ProjectSettingsDialog({ project, defaults, onClose, onSaved }: { project?: Project; defaults: ProjectSettings; onClose: () => void; onSaved: (p: Project) => void }): ReactElement {
   const [name, setName] = useState(project?.name ?? '')
   const [st, setSt] = useState<ProjectSettings>(() => structuredClone(project?.settings ?? defaults))
-  const [tab, setTab] = useState<SettingsTab>('basic')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const set = <K extends keyof ProjectSettings>(k: K, v: ProjectSettings[K]): void => setSt((x) => ({ ...x, [k]: v }))
   const save = (): void => {
-    if (!name.trim()) return (setTab('basic'), setErr('프로젝트 이름을 적어 주세요'))
+    if (!name.trim()) return setErr('프로젝트 이름을 적어 주세요')
     setBusy(true)
     setErr(null)
     ;(project ? updateProject(project.id, { name, settings: st }) : createProject(name, st))
       .then((p) => (onSaved(p), onClose()))
       .catch((e: Error) => (setErr(e.message), setBusy(false)))
   }
-  const sel = (id: string, label: string, value: string, opts: [string, string][], onChange: (v: string) => void): ReactElement => (
-    <label className="st-art-field" htmlFor={id}>
-      <span>{label}</span>
-      <select id={id} value={value} onChange={(e) => onChange(e.target.value)}>
-        {opts.map(([v, l]) => (
-          <option key={v} value={v}>
-            {l}
-          </option>
-        ))}
-      </select>
-    </label>
-  )
-  const TABS: [SettingsTab, string][] = [
-    ['basic', '기본'],
-    ['rules', '공통 규칙'],
-    ['output', '출력']
-  ]
   return (
     <div className="st-veil" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="st-art-editor st-proj-editor" role="dialog" aria-modal="true" aria-label={project ? '프로젝트 설정' : '새 프로젝트'}>
         <h2>{project ? '프로젝트 설정' : '새 프로젝트'}</h2>
-        <div className="st-proj-tabs" role="tablist" aria-label="설정 항목">
-          {TABS.map(([k, l]) => (
-            <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)}>
-              {l}
-            </button>
-          ))}
-        </div>
-
-        {tab === 'basic' && (
-          <>
-            <label className="st-art-field" htmlFor="pj-name">
-              <span>이름 {project ? '' : '(폴더 이름이 돼요)'}</span>
-              <input id="pj-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="예: 서울 괴담 · 주인공 파티" />
-            </label>
-            <label className="st-art-field" htmlFor="pj-avoid">
-              <span>피할 것 (모든 이미지 · 영상 · 선택)</span>
-              <input id="pj-avoid" value={st.avoid} onChange={(e) => set('avoid', e.target.value)} placeholder="예: 글자 · 로고 · 워터마크" />
-            </label>
-          </>
-        )}
-
-        {tab === 'rules' && (
-          <>
-            <p className="st-dim">캐릭터를 만들 때 늘 지킬 규칙이에요. 한 줄에 하나씩 — 캐릭터 시트 프롬프트와 AI 지침(CLAUDE.md · AGENTS.md)에 들어가요.</p>
-            <label className="st-art-field" htmlFor="pj-rules">
-              <span>공통 제작 규칙</span>
-              <textarea id="pj-rules" rows={10} value={st.rules} onChange={(e) => set('rules', e.target.value)} />
-            </label>
-            <div className="st-art-actions">
-              <button type="button" className="st-pill" onClick={() => set('rules', defaults.rules)}>
-                기본 규칙으로 되돌리기
-              </button>
-            </div>
-          </>
-        )}
-
-        {tab === 'output' && (
-          <>
-            <p className="st-dim">이 프로젝트의 기본 출력 규격이에요. 캐릭터 시트에서 캐릭터별로 바꿀 수 있어요.</p>
-            <div className="st-proj-cols">
-              {sel('pj-model', '이미지 모델', st.model, [['gpt-image-2.5-sunburst', 'GPT Image 2.5 Sunburst'], ['gpt-image-2.5-flare', 'GPT Image 2.5 Flare']], (v) => set('model', v))}
-              {sel('pj-q', '이미지 품질', st.quality, [['low', 'low · 테스트'], ['medium', 'medium'], ['high', 'high'], ['xhigh', 'xhigh']], (v) => set('quality', v))}
-              {sel('pj-pr', '상반신 비율', st.portraitRatio, RATIOS_PORTRAIT.map((r) => [r, r]), (v) => set('portraitRatio', v))}
-              {sel('pj-fr', '전신 비율', st.fullRatio, RATIOS_FULL.map((r) => [r, r]), (v) => set('fullRatio', v))}
-              {sel('pj-vs', '영상 길이', String(st.videoSeconds), [['4', '4초'], ['5', '5초'], ['6', '6초']], (v) => set('videoSeconds', Number(v)))}
-              {sel('pj-vr', '영상 해상도', st.videoResolution, [['480p', '480p'], ['720p', '720p']], (v) => set('videoResolution', v))}
-            </div>
-            <label className="st-art-field" htmlFor="pj-bg">
-              <span>공통 배경</span>
-              <input id="pj-bg" value={st.background} onChange={(e) => set('background', e.target.value)} />
-            </label>
-          </>
-        )}
-
+        <label className="st-art-field" htmlFor="pj-name">
+          <span>이름 {project ? '' : '(폴더 이름이 돼요)'}</span>
+          <input id="pj-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="예: 서울 괴담 · 주인공 파티" />
+        </label>
+        <label className="st-art-field" htmlFor="pj-avoid">
+          <span>피할 것 (모든 이미지 · 영상 · 선택)</span>
+          <input id="pj-avoid" value={st.avoid} onChange={(e) => set('avoid', e.target.value)} placeholder="예: 글자 · 로고 · 워터마크" />
+        </label>
+        <p className="st-dim">도구마다 쓰는 설정(예: 캐릭터 시트의 공통 규칙 · 출력 규격 · 기본 복장 · AI 분석)은 각 도구 안의 "설정"에서 정해요.</p>
         <p className="st-dim">설정은 프로젝트 폴더의 project.json과 AI 지침(CLAUDE.md · AGENTS.md)에 저장돼요.</p>
         {err && <div className="st-gen-warn">{err}</div>}
         <div className="st-art-actions">
@@ -558,13 +491,20 @@ function ChatBar({ dir }: { dir: string }): ReactElement {
         })
         .catch(() => {})
     }, 400) // 채팅(App)이 막 마운트되는 경우를 기다린다
-    const iv = setInterval(refresh, 4000)
+    // 목록은 가끔만 다시 읽는다(채팅 저장소를 읽는 IPC) — 창에 돌아올 때 · 30초마다 · 목록을 열 때
+    const iv = setInterval(() => document.visibilityState === 'visible' && refresh(), 30000)
+    const onFocus = (): void => refresh()
+    window.addEventListener('focus', onFocus)
     return () => {
       alive = false
       clearTimeout(t)
       clearInterval(iv)
+      window.removeEventListener('focus', onFocus)
     }
   }, [dir, refresh])
+  useEffect(() => {
+    if (open) refresh()
+  }, [open, refresh])
   useEffect(() => {
     if (!open) return
     const down = (e: MouseEvent): void => {
@@ -685,7 +625,8 @@ function ProjectSpace({ id, ensureApp, onBack }: { id: string; ensureApp: () => 
       project: j.project ?? id,
       prompt: (j.origin?.userPrompt ?? j.prompt) || undefined,
       inputs: (j.inputs ?? []).filter((i) => i.kind === 'image').map((i) => ({ kind: 'image' as const, path: i.path, url: i.url, view: i.view })),
-      params: { ...(j.params ?? {}) },
+      // 시드는 빼고 다시 만든다 — 같은 시드면 서비스가 지난 결과를 그대로 돌려줄 수 있다
+      params: Object.fromEntries(Object.entries(j.params ?? {}).filter(([k]) => k !== 'seed')),
       origin: { space: 'art', source: 'ui', title: j.origin?.title }
     }).catch(() => {})
   }
@@ -701,7 +642,7 @@ function ProjectSpace({ id, ensureApp, onBack }: { id: string; ensureApp: () => 
         </button>
         <div className="st-proj-title">
           <h2 className="st-gen-ellipsis">{project?.name ?? id}</h2>
-          <span className="st-dim">{project ? `${project.settings.model.replace('gpt-image-2.5-', 'GPT Image 2.5 ')} · ${project.settings.quality}` : perr ?? '…'}</span>
+          <span className="st-dim">{project ? project.dir : perr ?? '…'}</span>
           <button type="button" className="st-pill" disabled={!project || !defaults} onClick={() => setEditingProject(true)}>
             프로젝트 설정
           </button>

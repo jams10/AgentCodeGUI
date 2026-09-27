@@ -4,12 +4,16 @@
 //  - 도구가 만든 작업은 상태가 바뀔 때마다 도구에 알려 준다(결과 id 포함). 미리보기는 앱이 줄여서 data URL로 준다.
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import {
+  analyzeImages,
   contentUrl,
   contentUrlReady,
   deleteCharacter,
+  deleteJob,
   getCharacter,
   getProject,
   getTool,
+  getToolSettings,
+  listAnalyzeEngines,
   gw,
   listCharacters,
   listLibrary,
@@ -18,6 +22,8 @@ import {
   outputUrl,
   quote,
   saveCharacter,
+  saveToolSettings,
+  uploadReference,
   useGateway,
   type Job,
   type Output,
@@ -61,6 +67,19 @@ const BRIDGE = `<script>
     thumb: (outputId, size) => call('thumb', outputId, size || 320),
     /** 앱 라이브러리에서 이미지 하나 고르기 — { outputId } 또는 null */
     pickImage: () => call('pickImage'),
+    /** 참고 사진(data URL) 올리기 — { path } (프로젝트의 references 폴더). generate · analyze의 입력으로 쓴다 */
+    upload: (dataUrl, name) => call('upload', dataUrl, name),
+    /** 사진 분석 — kind: face · body · costume, images: [{ outputId } | { path }], opts: { engine, model } → { values } (생성 비용 없음) */
+    analyze: (kind, images, opts) => call('analyze', kind, images, opts),
+    /** 쓸 수 있는 분석 엔진 — [{ id, name, unavailable }] */
+    analyzeEngines: () => call('analyzeEngines'),
+    /** 이 도구의 프로젝트별 설정(<프로젝트>/tools/<도구>.json) */
+    settings: {
+      get: () => call('settings.get'),
+      save: (value) => call('settings.save', value)
+    },
+    /** 결과 지우기 — 이 PC 파일 + (지원하면) 서비스 쪽 결과. 이 프로젝트의 작업만. → { local, remote } */
+    deleteJob: (jobId) => call('deleteJob', jobId),
     /** 결과 파일을 탐색기에서 보기 */
     reveal: (outputId) => call('reveal', outputId),
     /** 작업 상태가 바뀔 때 — (event: 'job', job) */
@@ -159,10 +178,16 @@ export function ToolHost({ toolId, projectId, onClose }: { toolId: string; proje
         .join('|'),
     [g.jobs, g.outputs]
   )
+  // 상태 · 결과 수가 바뀐 작업만 알린다(진행률만 바뀐 건 보내지 않는다 — 도구가 매번 다시 그리지 않게)
+  const sent = useRef(new Map<string, string>())
   useEffect(() => {
     for (const id of mine.current) {
       const j = g.jobs[id]
-      if (j) post({ event: 'job', data: { ...j, outputs: (g.outputs[id] ?? []).map((o) => ({ id: o.id, kind: o.kind })) } })
+      if (!j) continue
+      const sig = `${j.state}:${(g.outputs[id] ?? []).length}`
+      if (sent.current.get(id) === sig) continue
+      sent.current.set(id, sig)
+      post({ event: 'job', data: { ...j, outputs: (g.outputs[id] ?? []).map((o) => ({ id: o.id, kind: o.kind })) } })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [snapshot])
@@ -184,9 +209,23 @@ export function ToolHost({ toolId, projectId, onClose }: { toolId: string; proje
           return saveCharacter(projectId, String(args[0]), (args[1] ?? {}) as Record<string, unknown>)
         case 'characters.delete':
           return deleteCharacter(projectId, String(args[0]))
+        case 'upload':
+          return uploadReference(projectId, String(args[0] ?? ''), typeof args[1] === 'string' ? args[1] : undefined)
+        case 'analyze': {
+          const images = await refsOnly(Array.isArray(args[1]) ? (args[1] as Record<string, unknown>[]) : [])
+          const o = (args[2] ?? {}) as { engine?: unknown; model?: unknown }
+          return analyzeImages(String(args[0]) as 'face', images, { engine: typeof o.engine === 'string' ? o.engine : undefined, model: typeof o.model === 'string' ? o.model : undefined })
+        }
+        case 'analyzeEngines':
+          return listAnalyzeEngines()
+        case 'settings.get':
+          return getToolSettings(projectId, toolId)
+        case 'settings.save':
+          return saveToolSettings(projectId, toolId, (args[0] ?? {}) as Record<string, unknown>)
         case 'generate': {
           // 도구의 요청은 늘 이 프로젝트로 — 아트 디렉션은 게이트웨이가 붙인다
           const req = (args[0] ?? {}) as QuoteRequest
+          if (req.inputs) req.inputs = (await refsOnly(req.inputs as unknown as Record<string, unknown>[])).map((x, i) => ({ ...(req.inputs![i] as object), ...x })) as QuoteRequest['inputs']
           const j = await quote({ ...req, project: projectId, origin: { ...(req.origin ?? {}), space: 'art', source: 'tool', tool: toolId } })
           mine.current.add(j.id)
           return j
@@ -197,6 +236,12 @@ export function ToolHost({ toolId, projectId, onClose }: { toolId: string; proje
           mine.current.add(id)
           const r = await gw<{ job: Job; outputs: Output[] }>(`/jobs/${encodeURIComponent(id)}`).catch(() => null)
           return r ? { ...r.job, outputs: r.outputs.map((o) => ({ id: o.id, kind: o.kind })) } : null
+        }
+        case 'deleteJob': {
+          const id = String(args[0])
+          const r = await gw<{ job: Job }>(`/jobs/${encodeURIComponent(id)}`)
+          if (r.job.project !== projectId) throw new Error('이 프로젝트의 결과만 지울 수 있어요')
+          return deleteJob(id)
         }
         case 'thumb':
           return thumbOf(String(args[0]), Math.max(64, Math.min(1024, Number(args[1]) || 320)))
@@ -212,6 +257,15 @@ export function ToolHost({ toolId, projectId, onClose }: { toolId: string; proje
         default:
           throw new Error(`모르는 요청: ${method}`)
       }
+    }
+    // 도구가 넘기는 파일 입력은 결과(outputId)나 이 프로젝트의 references 폴더(도구가 올린 사진)만 — 다른 로컬 파일은 막는다
+    const refsOnly = async (list: Record<string, unknown>[]): Promise<({ outputId: string } | { path: string })[]> => {
+      const dir = (await getProject(projectId)).dir.replace(/[\\/]+$/, '') + '\\references\\'
+      return list.map((x) => {
+        if (typeof x.outputId === 'string') return { outputId: x.outputId }
+        if (typeof x.path === 'string' && x.path.toLowerCase().startsWith(dir.toLowerCase()) && !x.path.includes('..')) return { path: x.path }
+        throw new Error('도구는 결과 이미지나 올린 참고 사진만 입력으로 쓸 수 있어요')
+      })
     }
     const onMsg = (e: MessageEvent): void => {
       const m = e.data as { __studio?: number; id?: number; method?: string; args?: unknown[] } | null

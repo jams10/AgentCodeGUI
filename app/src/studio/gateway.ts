@@ -276,17 +276,8 @@ export const deleteCharacter = (project: string, id: string): Promise<{ ok: bool
 
 // ── 아트 프로젝트 ───────────────────────────────────────
 export interface ProjectSettings {
-  /** 캐릭터 제작 공통 규칙(한 줄에 하나) */
-  rules: string
-  /** 모든 이미지 · 영상에서 피할 것 */
+  /** 모든 이미지 · 영상에서 피할 것 — 모든 도구 공통. 도구별 설정은 도구가 따로 저장한다(tools/<도구>.json) */
   avoid: string
-  portraitRatio: string
-  fullRatio: string
-  background: string
-  model: string
-  quality: string
-  videoSeconds: number
-  videoResolution: string
 }
 export interface Project {
   id: string
@@ -303,6 +294,18 @@ export const listProjects = (): Promise<{ root: string; defaults: ProjectSetting
 export const createProject = (name: string, settings: Partial<ProjectSettings>): Promise<Project> => gw('/projects', { body: { name, settings } })
 export const getProject = (id: string): Promise<Project> => gw(`/projects/${encodeURIComponent(id)}`)
 export const updateProject = (id: string, patch: { name?: string; settings?: Partial<ProjectSettings> }): Promise<Project> => gw(`/projects/${encodeURIComponent(id)}`, { body: patch })
+/** 참고 사진 올리기 — <프로젝트>/references에 저장된다 */
+export const uploadReference = (project: string, dataUrl: string, name?: string): Promise<{ path: string }> =>
+  gw(`/projects/${encodeURIComponent(project)}/uploads`, { body: { dataUrl, name } })
+export type AnalyzeKind = 'face' | 'body' | 'costume'
+/** 사진 분석 — 캐릭터 시트 칸 값(생성 비용 없음). 엔진 · 모델은 도구가 정한다(없으면 첫 엔진 · 계정 기본 모델) */
+export const analyzeImages = (kind: AnalyzeKind, images: ({ outputId: string } | { path: string })[], opts: { engine?: string; model?: string } = {}): Promise<{ engine: string; fields: string[]; values: Record<string, string> }> =>
+  gw('/analyze', { body: { kind, images, engine: opts.engine, model: opts.model } })
+/** 도구 설정 — <프로젝트>/tools/<도구>.json */
+export const getToolSettings = (project: string, tool: string): Promise<Record<string, unknown>> => gw(`/projects/${encodeURIComponent(project)}/tools/${encodeURIComponent(tool)}/settings`)
+export const saveToolSettings = (project: string, tool: string, value: Record<string, unknown>): Promise<Record<string, unknown>> =>
+  gw(`/projects/${encodeURIComponent(project)}/tools/${encodeURIComponent(tool)}/settings`, { body: value })
+export const listAnalyzeEngines = (): Promise<{ id: string; name: string; unavailable: string | null }[]> => gw('/analyze/engines')
 /** 결과 지우기 — 이 PC의 보관본 + (삭제 API가 있는 서비스면) 서비스 쪽 결과. 비용 기록은 남는다 */
 export const deleteJob = (id: string): Promise<{ local: number; remote: number; remoteSupported: boolean }> => gw(`/jobs/${id}/delete`, { method: 'POST' })
 /** 이 PC에 보관된 3D 모델을 Blender(설치된 것 중 최신)로 연다 */
