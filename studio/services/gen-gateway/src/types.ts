@@ -19,9 +19,33 @@ export interface GenerationRequest {
   /** 모델별 추가 옵션(해상도·길이·시드·워크플로 JSON 등) — 어댑터가 해석한다 */
   params?: Record<string, unknown>
   /** 이 요청이 어디서 왔나 — 라이브러리 출처 표시용 */
-  origin?: { space?: string; source?: 'ui' | 'agent'; conversation?: string; title?: string }
+  origin?: { space?: string; source?: 'ui' | 'agent'; conversation?: string; title?: string; /** 스타일 적용 전 원래 프롬프트 */ userPrompt?: string }
   /** 특정 서비스를 강제(라우팅 무시) */
   provider?: ProviderId
+  /** 스타일(id 또는 이름) — 결과를 이 스타일로 분류하고, 스타일의 앞/뒤 문구를 프롬프트에 붙인다 */
+  style?: string
+}
+
+/** 스타일 — 결과 분류이자 프롬프트 프리셋 */
+export interface StyleInput {
+  name: string
+  description?: string | null
+  /** 프롬프트 앞에 붙일 말(예: "1990s FMV cutscene, low-poly, CRT scanlines") */
+  promptPrefix?: string | null
+  /** 프롬프트 뒤에 붙일 말 */
+  promptSuffix?: string | null
+  /** 네거티브 프롬프트 — 모델이 받는 경우에만 쓴다 */
+  negative?: string | null
+}
+export interface StyleRecord {
+  id: string
+  name: string
+  description: string | null
+  promptPrefix: string | null
+  promptSuffix: string | null
+  negative: string | null
+  createdAt: number
+  updatedAt: number
 }
 
 /** 비용 — 서비스마다 단위가 달라서 원 단위와 USD 환산을 같이 둔다 */
@@ -112,6 +136,8 @@ export interface JobRecord {
   progress: number | null
   error: string | null
   balanceBefore: Balance | null
+  /** 분류된 스타일 */
+  styleId: string | null
 }
 
 export interface OutputRecord {

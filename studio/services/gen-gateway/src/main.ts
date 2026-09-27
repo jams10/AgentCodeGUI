@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path'
 import { LocalArchiver } from './archive.ts'
 import { Gateway, type GatewayEvent } from './gateway.ts'
 import { Ledger } from './ledger.ts'
+import { FAKE_MODEL, MODELS, type ModelInfo } from './models.ts'
 import { loadRoutes } from './routes.ts'
 import { SecretStore } from './secrets.ts'
 import { startServer, type RunningServer } from './server.ts'
@@ -54,10 +55,12 @@ export async function boot(opts: { serve: boolean; log?: (m: string) => void } =
   for (const w of warnings) log(w)
   const ledger = new Ledger(p.db)
   const providers = makeProviders(secrets)
+  let models: ModelInfo[] = MODELS
   // 개발용 — 과금 없는 가짜 서비스로 승인 카드 · 진행 · 완료 흐름을 화면에서 확인한다
   if (process.env.CCG_GATEWAY_FAKE === '1') {
     providers.push(new FakeProvider({ id: 'fake', steps: 6, balance: 500, price: 12, models: ['fake-demo'] }))
     routes = [...routes, { capability: 'image', model: 'fake-demo', providers: ['fake'] }]
+    models = [FAKE_MODEL, ...MODELS]
     log('개발용 가짜 서비스(fake-demo)를 켰어요 — 실제 서비스 호출 · 과금 없음')
   }
   let emit: (e: GatewayEvent) => void = () => {}
@@ -66,7 +69,7 @@ export async function boot(opts: { serve: boolean; log?: (m: string) => void } =
   gateway.resume()
   let server: RunningServer | null = null
   if (opts.serve) {
-    server = await startServer({ gateway, ledger, secrets, providers, infoFile: p.info, outputsDir: p.outputs })
+    server = await startServer({ gateway, ledger, secrets, providers, infoFile: p.info, outputsDir: p.outputs, models })
     emit = server.broadcast
     log(`127.0.0.1:${server.port}에서 대기 중 (라우팅: ${source === 'user' ? 'routes.json' : '기본값'}, 키: ${secrets.list().map((k) => k.provider).join(', ') || '없음'})`)
   }

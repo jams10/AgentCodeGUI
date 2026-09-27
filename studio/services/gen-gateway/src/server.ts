@@ -2,16 +2,18 @@
 // 접속 정보(port · token · pid)는 <home>/studio/gateway.json에 쓴다. 앱과 MCP 중계기가 이 파일을 읽는다.
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { randomBytes } from 'node:crypto'
-import { writeFileSync, rmSync, mkdirSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
+import { createReadStream, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { dirname, extname, resolve } from 'node:path'
+import type { ModelInfo } from './models.ts'
 import { pathToFileURL } from 'node:url'
 import { Gateway, GatewayError, type GatewayEvent } from './gateway.ts'
 import type { Ledger } from './ledger.ts'
 import type { SecretStore } from './secrets.ts'
-import type { GenerationRequest, JobState, Provider, ProviderId } from './types.ts'
+import type { GenerationRequest, JobRecord, JobState, Provider, ProviderId, StyleInput } from './types.ts'
 
 export const VERSION = '0.1.0'
 const MAX_BODY = 4 * 1024 * 1024
+const CONTENT_TYPE: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.mp4': 'video/mp4', '.webm': 'video/webm', '.glb': 'model/gltf-binary', '.fbx': 'application/octet-stream', '.wav': 'audio/wav' }
 const STATES: JobState[] = ['awaiting_approval', 'rejected', 'submitting', 'running', 'succeeded', 'failed', 'canceled']
 
 export interface ServerDeps {
@@ -22,6 +24,8 @@ export interface ServerDeps {
   infoFile: string | null
   /** 로컬 보관 폴더 — 'local:' 저장 키의 기준 */
   outputsDir?: string | null
+  /** 화면용 모델 카탈로그 */
+  models?: ModelInfo[]
   port?: number
 }
 
@@ -70,8 +74,27 @@ function asRequest(b: unknown): GenerationRequest {
     inputs: Array.isArray(o.inputs) ? (o.inputs as GenerationRequest['inputs']) : undefined,
     params: o.params && typeof o.params === 'object' ? (o.params as Record<string, unknown>) : undefined,
     origin: o.origin && typeof o.origin === 'object' ? (o.origin as GenerationRequest['origin']) : undefined,
-    provider: typeof o.provider === 'string' ? (o.provider as ProviderId) : undefined
+    provider: typeof o.provider === 'string' ? (o.provider as ProviderId) : undefined,
+    style: typeof o.style === 'string' && o.style.trim() ? o.style.trim() : undefined
   }
+}
+
+const MAX_STYLE_TEXT = 2000
+/** 스타일 본문 검증 — 이름은 필수(만들 때), 나머지는 선택. 너무 긴 값은 거절한다. */
+function asStyle(b: unknown, creating: boolean): Partial<StyleInput> {
+  const o = (b ?? {}) as Record<string, unknown>
+  const out: Partial<StyleInput> = {}
+  if (o.name !== undefined || creating) {
+    if (typeof o.name !== 'string' || !o.name.trim() || o.name.length > 60) throw new GatewayError('bad_request', '스타일 이름은 1~60자여야 해요')
+    out.name = o.name.trim()
+  }
+  for (const k of ['description', 'promptPrefix', 'promptSuffix', 'negative'] as const) {
+    const v = o[k]
+    if (v === undefined) continue
+    if (v !== null && (typeof v !== 'string' || v.length > MAX_STYLE_TEXT)) throw new GatewayError('bad_request', `${k} 값이 올바르지 않아요`)
+    out[k] = typeof v === 'string' && v.trim() ? v.trim() : null
+  }
+  return out
 }
 
 export interface RunningServer {
@@ -91,6 +114,7 @@ export async function startServer(d: ServerDeps): Promise<RunningServer> {
     const line = `data: ${JSON.stringify(e)}\n\n`
     for (const s of streams) s.write(line)
   }
+  const broadcastJob = (job: JobRecord): void => broadcast({ type: 'job', job })
 
   const server = createServer(async (req, res) => {
     try {
@@ -108,10 +132,75 @@ export async function startServer(d: ServerDeps): Promise<RunningServer> {
           return res.end()
         }
       }
-      if (req.headers.authorization !== `Bearer ${token}`) return send(res, 401, { error: 'unauthorized' })
-
       const seg = path.split('/').filter(Boolean)
+      // 결과 파일만은 <img>/<video>가 헤더를 못 싣으므로 ?t=<토큰>도 받는다(127.0.0.1 · 실행마다 새 토큰)
+      const isContent = req.method === 'GET' && seg[0] === 'outputs' && seg[2] === 'content'
+      const authed = req.headers.authorization === `Bearer ${token}` || (isContent && url.searchParams.get('t') === token)
+      if (!authed) return send(res, 401, { error: 'unauthorized' })
       const gw = d.gateway
+
+      if (isContent && seg[1]) {
+        const o = d.ledger.output(seg[1])
+        if (!o) return send(res, 404, { error: 'not_found' })
+        if (o.storageKey?.startsWith('local:') && d.outputsDir) {
+          const abs = resolve(d.outputsDir, o.storageKey.slice('local:'.length))
+          if (!abs.startsWith(resolve(d.outputsDir)) || !existsSync(abs)) return send(res, 404, { error: 'not_found' })
+          res.writeHead(200, { 'Content-Type': o.mime ?? CONTENT_TYPE[extname(abs).toLowerCase()] ?? 'application/octet-stream', 'Content-Length': statSync(abs).size, 'Cache-Control': 'private, max-age=3600' })
+          createReadStream(abs).pipe(res)
+          return
+        }
+        const p = byId.get(o.provider)
+        const target = p?.resolveOutput ? await p.resolveOutput(o.url) : o.url
+        res.writeHead(302, { Location: target, 'Cache-Control': 'no-store' })
+        return res.end()
+      }
+      if (req.method === 'GET' && path === '/models') {
+        return send(
+          res,
+          200,
+          (d.models ?? []).map((m) => {
+            const providers = gw.routeFor(m.capability, m.id)
+            return { ...m, providers, available: providers.some((x) => x.configured) }
+          })
+        )
+      }
+      // ── 스타일 ──
+      if (req.method === 'GET' && path === '/styles') return send(res, 200, d.ledger.styles())
+      if (req.method === 'POST' && path === '/styles') {
+        const s = asStyle(await readBody(req), true) as StyleInput
+        if (d.ledger.style(s.name)) throw new GatewayError('bad_request', `'${s.name}' 스타일이 이미 있어요`)
+        const created = d.ledger.createStyle(s)
+        broadcast({ type: 'styles' })
+        return send(res, 201, created)
+      }
+      if (req.method === 'POST' && seg[0] === 'styles' && seg[1] && seg.length === 2) {
+        const patch = asStyle(await readBody(req), false)
+        if (patch.name) {
+          const same = d.ledger.style(patch.name)
+          if (same && same.id !== seg[1]) throw new GatewayError('bad_request', `'${patch.name}' 스타일이 이미 있어요`)
+        }
+        const s = d.ledger.updateStyle(seg[1], patch)
+        if (s) broadcast({ type: 'styles' })
+        return s ? send(res, 200, s) : send(res, 404, { error: 'not_found' })
+      }
+      if (req.method === 'POST' && seg[0] === 'styles' && seg[1] && seg[2] === 'delete') {
+        const gone = d.ledger.deleteStyle(seg[1])
+        if (gone) broadcast({ type: 'styles' })
+        return gone ? send(res, 200, { ok: true }) : send(res, 404, { error: 'not_found' })
+      }
+      if (req.method === 'POST' && seg[0] === 'jobs' && seg[1] && seg[2] === 'style') {
+        const b = ((await readBody(req)) ?? {}) as { styleId?: unknown }
+        const sid = typeof b.styleId === 'string' && b.styleId ? b.styleId : null
+        if (sid && !d.ledger.style(sid)) throw new GatewayError('not_found', '스타일을 찾지 못했어요')
+        const j = d.ledger.setJobStyle(seg[1], sid)
+        if (!j) return send(res, 404, { error: 'not_found' })
+        broadcastJob(j)
+        broadcast({ type: 'styles' }) // 스타일별 개수가 바뀐다
+        return send(res, 200, j)
+      }
+      if (req.method === 'GET' && path === '/outputs') {
+        return send(res, 200, d.ledger.recentOutputs(Number(url.searchParams.get('limit') ?? 200)))
+      }
 
       if (req.method === 'GET' && path === '/events') {
         res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' })

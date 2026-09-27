@@ -25,7 +25,8 @@ const TOOLS = [
         prompt: { type: 'string' },
         inputs: { type: 'array', items: { type: 'object', properties: { kind: { type: 'string', enum: ['image', 'video', 'model'] }, url: { type: 'string' }, path: { type: 'string' } } } },
         params: { type: 'object', description: '모델별 옵션(해상도·길이·종횡비·ComfyCloud workflow JSON 등)' },
-        title: { type: 'string', description: '라이브러리에 보일 짧은 이름' }
+        title: { type: 'string', description: '라이브러리에 보일 짧은 이름' },
+        style: { type: 'string', description: '스타일 이름 또는 id(list_styles로 확인). 결과를 그 스타일로 분류하고, 스타일의 앞/뒤 문구를 프롬프트에 자동으로 붙인다 — prompt에는 그 문구를 반복하지 말 것' }
       },
       required: ['capability', 'model']
     }
@@ -38,6 +39,11 @@ const TOOLS = [
   {
     name: 'generation_balances',
     description: '연결된 생성 서비스의 남은 잔액/크레딧을 조회한다(비용 없음).',
+    inputSchema: { type: 'object', properties: {} }
+  },
+  {
+    name: 'list_styles',
+    description: '사용자가 만든 아트 스타일(분류 + 프롬프트 프리셋) 목록을 조회한다(비용 없음). 각 스타일의 설명과 프롬프트 앞/뒤 문구, 결과 수를 준다.',
     inputSchema: { type: 'object', properties: {} }
   },
   {
@@ -81,7 +87,8 @@ async function call(name: string, args: Json): Promise<string> {
         prompt: args.prompt,
         inputs: args.inputs,
         params: args.params,
-        origin: { source: 'agent', title: typeof args.title === 'string' ? args.title : undefined }
+        origin: { source: 'agent', title: typeof args.title === 'string' ? args.title : undefined },
+        style: typeof args.style === 'string' ? args.style : undefined
       }
     })) as JobRecord
     // 승인 대기 → (승인되면) 완료까지
@@ -96,6 +103,13 @@ async function call(name: string, args: Json): Promise<string> {
     return summary(w.job, w.outputs)
   }
   if (name === 'generation_balances') return JSON.stringify(await api('/balances'), null, 2)
+  if (name === 'list_styles') {
+    const list = (await api('/styles')) as { name: string; description: string | null; promptPrefix: string | null; promptSuffix: string | null; negative: string | null; count: number }[]
+    if (!list.length) return '아직 만든 스타일이 없어요. 사용자가 아트 화면에서 만들 수 있어요.'
+    return list
+      .map((s) => [`■ ${s.name} (결과 ${s.count}개)`, s.description && `  설명: ${s.description}`, s.promptPrefix && `  앞 문구: ${s.promptPrefix}`, s.promptSuffix && `  뒤 문구: ${s.promptSuffix}`, s.negative && `  네거티브: ${s.negative}`].filter(Boolean).join('\n'))
+      .join('\n')
+  }
   if (name === 'generation_history') {
     const list = (await api(`/jobs?limit=${Math.min(50, Number(args.limit ?? 10))}`)) as JobRecord[]
     return list.map((j) => `${new Date(j.createdAt).toISOString()} ${j.state} ${j.provider}/${j.model} — ${(j.prompt ?? '').slice(0, 80)}`).join('\n') || '기록이 없어요.'

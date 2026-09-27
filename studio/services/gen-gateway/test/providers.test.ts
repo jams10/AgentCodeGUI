@@ -3,7 +3,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { TripoProvider, tripoEstimateCredits } from '../src/providers/tripo.ts'
@@ -154,6 +154,25 @@ test('Comfy: 워크플로가 없으면 지원하지 않는다', () => {
   const p = new ComfyProvider(() => 'k')
   assert.equal(p.supports({ capability: 'image', model: 'comfy-workflow' }), false)
   assert.equal(p.supports({ capability: 'image', model: 'comfy-workflow', params: { workflow: {} } }), true)
+})
+
+test('Comfy: 워크플로를 파일 경로로도 받고, UI 형식 파일은 알아듣기 쉬운 오류로 거절한다', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gw-wf-'))
+  try {
+    const api = join(dir, 'api.json')
+    const ui = join(dir, 'ui.json')
+    writeFileSync(api, JSON.stringify({ '3': { class_type: 'KSampler', inputs: {} } }))
+    writeFileSync(ui, JSON.stringify({ nodes: [], links: [] }))
+    const { f, calls } = mockFetch(() => ({ status: 201, body: { id: 'job_2' } }))
+    const p = new ComfyProvider(() => 'k', f)
+    assert.equal(p.supports({ capability: 'image', model: 'comfy-workflow', params: { workflowPath: join(dir, 'missing.json') } }), false)
+    assert.equal(p.supports({ capability: 'image', model: 'comfy-workflow', params: { workflowPath: api } }), true)
+    await p.submit({ capability: 'image', model: 'comfy-workflow', params: { workflowPath: api } })
+    assert.deepEqual((calls[0].body as { workflow: unknown }).workflow, { '3': { class_type: 'KSampler', inputs: {} } })
+    await assert.rejects(p.submit({ capability: 'image', model: 'comfy-workflow', params: { workflowPath: ui } }), /Export \(API\)/)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test('Comfy: $INPUT_n을 자산 참조로 바꾼다', () => {

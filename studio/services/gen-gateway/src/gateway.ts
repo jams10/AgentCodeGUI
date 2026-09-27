@@ -9,7 +9,8 @@ import type { Archiver } from './archive.ts'
 import type { Ledger } from './ledger.ts'
 import type { Route } from './routes.ts'
 import { findRoute } from './routes.ts'
-import type { Balance, Cost, GenerationRequest, JobRecord, OutputRecord, Provider, ProviderId } from './types.ts'
+import { MODELS } from './models.ts'
+import type { Balance, Cost, GenerationRequest, JobRecord, OutputRecord, Provider, ProviderId, StyleRecord } from './types.ts'
 
 export class GatewayError extends Error {
   readonly code: string
@@ -21,7 +22,7 @@ export class GatewayError extends Error {
   }
 }
 
-export type GatewayEvent = { type: 'job'; job: JobRecord; outputs?: OutputRecord[] } | { type: 'balance'; provider: ProviderId; balance: Balance }
+export type GatewayEvent = { type: 'job'; job: JobRecord; outputs?: OutputRecord[] } | { type: 'balance'; provider: ProviderId; balance: Balance } | { type: 'styles' }
 
 export interface GatewayOptions {
   ledger: Ledger
@@ -34,6 +35,17 @@ export interface GatewayOptions {
   now?: () => number
   /** 결과 보관(곧 만료되는 서비스 URL을 옮겨 둔다) */
   archiver?: Archiver
+}
+
+/** 스타일 앞 문구 + 프롬프트 + 뒤 문구 */
+export function composePrompt(st: Pick<StyleRecord, 'promptPrefix' | 'promptSuffix'>, prompt: string | undefined): string | undefined {
+  const parts = [st.promptPrefix, prompt, st.promptSuffix].map((p) => p?.trim()).filter((p): p is string => !!p)
+  return parts.length ? parts.join(', ') : undefined
+}
+
+/** 네거티브 프롬프트를 받는 모델인가 — 카탈로그에 그 옵션이 있을 때만 넣는다(모르는 파라미터로 서비스가 거절하지 않게) */
+function modelTakesNegative(model: string): boolean {
+  return !!MODELS.find((m) => m.id === model)?.options.some((o) => o.key === 'negative_prompt')
 }
 
 function sameUnit(a: { unit: string } | null | undefined, b: { unit: string } | null | undefined): boolean {
@@ -71,6 +83,12 @@ export class Gateway {
     this.routes = routes
   }
 
+  /** 이 (기능, 모델)을 처리할 서비스 순서와 각 서비스의 준비 상태 */
+  routeFor(capability: GenerationRequest['capability'], model: string): { id: ProviderId; configured: boolean }[] {
+    const r = findRoute(this.routes, capability, model)
+    return (r?.providers ?? []).map((id) => ({ id, configured: !!this.providers.get(id)?.configured() }))
+  }
+
   providerList(): { id: ProviderId; configured: boolean }[] {
     return [...this.providers.values()].map((p) => ({ id: p.id, configured: p.configured() }))
   }
@@ -102,7 +120,18 @@ export class Gateway {
   }
 
   // ── 견적: 서비스를 고르고 승인 대기 작업을 만든다 ─────────────
-  async quote(req: GenerationRequest): Promise<JobRecord> {
+  async quote(input: GenerationRequest): Promise<JobRecord> {
+    // 스타일 — 앞/뒤 문구를 붙인 최종 프롬프트가 견적·승인 카드·기록에 그대로 남는다
+    let req = input
+    let styleId: string | null = null
+    if (input.style) {
+      const st = this.ledger.style(input.style)
+      if (!st) throw new GatewayError('no_style', `'${input.style}' 스타일을 찾지 못했어요.`)
+      styleId = st.id
+      // 스타일 적용 전 원문도 남긴다(서비스에는 가지 않는 origin) — 다시 만들 때 문구가 두 번 붙지 않게
+      req = { ...input, prompt: composePrompt(st, input.prompt), origin: { ...(input.origin ?? {}), userPrompt: input.prompt ?? '' } }
+      if (st.negative && modelTakesNegative(input.model) && input.params?.negative_prompt == null) req.params = { ...(input.params ?? {}), negative_prompt: st.negative }
+    }
     const route = findRoute(this.routes, req.capability, req.model)
     const order: ProviderId[] = req.provider ? [req.provider] : route?.providers ?? []
     if (!order.length) throw new GatewayError('no_route', `'${req.capability}/${req.model}'을(를) 처리할 서비스가 라우팅 표에 없어요.`)
@@ -145,7 +174,8 @@ export class Gateway {
         origin: req.origin ?? null,
         estimate: est.cost,
         fallbackReason: skipped.length ? skipped.join(' · ') : null,
-        balanceBefore: bal
+        balanceBefore: bal,
+        styleId
       })
       this.emit(job)
       return job

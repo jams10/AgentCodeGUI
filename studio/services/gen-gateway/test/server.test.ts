@@ -5,6 +5,9 @@ import { Ledger } from '../src/ledger.ts'
 import { Gateway, type GatewayEvent } from '../src/gateway.ts'
 import { FakeProvider } from '../src/providers/fake.ts'
 import { startServer } from '../src/server.ts'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 async function boot() {
   const ledger = new Ledger(':memory:')
@@ -65,6 +68,60 @@ test('견적 → 승인 → 완료 대기 → 결과 URL', async () => {
     assert.match(u.url, /^https:\/\/fake\.local\//)
   } finally {
     await srv.close()
+  }
+})
+
+test('모델 카탈로그는 라우팅과 서비스 준비 상태를 함께 준다', async () => {
+  const ledger = new Ledger(':memory:')
+  const fake = new FakeProvider({ id: 'comfy' })
+  const gateway = new Gateway({ ledger, providers: [fake], routes: [{ capability: 'image', model: 'm', providers: ['comfy', 'tripo'] }] })
+  const srv = await startServer({ gateway, ledger, secrets: null, providers: [fake], infoFile: null, models: [{ id: 'm', label: 'M', capability: 'image', input: 'none', prompt: 'required', options: [] }] })
+  try {
+    const r = (await (await fetch(`http://127.0.0.1:${srv.port}/models`, { headers: { Authorization: `Bearer ${srv.token}` } })).json()) as { id: string; available: boolean; providers: { id: string; configured: boolean }[] }[]
+    assert.equal(r[0].id, 'm')
+    assert.equal(r[0].available, true)
+    assert.deepEqual(r[0].providers, [{ id: 'comfy', configured: true }, { id: 'tripo', configured: false }])
+  } finally {
+    await srv.close()
+  }
+})
+
+test('결과 목록과 결과 파일: 토큰은 ?t=로도 받고(결과 파일만), 로컬 보관본은 직접 흘려보낸다', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gw-content-'))
+  const ledger = new Ledger(':memory:')
+  const fake = new FakeProvider({ id: 'comfy' })
+  const gateway = new Gateway({ ledger, providers: [fake], routes: [{ capability: 'image', model: 'm', providers: ['comfy'] }], pollMs: 1 })
+  const srv = await startServer({ gateway, ledger, secrets: null, providers: [fake], infoFile: null, outputsDir: dir })
+  const base = `http://127.0.0.1:${srv.port}`
+  try {
+    const job = await gateway.quote({ capability: 'image', model: 'm', prompt: 'p' })
+    await gateway.approve(job.id)
+    await gateway.waitFor(job.id, 2000)
+    const list = (await (await fetch(`${base}/outputs`, { headers: { Authorization: `Bearer ${srv.token}` } })).json()) as { output: { id: string }; job: { prompt: string } }[]
+    assert.equal(list.length, 1)
+    assert.equal(list[0].job.prompt, 'p')
+    const id = list[0].output.id
+    // 원격 결과 → 지금 열 수 있는 URL로 302
+    const r = await fetch(`${base}/outputs/${id}/content?t=${srv.token}`, { redirect: 'manual' })
+    assert.equal(r.status, 302)
+    assert.match(r.headers.get('location') ?? '', /^https:\/\/fake\.local\//)
+    // 토큰 없이는 안 되고, ?t=는 결과 파일 외에는 통하지 않는다
+    assert.equal((await fetch(`${base}/outputs/${id}/content`, { redirect: 'manual' })).status, 401)
+    assert.equal((await fetch(`${base}/jobs?t=${srv.token}`)).status, 401)
+    // 로컬 보관본은 파일 내용을 그대로
+    mkdirSync(join(dir, job.id), { recursive: true })
+    writeFileSync(join(dir, job.id, 'x.png'), 'PNGDATA')
+    ledger.setStorageKey(id, `local:${job.id}/x.png`)
+    const local = await fetch(`${base}/outputs/${id}/content?t=${srv.token}`)
+    assert.equal(local.status, 200)
+    assert.equal(local.headers.get('content-type'), 'image/png')
+    assert.equal(await local.text(), 'PNGDATA')
+    // 보관 폴더 밖을 가리키는 저장 키는 거부
+    ledger.setStorageKey(id, 'local:../escape.png')
+    assert.equal((await fetch(`${base}/outputs/${id}/content?t=${srv.token}`)).status, 404)
+  } finally {
+    await srv.close()
+    rmSync(dir, { recursive: true, force: true })
   }
 })
 

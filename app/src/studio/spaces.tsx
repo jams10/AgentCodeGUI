@@ -45,7 +45,7 @@ export const SPACES: SpaceDef[] = [
     desc: '레퍼런스를 모으고 컨셉을 잡아 이미지 · 영상 · 3D로 만들어요.',
     does: ['레퍼런스 리서치와 무드보드', '프롬프트 작성과 반복 생성', '결과는 클라우드에 보관하고 썸네일로 탐색'],
     tools: ['ComfyCloud', 'Higgsfield', 'Tripo'],
-    light: '#ff9fe3', tint: '#e04fb7', dark: '#9c1f7c', ready: false, x: 710, y: 20
+    light: '#ff9fe3', tint: '#e04fb7', dark: '#9c1f7c', ready: true, x: 710, y: 20
   },
   {
     id: 'research', title: '리서치', en: 'Research', cta: '조사 시작',

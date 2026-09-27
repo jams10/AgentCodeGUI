@@ -11,7 +11,7 @@
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use tauri::{AppHandle, Manager};
 
 const MCP_NAME: &str = "agentstudio-gen";
@@ -32,7 +32,9 @@ fn gateway_dir(app: &AppHandle) -> Option<PathBuf> {
     let bundled = app.path().resource_dir().ok().map(|d| plain(d).join("gen-gateway"));
     // `..`을 넣으면 Node가 진입 파일의 실제 경로를 풀다 실패한다(Windows · 'lstat D:') — 부모를 직접 구한다
     let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().map(|repo| repo.join("studio").join("services").join("gen-gateway"));
-    [bundled, dev].into_iter().flatten().find(|d| d.join("src").join("cli.ts").is_file())
+    // 개발 빌드는 저장소 원본을 먼저 — target/debug의 리소스 사본은 Rust를 다시 빌드할 때만 갱신돼 낡는다
+    let order = if cfg!(debug_assertions) { [dev, bundled] } else { [bundled, dev] };
+    order.into_iter().flatten().find(|d| d.join("src").join("cli.ts").is_file())
 }
 
 fn log_line(msg: &str) {
@@ -44,6 +46,14 @@ fn log_line(msg: &str) {
         let _ = writeln!(f, "[{unix}] {msg}");
     }
 }
+
+/// 게이트웨이 실행에 필요한 경로 — 부팅 때 한 번 정해지고, 감시 스레드와 재시작이 같이 쓴다.
+struct Launch {
+    dir: PathBuf,
+    node: PathBuf,
+    home: PathBuf,
+}
+static LAUNCH: OnceLock<Launch> = OnceLock::new();
 
 /// 앱 부팅 때 한 번. 실패해도 앱은 그대로 뜬다(생성 기능만 "연결 안 됨"으로 보인다).
 pub fn start(app: &AppHandle) {
@@ -68,14 +78,20 @@ pub fn start(app: &AppHandle) {
         "env": { "CCG_HOME": home.to_string_lossy() }
     });
     std::env::set_var(ccg_engine::studio::ENV, def.to_string());
+    let _ = LAUNCH.set(Launch { dir, node, home });
+    spawn_gateway();
+    supervise();
+}
 
-    let _ = std::fs::create_dir_all(home.join("studio"));
-    let stderr = std::fs::OpenOptions::new().create(true).append(true).open(home.join("studio").join("gateway.log")).map(Stdio::from).unwrap_or_else(|_| Stdio::null());
-    let mut cmd = Command::new(&node);
+fn spawn_gateway() {
+    let Some(l) = LAUNCH.get() else { return };
+    let _ = std::fs::create_dir_all(l.home.join("studio"));
+    let stderr = std::fs::OpenOptions::new().create(true).append(true).open(l.home.join("studio").join("gateway.log")).map(Stdio::from).unwrap_or_else(|_| Stdio::null());
+    let mut cmd = Command::new(&l.node);
     cmd.arg("--no-warnings")
-        .arg(dir.join("src").join("cli.ts"))
+        .arg(l.dir.join("src").join("cli.ts"))
         .arg("serve")
-        .env("CCG_HOME", &home)
+        .env("CCG_HOME", &l.home)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(stderr);
@@ -86,7 +102,7 @@ pub fn start(app: &AppHandle) {
     }
     match cmd.spawn() {
         Ok(child) => {
-            log_line(&format!("게이트웨이 시작 pid={} node={} src={}", child.id(), node.display(), dir.display()));
+            log_line(&format!("게이트웨이 시작 pid={} node={} src={}", child.id(), l.node.display(), l.dir.display()));
             if let Ok(mut g) = GATEWAY.lock() {
                 *g = Some(child);
             }
@@ -95,8 +111,37 @@ pub fn start(app: &AppHandle) {
     }
 }
 
+/// 감시 — 게이트웨이가 예기치 않게 끝나면 다시 띄운다. 10분 안에 5번 넘게 죽으면 멈춘다(무한 재시작 방지).
+fn supervise() {
+    std::thread::spawn(|| {
+        let mut recent: Vec<std::time::Instant> = Vec::new();
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            let exited = match GATEWAY.lock() {
+                Ok(mut g) => match g.as_mut().map(|c| c.try_wait()) {
+                    Some(Ok(Some(status))) => {
+                        *g = None;
+                        Some(status)
+                    }
+                    _ => None,
+                },
+                Err(_) => None,
+            };
+            let Some(status) = exited else { continue };
+            recent.retain(|t| t.elapsed() < std::time::Duration::from_secs(600));
+            if recent.len() >= 5 {
+                log_line(&format!("게이트웨이가 계속 종료돼 다시 띄우지 않아요(마지막 상태 {status})"));
+                continue;
+            }
+            recent.push(std::time::Instant::now());
+            log_line(&format!("게이트웨이가 종료됐어요({status}) — 다시 띄워요"));
+            spawn_gateway();
+        }
+    });
+}
+
 /// 키를 바꾼 뒤 등 — 게이트웨이를 다시 띄운다(표준 입력을 닫으면 스스로 정리하고 끝난다).
-fn restart(app: &AppHandle) -> Value {
+fn restart(_app: &AppHandle) -> Value {
     if let Ok(mut g) = GATEWAY.lock() {
         if let Some(mut child) = g.take() {
             drop(child.stdin.take());
@@ -110,7 +155,7 @@ fn restart(app: &AppHandle) -> Value {
             let _ = child.kill();
         }
     }
-    start(app);
+    spawn_gateway();
     json!({ "ok": true })
 }
 

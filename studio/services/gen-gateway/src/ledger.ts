@@ -2,7 +2,7 @@
 // 이 프로세스(게이트웨이)만 쓴다. MCP 중계기·앱 화면은 게이트웨이 API를 거친다.
 import { DatabaseSync } from 'node:sqlite'
 import { randomUUID } from 'node:crypto'
-import type { Balance, Cost, JobRecord, JobState, OutputRecord, ProviderId, ProviderOutput } from './types.ts'
+import type { Balance, Cost, JobRecord, JobState, OutputRecord, ProviderId, ProviderOutput, StyleInput, StyleRecord } from './types.ts'
 
 const SCHEMA = `
 create table if not exists jobs (
@@ -46,6 +46,16 @@ create table if not exists balances (
   usd real
 );
 create index if not exists balances_provider on balances(provider, checked_at desc);
+create table if not exists styles (
+  id text primary key,
+  name text not null,
+  description text,
+  prompt_prefix text,
+  prompt_suffix text,
+  negative text,
+  created_at integer not null,
+  updated_at integer not null
+);
 `
 
 type Row = Record<string, unknown>
@@ -79,7 +89,21 @@ function toJob(r: Row): JobRecord {
     remoteId: (r.remote_id as string | null) ?? null,
     progress: (r.progress as number | null) ?? null,
     error: (r.error as string | null) ?? null,
-    balanceBefore: parse<Balance>(r.balance_before)
+    balanceBefore: parse<Balance>(r.balance_before),
+    styleId: (r.style_id as string | null) ?? null
+  }
+}
+
+function toStyle(r: Row): StyleRecord {
+  return {
+    id: r.id as string,
+    name: r.name as string,
+    description: (r.description as string | null) ?? null,
+    promptPrefix: (r.prompt_prefix as string | null) ?? null,
+    promptSuffix: (r.prompt_suffix as string | null) ?? null,
+    negative: (r.negative as string | null) ?? null,
+    createdAt: r.created_at as number,
+    updatedAt: r.updated_at as number
   }
 }
 
@@ -105,21 +129,24 @@ export class Ledger {
     this.now = now
     this.db.exec('pragma journal_mode = wal; pragma foreign_keys = on;')
     this.db.exec(SCHEMA)
+    // 이전 기록부에는 style_id가 없다 — 한 번만 열을 더한다
+    const cols = (this.db.prepare('pragma table_info(jobs)').all() as Row[]).map((c) => c.name)
+    if (!cols.includes('style_id')) this.db.exec('alter table jobs add column style_id text')
   }
 
   close(): void {
     this.db.close()
   }
 
-  createJob(j: Omit<JobRecord, 'id' | 'createdAt' | 'updatedAt' | 'cost' | 'remoteId' | 'progress' | 'error'>): JobRecord {
+  createJob(j: Omit<JobRecord, 'id' | 'createdAt' | 'updatedAt' | 'cost' | 'remoteId' | 'progress' | 'error' | 'styleId'> & { styleId?: string | null }): JobRecord {
     const id = randomUUID()
     const t = this.now()
     this.db
       .prepare(
-        `insert into jobs (id, created_at, updated_at, state, capability, model, provider, prompt, params, inputs, origin, estimate, fallback_reason, balance_before)
-         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `insert into jobs (id, created_at, updated_at, state, capability, model, provider, prompt, params, inputs, origin, estimate, fallback_reason, balance_before, style_id)
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(id, t, t, j.state, j.capability, j.model, j.provider, j.prompt, json(j.params), json(j.inputs), json(j.origin), json(j.estimate), j.fallbackReason, json(j.balanceBefore))
+      .run(id, t, t, j.state, j.capability, j.model, j.provider, j.prompt, json(j.params), json(j.inputs), json(j.origin), json(j.estimate), j.fallbackReason, json(j.balanceBefore), j.styleId ?? null)
     return this.job(id)!
   }
 
@@ -170,6 +197,21 @@ export class Ledger {
     return (this.db.prepare('select * from outputs where job_id = ? order by created_at').all(jobId) as Row[]).map(toOutput)
   }
 
+  /** 최근 결과(작업 정보 포함) — 갤러리용 */
+  recentOutputs(limit = 200): { output: OutputRecord; job: JobRecord }[] {
+    const n = Math.max(1, Math.min(1000, limit))
+    const rows = this.db
+      .prepare(
+        `select o.id as o_id, o.job_id, o.kind, o.url, o.mime, o.expires_at, o.storage_key, o.created_at as o_created, j.*
+         from outputs o join jobs j on j.id = o.job_id order by o.created_at desc limit ?`
+      )
+      .all(n) as Row[]
+    return rows.map((r) => ({
+      output: toOutput({ id: r.o_id, job_id: r.job_id, kind: r.kind, url: r.url, mime: r.mime, expires_at: r.expires_at, storage_key: r.storage_key, created_at: r.o_created }),
+      job: toJob(r)
+    }))
+  }
+
   setStorageKey(outputId: string, key: string): void {
     this.db.prepare('update outputs set storage_key = ? where id = ?').run(key, outputId)
   }
@@ -186,6 +228,48 @@ export class Ledger {
   lastBalance(provider: ProviderId): Balance | null {
     const r = this.db.prepare('select * from balances where provider = ? order by checked_at desc limit 1').get(provider) as Row | undefined
     return r ? { amount: r.amount as number, unit: r.unit as Balance['unit'], usd: (r.usd as number | null) ?? null, checkedAt: r.checked_at as number } : null
+  }
+
+  // ── 스타일 — 결과 분류 + 프롬프트 프리셋 ─────────────────
+  styles(): (StyleRecord & { count: number })[] {
+    const rows = this.db.prepare('select s.*, (select count(*) from jobs j where j.style_id = s.id) as n from styles s order by s.name collate nocase').all() as Row[]
+    return rows.map((r) => ({ ...toStyle(r), count: Number(r.n ?? 0) }))
+  }
+
+  /** id 또는 이름(대소문자 무시)으로 찾는다 — AI가 이름으로 부를 수 있게 */
+  style(idOrName: string): StyleRecord | null {
+    const r = (this.db.prepare('select * from styles where id = ?').get(idOrName) ?? this.db.prepare('select * from styles where lower(name) = lower(?)').get(idOrName.trim())) as Row | undefined
+    return r ? toStyle(r) : null
+  }
+
+  createStyle(s: StyleInput): StyleRecord {
+    const id = randomUUID()
+    const t = this.now()
+    this.db
+      .prepare('insert into styles (id, name, description, prompt_prefix, prompt_suffix, negative, created_at, updated_at) values (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(id, s.name.trim(), s.description ?? null, s.promptPrefix ?? null, s.promptSuffix ?? null, s.negative ?? null, t, t)
+    return this.style(id)!
+  }
+
+  updateStyle(id: string, s: Partial<StyleInput>): StyleRecord | null {
+    const cur = this.style(id)
+    if (!cur || cur.id !== id) return null
+    const next = { ...cur, ...s }
+    this.db
+      .prepare('update styles set name = ?, description = ?, prompt_prefix = ?, prompt_suffix = ?, negative = ?, updated_at = ? where id = ?')
+      .run(next.name.trim(), next.description ?? null, next.promptPrefix ?? null, next.promptSuffix ?? null, next.negative ?? null, this.now(), id)
+    return this.style(id)
+  }
+
+  /** 스타일을 지워도 결과는 남는다(분류만 풀린다) */
+  deleteStyle(id: string): boolean {
+    this.db.prepare('update jobs set style_id = null where style_id = ?').run(id)
+    return this.db.prepare('delete from styles where id = ?').run(id).changes > 0
+  }
+
+  setJobStyle(jobId: string, styleId: string | null): JobRecord | null {
+    this.db.prepare('update jobs set style_id = ?, updated_at = ? where id = ?').run(styleId, this.now(), jobId)
+    return this.job(jobId)
   }
 
   /** 기간 내 서비스별 실제 비용 합계(USD 환산 가능한 것만) — 사용량 패널 · 라이브러리용 */

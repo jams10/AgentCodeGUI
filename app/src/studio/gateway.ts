@@ -24,14 +24,15 @@ export interface Job {
   provider: ProviderId
   prompt: string | null
   params: Record<string, unknown> | null
-  inputs: { kind: string; url?: string; path?: string }[] | null
-  origin: { space?: string; source?: 'ui' | 'agent'; title?: string } | null
+  inputs: { kind: string; url?: string; path?: string; view?: string }[] | null
+  origin: { space?: string; source?: 'ui' | 'agent'; title?: string; userPrompt?: string } | null
   estimate: Cost | null
   cost: Cost | null
   fallbackReason: string | null
   progress: number | null
   error: string | null
   balanceBefore: Balance | null
+  styleId: string | null
 }
 export interface Output {
   id: string
@@ -53,8 +54,56 @@ export interface Spend {
   unknown: number
 }
 
+export interface ModelOption {
+  key: string
+  label: string
+  type: 'enum' | 'number' | 'bool' | 'text'
+  values?: (string | number)[]
+  default?: string | number | boolean
+  min?: number
+  max?: number
+}
+export interface ModelInfo {
+  id: string
+  label: string
+  capability: Job['capability']
+  input: 'none' | 'image' | 'images' | 'optional-image'
+  prompt: 'required' | 'optional' | 'none'
+  note?: string
+  options: ModelOption[]
+  providers: { id: ProviderId; configured: boolean }[]
+  available: boolean
+}
+export interface LibraryItem {
+  output: Output & { mime: string | null; createdAt: number }
+  job: Job
+}
+export interface QuoteRequest {
+  capability: Job['capability']
+  model: string
+  prompt?: string
+  inputs?: { kind: 'image'; path?: string; url?: string; view?: string }[]
+  params?: Record<string, unknown>
+  origin?: Job['origin']
+  style?: string
+}
+export interface Style {
+  id: string
+  name: string
+  description: string | null
+  promptPrefix: string | null
+  promptSuffix: string | null
+  negative: string | null
+  count: number
+}
+export type StyleInput = Pick<Style, 'name' | 'description' | 'promptPrefix' | 'promptSuffix' | 'negative'>
+
 export interface GatewayState {
   status: 'connecting' | 'ready' | 'offline'
+  /** 결과가 새로 생길 때마다 올라간다 — 갤러리가 다시 읽는 신호 */
+  outputsVersion: number
+  /** 스타일이 바뀔 때마다 올라간다 */
+  stylesVersion: number
   jobs: Record<string, Job>
   outputs: Record<string, Output[]>
   providers: ProviderInfo[]
@@ -63,7 +112,7 @@ export interface GatewayState {
   checkedAt: number | null
 }
 
-let state: GatewayState = { status: 'connecting', jobs: {}, outputs: {}, providers: [], balances: {}, spend: [], checkedAt: null }
+let state: GatewayState = { status: 'connecting', outputsVersion: 0, stylesVersion: 0, jobs: {}, outputs: {}, providers: [], balances: {}, spend: [], checkedAt: null }
 const subs = new Set<() => void>()
 const set = (patch: Partial<GatewayState>): void => {
   state = { ...state, ...patch }
@@ -139,11 +188,15 @@ async function streamLoop(): Promise<void> {
           buf = buf.slice(cut + 2)
           const line = chunk.split('\n').find((l) => l.startsWith('data: '))
           if (!line) continue
-          const e = JSON.parse(line.slice(6)) as { type: 'job'; job: Job; outputs?: Output[] } | { type: 'balance'; provider: ProviderId; balance: Balance }
+          const e = JSON.parse(line.slice(6)) as { type: 'job'; job: Job; outputs?: Output[] } | { type: 'balance'; provider: ProviderId; balance: Balance } | { type: 'styles' }
           if (e.type === 'job') {
             upsert(e.job, e.outputs)
-            if (e.job.state === 'succeeded') void gw<Spend[]>(`/spend?since=${Date.now() - 30 * 24 * 60 * 60 * 1000}`).then((spend) => set({ spend }))
-          } else set({ balances: { ...state.balances, [e.provider]: e.balance } })
+            if (e.job.state === 'succeeded') {
+              set({ outputsVersion: state.outputsVersion + 1 })
+              void gw<Spend[]>(`/spend?since=${Date.now() - 30 * 24 * 60 * 60 * 1000}`).then((spend) => set({ spend }))
+            }
+          } else if (e.type === 'styles') set({ stylesVersion: state.stylesVersion + 1 })
+          else set({ balances: { ...state.balances, [e.provider]: e.balance } })
         }
       }
     } catch {
@@ -177,6 +230,24 @@ export const reject = (id: string): Promise<Job> => gw<Job>(`/jobs/${id}/reject`
 export const cancel = (id: string): Promise<Job> => gw<Job>(`/jobs/${id}/cancel`, { method: 'POST' }).then((j) => (upsert(j), j))
 export const outputUrl = (id: string): Promise<{ url: string; localPath?: string; stored: boolean }> => gw(`/outputs/${id}/url`)
 export const refreshBalances = (): Promise<void> => refreshAll(true)
+export const listStyles = (): Promise<Style[]> => gw<Style[]>('/styles')
+export const createStyle = (s: StyleInput): Promise<Style> => gw<Style>('/styles', { body: s })
+export const updateStyle = (id: string, s: Partial<StyleInput>): Promise<Style> => gw<Style>(`/styles/${id}`, { body: s })
+export const deleteStyle = (id: string): Promise<unknown> => gw(`/styles/${id}/delete`, { body: {} })
+export const setJobStyle = (jobId: string, styleId: string | null): Promise<Job> => gw<Job>(`/jobs/${jobId}/style`, { body: { styleId } }).then((j) => (upsert(j), j))
+/** 스타일 앞 문구 + 프롬프트 + 뒤 문구 — 게이트웨이 composePrompt와 같은 규칙(화면 미리보기용) */
+export function composePrompt(st: Pick<Style, 'promptPrefix' | 'promptSuffix'> | null | undefined, prompt: string): string {
+  return [st?.promptPrefix, prompt, st?.promptSuffix].map((p) => p?.trim()).filter((p): p is string => !!p).join(', ')
+}
+export const listModels = (): Promise<ModelInfo[]> => gw<ModelInfo[]>('/models')
+export const listLibrary = (limit = 300): Promise<LibraryItem[]> => gw<LibraryItem[]>(`/outputs?limit=${limit}`)
+/** 견적 → 승인 대기 작업. 승인은 승인 센터 카드에서만 한다. */
+export const quote = (req: QuoteRequest): Promise<Job> => gw<Job>('/jobs', { body: req }).then((j) => (upsert(j), j))
+
+/** <img>/<video>에 바로 넣을 결과 주소(게이트웨이가 보관본을 흘리거나 지금 열 수 있는 링크로 넘겨 준다) */
+export function contentUrl(outputId: string): string | null {
+  return info ? `http://127.0.0.1:${info.port}/outputs/${encodeURIComponent(outputId)}/content?t=${info.token}` : null
+}
 
 // ── 표시 도우미 ───────────────────────────────────────
 export const PROVIDER_NAME: Record<ProviderId, string> = { comfy: 'ComfyCloud', tripo: 'Tripo', higgsfield: 'Higgsfield', fake: '테스트(과금 없음)' }

@@ -8,6 +8,7 @@ import App from '../App'
 import { getPref, setPref } from '../lib/prefs'
 import { SIDEBAR_AUTOHIDE } from '../lib/sidebarAutohide'
 import { ApprovalCenter } from './ApprovalCenter'
+import { ArtSpace } from './ArtSpace'
 import { Launcher } from './Launcher'
 import { SPACES, SpaceIcon, type SpaceId } from './spaces'
 import { UsageButton, UsagePanel, useStudioUsage } from './usage'
@@ -80,6 +81,14 @@ export function StudioRoot(): ReactElement {
   // 채팅에 한 번이라도 들어간 뒤로는 App을 계속 살려 둔다
   const [appMounted, setAppMounted] = useState(space === 'chat')
 
+  // 공간별 팔레트 — studio.css의 html.studio-theme[data-space="…"]. 포털로 body에 붙는 팝오버도 같은 색을 받는다.
+  useEffect(() => {
+    document.documentElement.dataset.space = space
+  }, [space])
+
+  // 아트 어시스턴트가 원본 채팅을 빌려 쓸 때 — App을 (아직 안 떴다면) 띄운다
+  const ensureApp = useCallback(() => setAppMounted(true), [])
+
   const go = (next: Space): void => {
     setSpace(next)
     setPref(SPACE_PREF, next)
@@ -94,6 +103,7 @@ export function StudioRoot(): ReactElement {
           <App />
         </div>
       )}
+      {space === 'art' && <ArtSpace ensureApp={ensureApp} />}
       {space === 'home' && <Launcher onStart={(id) => go(id)} />}
       <ApprovalCenter />
     </div>

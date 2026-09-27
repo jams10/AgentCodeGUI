@@ -6,6 +6,7 @@
 //  - 작업별 비용 필드가 없다 → 견적 null, 실제 비용은 게이트웨이가 잔액 차이로 계산한다.
 //  - 결과 URL(/api/v2/assets/{id}/content)은 키가 있어야 열리고 약 6시간짜리 서명 URL로 302 된다 → resolveOutput.
 //  - 잔액 단위는 크레딧. 서버 값은 센트이고 Cloud 배지와 같은 211 크레딧/USD로 환산한다(이전 앱에서 실측한 규칙).
+import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { basename, extname } from 'node:path'
 import { requestJson, num, type FetchLike } from '../http.ts'
@@ -89,8 +90,24 @@ export class ComfyProvider implements Provider {
   }
 
   supports(req: GenerationRequest): boolean {
+    if (req.model !== 'comfy-workflow') return false
     const wf = req.params?.workflow
-    return req.model === 'comfy-workflow' && !!wf && typeof wf === 'object' && !Array.isArray(wf)
+    if (wf && typeof wf === 'object' && !Array.isArray(wf)) return true
+    const p = req.params?.workflowPath
+    return typeof p === 'string' && p.toLowerCase().endsWith('.json') && existsSync(p)
+  }
+
+  /** params.workflow(객체) 또는 params.workflowPath(API 형식 JSON 파일) */
+  private async workflowOf(req: GenerationRequest): Promise<Record<string, unknown>> {
+    const wf = req.params?.workflow
+    if (wf && typeof wf === 'object' && !Array.isArray(wf)) return wf as Record<string, unknown>
+    const path = req.params?.workflowPath
+    if (typeof path !== 'string') throw new Error('워크플로(params.workflow 또는 workflowPath)가 필요해요.')
+    const parsed = JSON.parse(await readFile(path, 'utf8')) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('워크플로 파일이 JSON 객체가 아니에요.')
+    // UI 형식(nodes/links 배열)은 서비스가 거절한다 — 먼저 알려 준다
+    if (Array.isArray((parsed as Record<string, unknown>).nodes)) throw new Error('UI 형식 워크플로예요. ComfyUI에서 "Export (API)"로 저장한 파일을 써 주세요.')
+    return parsed as Record<string, unknown>
   }
 
   async balance(): Promise<Balance | null> {
@@ -119,13 +136,14 @@ export class ComfyProvider implements Provider {
   }
 
   async submit(req: GenerationRequest): Promise<{ remoteId: string }> {
-    if (!this.supports(req)) throw new Error('params.workflow(API 형식 워크플로 JSON)가 필요해요.')
+    if (!this.supports(req)) throw new Error('params.workflow 또는 workflowPath(API 형식 워크플로 JSON)가 필요해요.')
+    const source = await this.workflowOf(req)
     const assets: string[] = []
     for (const i of req.inputs ?? []) {
       if (!i.path) throw new Error('ComfyCloud 입력은 로컬 파일 경로로 주세요(업로드 후 $INPUT_n으로 참조).')
       assets.push(await this.uploadAsset(i.path))
     }
-    const workflow = substituteInputs(req.params!.workflow, assets)
+    const workflow = substituteInputs(source, assets)
     const job = await requestJson<V2Job>(this.fetchImpl, `${BASE}/api/v2/jobs`, {
       headers: { Authorization: `Bearer ${this.k()}`, 'Idempotency-Key': crypto.randomUUID() },
       body: { workflow, extra_data: { api_key_comfy_org: this.k() } }

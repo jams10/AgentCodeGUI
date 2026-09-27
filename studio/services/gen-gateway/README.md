@@ -71,6 +71,19 @@ node studio/services/gen-gateway/src/cli.ts serve                 # 게이트웨
 | `POST /jobs/:id/approve` · `reject` · `cancel` | 승인은 앱 UI에서만 부른다 |
 | `GET /jobs` · `/jobs/:id` · `/jobs/:id/wait?timeout=` | 조회 · 완료 대기 |
 | `GET /outputs/:id/url` | 지금 열 수 있는 결과 URL(보관본 우선) |
+| `GET /outputs/:id/content?t=<token>` | `<img>`·`<video>`용 — 보관본은 직접 흘리고, 원격은 지금 열 수 있는 링크로 302. `?t=`는 이 경로에서만 받는다 |
+| `GET /outputs?limit=` | 최근 결과(작업 정보 포함) — 아트 갤러리 |
+| `GET /models` | 모델 카탈로그(`src/models.ts`) + 라우팅 순서와 서비스별 키 준비 상태 |
+| `GET /styles` · `POST /styles` · `POST /styles/:id` · `POST /styles/:id/delete` | 스타일(분류 + 프롬프트 프리셋). 지워도 결과는 남고 분류만 풀린다 |
+| `POST /jobs/:id/style` | 결과의 스타일 분류 바꾸기 (`{ styleId \| null }`) |
+
+## 스타일
+
+결과를 모아 보는 분류이자, 프롬프트 프리셋이다. 요청에 `style`(id 또는 이름)을 주면
+`앞 문구, 프롬프트, 뒤 문구`로 합친 최종 프롬프트가 견적 · 승인 카드 · 기록 · 제출에 그대로 쓰이고,
+스타일 적용 전 원문은 `origin.userPrompt`에 남는다(다시 만들 때 문구가 두 번 붙지 않게).
+네거티브 문구는 카탈로그에 `negative_prompt` 옵션이 있는 모델에만 넣는다. AI는 MCP `list_styles`로 목록을 보고
+`generate`의 `style`로 적용한다.
 | `GET /balances` · `/providers` · `/spend?since=` | 잔액 · 연결 상태 · 사용액 |
 | `GET /events` | 작업 상태 변화 스트림(SSE) |
 
