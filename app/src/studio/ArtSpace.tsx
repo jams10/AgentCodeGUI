@@ -532,6 +532,7 @@ export function ArtSpace({ ensureApp }: { ensureApp: () => void }): ReactElement
     if (g.status !== 'ready') return
     listModels().then(setModels).catch(() => {})
   }, [g.status, configuredKey])
+  // 목록 새로고침 — 결과 · 스타일이 바뀌면 이벤트로, 상세 보기를 열 때도(기록이 나중에 보강될 수 있어서) 다시 받는다
   const reload = useCallback(() => {
     listLibrary().then(setItems).catch(() => {})
     listStyles().then(setStyles).catch(() => {})
@@ -617,7 +618,7 @@ export function ArtSpace({ ensureApp }: { ensureApp: () => void }): ReactElement
             {shown.map((e) => {
               const st = e.job.styleId ? byStyle.get(e.job.styleId) : undefined
               return (
-                <button key={e.job.id} type="button" className="st-art-tile" onClick={() => setOpen(e.job.id)} aria-label={`${CAP_NAME[e.job.capability]} — ${e.job.prompt ?? e.job.model}`}>
+                <button key={e.job.id} type="button" className="st-art-tile" onClick={() => (setOpen(e.job.id), reload())} aria-label={`${CAP_NAME[e.job.capability]} — ${e.job.prompt ?? e.job.model}`}>
                   <div className="st-art-thumb">
                     <Media o={e.preview ?? e.outputs[0]} />
                     <span className="st-art-badge">{KIND_LABEL[e.job.capability]}</span>
