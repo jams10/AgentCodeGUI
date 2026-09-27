@@ -1,13 +1,32 @@
 // 생성 승인 센터 — 화면 오른쪽 아래. 어느 공간에 있든(홈 포함) 떠 있다.
 //  - 승인 대기: 프롬프트 · 서비스 · 옵션 · 예상 비용 · 대체 이유를 보여 주고 승인/거절을 받는다.
 //    비용이 드는 제출은 여기서 누른 승인으로만 일어난다(AI에게는 승인 도구가 없다).
+//    「옵션 바꾸기」로 해상도 · 길이 · 비율 등을 바로 고친다 — 바꿀 때마다 같은 서비스로 무료 견적을 다시 받고,
+//    서비스가 거절한 값은 이유와 함께 알리고 원래 값을 지킨다. 작업 id는 그대로라 기다리던 AI도 끊기지 않는다.
 //  - 진행 중: 진행률과 취소.
 //  - 끝남: 몇 초간 알림(완료 · 실패)을 띄운다.
 import { useEffect, useRef, useState, type ReactElement } from 'react'
-import { approve, cancel, CAP_NAME, fmtCost, outputUrl, PROVIDER_NAME, reject, useGateway, type Job } from './gateway'
+import { approve, cancel, CAP_NAME, fmtCost, listModels, outputUrl, PROVIDER_NAME, reject, revise, useGateway, type Job, type ModelInfo, type ModelOption } from './gateway'
+import { guessOptions, OptionInput } from './options'
 
 const TOAST_MS = 7000
-const HIDDEN_PARAMS = new Set(['workflow', 'prompt'])
+const HIDDEN_PARAMS = new Set(['workflow', 'prompt', 'workflowPath'])
+
+// 모델 카탈로그 — 옵션 입력칸을 그리는 데 쓴다. 카드가 처음 뜰 때 한 번 받아 둔다.
+let catalog: ModelInfo[] | null = null
+function useCatalog(): ModelInfo[] {
+  const [list, setList] = useState<ModelInfo[]>(catalog ?? [])
+  useEffect(() => {
+    if (catalog) return
+    listModels()
+      .then((m) => {
+        catalog = m
+        setList(m)
+      })
+      .catch(() => {})
+  }, [])
+  return list
+}
 
 function paramChips(j: Job): string[] {
   const out: string[] = []
@@ -24,8 +43,11 @@ function paramChips(j: Job): string[] {
 }
 
 function PendingCard({ job }: { job: Job }): ReactElement {
-  const [busy, setBusy] = useState<'approve' | 'reject' | null>(null)
+  const [busy, setBusy] = useState<'approve' | 'reject' | 'revise' | null>(null)
   const [err, setErr] = useState<string | null>(null)
+  const [editing, setEditing] = useState(false)
+  const [promptEdit, setPromptEdit] = useState<string | null>(null)
+  const models = useCatalog()
   const act = (kind: 'approve' | 'reject'): void => {
     setBusy(kind)
     setErr(null)
@@ -34,8 +56,26 @@ function PendingCard({ job }: { job: Job }): ReactElement {
       setBusy(null)
     })
   }
+  const change = (patch: { prompt?: string; params?: Record<string, unknown> }): void => {
+    setBusy('revise')
+    setErr(null)
+    revise(job.id, patch)
+      .then(() => setPromptEdit(null))
+      .catch((e: Error) => setErr(e.message))
+      .finally(() => setBusy(null))
+  }
+  const params = job.params ?? {}
+  const setParam = (key: string, v: unknown): void => {
+    const next = { ...params }
+    if (v === undefined || v === '') delete next[key]
+    else next[key] = v
+    change({ params: next })
+  }
+  const model = models.find((m) => m.id === job.model)
+  const opts: ModelOption[] = model ? model.options.filter((o) => !HIDDEN_PARAMS.has(o.key)) : guessOptions(params, HIDDEN_PARAMS)
   const chips = paramChips(job)
   const who = job.origin?.source === 'agent' ? 'AI 요청' : '직접 요청'
+  const canEditPrompt = !job.styleId && job.prompt != null
   return (
     <section className="st-gen-card" role="dialog" aria-label={`${CAP_NAME[job.capability]} 승인`}>
       <header className="st-gen-h">
@@ -43,19 +83,56 @@ function PendingCard({ job }: { job: Job }): ReactElement {
         <span className="st-pill st-gen-prov">{PROVIDER_NAME[job.provider] ?? job.provider}</span>
       </header>
       <div className="st-gen-meta">
-        {who} · {job.origin?.title || job.model}
+        {who} · {model?.label ?? job.model}
+        {job.origin?.title ? ` · ${job.origin.title}` : ''}
       </div>
-      {job.prompt && <div className="st-gen-prompt">{job.prompt}</div>}
-      {chips.length > 0 && (
-        <div className="st-gen-chips">
-          {chips.map((c) => (
-            <span key={c}>{c}</span>
+      {promptEdit != null ? (
+        <div className="st-gen-pedit">
+          <textarea aria-label="프롬프트" rows={5} value={promptEdit} onChange={(e) => setPromptEdit(e.target.value)} />
+          <div className="st-gen-row">
+            <button type="button" className="st-pill" disabled={busy != null || !promptEdit.trim() || promptEdit.trim() === job.prompt} onClick={() => change({ prompt: promptEdit })}>
+              {busy === 'revise' ? '다시 견적 받는 중…' : '프롬프트 바꾸기'}
+            </button>
+            <button type="button" className="st-ghost" disabled={busy != null} onClick={() => setPromptEdit(null)}>
+              취소
+            </button>
+          </div>
+        </div>
+      ) : (
+        job.prompt && <div className="st-gen-prompt">{job.prompt}</div>
+      )}
+      {editing && opts.length > 0 ? (
+        <div className="st-gen-opts">
+          {opts.map((o) => (
+            <OptionInput key={o.key} o={o} value={params[o.key] ?? o.default} disabled={busy != null} onCommit={(v) => setParam(o.key, v)} />
           ))}
+        </div>
+      ) : (
+        chips.length > 0 && (
+          <div className="st-gen-chips">
+            {chips.map((c) => (
+              <span key={c}>{c}</span>
+            ))}
+          </div>
+        )
+      )}
+      {(opts.length > 0 || canEditPrompt) && promptEdit == null && (
+        <div className="st-gen-edit">
+          {opts.length > 0 && (
+            <button type="button" className="st-ghost" aria-expanded={editing} onClick={() => setEditing((x) => !x)}>
+              {editing ? '옵션 접기' : '옵션 바꾸기'}
+            </button>
+          )}
+          {canEditPrompt && (
+            <button type="button" className="st-ghost" onClick={() => setPromptEdit(job.prompt ?? '')}>
+              프롬프트 고치기
+            </button>
+          )}
         </div>
       )}
       <div className="st-gen-cost">
         <span>예상 비용</span>
-        <b>{job.estimate ? fmtCost(job.estimate) : '알 수 없음 — 실행 후 잔액 차이로 기록'}</b>
+        <b>{busy === 'revise' ? '다시 계산하는 중…' : job.estimate ? fmtCost(job.estimate) : '알 수 없음 — 실행 후 잔액 차이로 기록'}</b>
       </div>
       {job.balanceBefore && (
         <div className="st-gen-row">
@@ -66,10 +143,10 @@ function PendingCard({ job }: { job: Job }): ReactElement {
       {job.fallbackReason && <div className="st-gen-warn">다른 서비스로 대체됨 — {job.fallbackReason}</div>}
       {err && <div className="st-gen-warn">{err}</div>}
       <footer className="st-gen-actions">
-        <button type="button" className="st-gloss st-gen-go" disabled={busy != null} onClick={() => act('approve')}>
+        <button type="button" className="st-gloss st-gen-go" disabled={busy != null || promptEdit != null} onClick={() => act('approve')}>
           {busy === 'approve' ? '제출 중…' : '생성하기'}
         </button>
-        <button type="button" className="st-ghost" disabled={busy != null} onClick={() => act('reject')}>
+        <button type="button" className="st-ghost" disabled={busy === 'approve' || busy === 'reject'} onClick={() => act('reject')}>
           거절
         </button>
       </footer>

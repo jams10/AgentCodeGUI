@@ -19,7 +19,11 @@ const TOOLS = [
       '외부 서비스(ComfyCloud · Tripo · Higgsfield)로 이미지·영상·3D를 생성한다. 비용이 드는 작업이라 사용자가 앱에서 승인해야 실행되며, 이 도구는 승인·완료까지 기다렸다가 결과(또는 거절)를 돌려준다. 거절되면 같은 요청을 다시 보내지 말고 사용자에게 무엇을 바꿀지 물어라.',
       '모델 고르기: 먼저 list_models로 검증된 모델과 옵션 값을 본다. 사용자가 목록에 없는 Higgsfield 모델(예: Kling O3, Wan, MiniMax, Seedance 2.5, Recraft, Ideogram)을 원하면',
       "model에 'hf/<API 경로>'를 넣는다. 경로와 옵션 이름·값은 기억에 의존하지 말고 공식 문서(https://docs.higgsfield.ai/docs/models)의 해당 모델 페이지에서 확인한다.",
-      '제출 전에 무료 견적을 먼저 받으므로, 옵션 값이 틀리면 비용 없이 "옵션 값이 맞지 않아요 — …" 오류가 돌아온다. 그 메시지에 나온 허용 값으로 고쳐 다시 요청하라.'
+      '제출 전에 무료 견적을 먼저 받으므로, 옵션 값이 틀리면 비용 없이 "옵션 값이 맞지 않아요 — …" 오류가 돌아온다. 그 메시지에 나온 허용 값으로 고쳐 다시 요청하라.',
+      '대화 방식: 사용자가 만들고 싶은 것을 말하면, 결과를 크게 바꾸는데 정해지지 않은 것(예: 종류 · 비율 · 길이 · 스타일)만 짧게 묻는다.',
+      '선택지 질문 도구(AskUserQuestion 등)가 있으면 그걸로, 한 번에 한 질문 · 선택지 2~4개로 묻는다. 요청이 충분히 분명하면 묻지 말고 바로 generate를 부른다.',
+      '해상도 · 모델 버전 같은 세부 옵션은 사용자가 승인 카드에서 직접 바꿀 수 있으니 일일이 묻지 말고 알맞은 값을 골라라. 프롬프트는 서비스에 맞게 영어로 자세히 쓴다.',
+      '결과에는 사용자가 카드에서 고친 최종 옵션 · 프롬프트가 담긴다 — 다음 요청에 반영하라.'
     ].join(' '),
     inputSchema: {
       type: 'object',
@@ -82,6 +86,9 @@ function summary(job: JobRecord, outputs: OutputRecord[] = []): string {
     `작업 ${job.id} — ${job.state}`,
     `서비스: ${job.provider}${job.fallbackReason ? ` (대체: ${job.fallbackReason})` : ''}`,
     cost ? `비용: ${cost.unit === 'usd' ? '$' + cost.amount.toFixed(2) : Math.round(cost.amount) + ' 크레딧'}${job.cost ? '' : ' (예상)'}` : '비용: 알 수 없음',
+    `모델: ${job.model}`,
+    job.params && Object.keys(job.params).length ? `옵션: ${JSON.stringify(Object.fromEntries(Object.entries(job.params).filter(([k]) => k !== 'workflow')))}` : '',
+    job.prompt ? `프롬프트: ${job.prompt}` : '',
     job.error ? `오류: ${job.error}` : '',
     ...outputs.map((o) => `결과(${o.kind}): output_id=${o.id}`)
   ]

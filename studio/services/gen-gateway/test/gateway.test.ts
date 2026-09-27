@@ -6,7 +6,7 @@ import { Ledger } from '../src/ledger.ts'
 import { Gateway, GatewayError } from '../src/gateway.ts'
 import { FakeProvider } from '../src/providers/fake.ts'
 import { findRoute, type Route } from '../src/routes.ts'
-import type { GenerationRequest } from '../src/types.ts'
+import type { Estimate, GenerationRequest } from '../src/types.ts'
 
 const req: GenerationRequest = { capability: 'image', model: 'm', prompt: 'a chrome sphere', origin: { space: 'chat', source: 'agent' } }
 
@@ -151,4 +151,25 @@ test('라우팅: 정확한 이름 > 접두(hf/*) > *', () => {
   assert.deepEqual(findRoute(routes, 'video', 'hf/bytedance/x')?.providers, ['higgsfield'])
   assert.deepEqual(findRoute(routes, 'video', 'other')?.providers, ['comfy'])
   assert.equal(findRoute(routes, 'image', 'x'), null)
+})
+
+test('승인 전 고치기: 옵션을 바꾸면 같은 작업 id로 다시 견적, 틀린 값은 거절하고 원래 값을 지킨다', async () => {
+  const p = new FakeProvider({ id: 'comfy' })
+  // 장수에 비례하는 견적, 'bad' 옵션은 서비스가 거절
+  ;(p as unknown as { estimate: (r: GenerationRequest) => Promise<Estimate> }).estimate = async (r) =>
+    r.params?.bad ? { cost: null, invalid: "옵션 값이 맞지 않아요 — bad: not allowed" } : { cost: { amount: 10 * Number(r.params?.n ?? 1), unit: 'credits' as const, usd: 0.1 * Number(r.params?.n ?? 1) } }
+  const { gw, ledger } = setup([p])
+  const job = await gw.quote({ ...req, params: { n: 1 } })
+  const next = await gw.revise(job.id, { params: { n: 3 } })
+  assert.equal(next.id, job.id)
+  assert.deepEqual(next.params, { n: 3 })
+  assert.equal(next.estimate?.amount, 30)
+  await assert.rejects(gw.revise(job.id, { params: { n: 3, bad: true } }), (e: unknown) => e instanceof GatewayError && e.code === 'bad_request')
+  assert.deepEqual(ledger.job(job.id)?.params, { n: 3 }) // 거절된 변경은 남지 않는다
+  const edited = await gw.revise(job.id, { prompt: '  a glass sphere ' })
+  assert.equal(edited.prompt, 'a glass sphere')
+  // 승인 뒤에는 고칠 수 없다
+  await gw.approve(job.id)
+  await assert.rejects(gw.revise(job.id, { params: { n: 1 } }), (e: unknown) => e instanceof GatewayError && e.code === 'bad_state')
+  assert.equal(p.submitted[0].params?.n, 3) // 고친 옵션으로 제출된다
 })

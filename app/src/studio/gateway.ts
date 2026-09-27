@@ -230,6 +230,8 @@ export function useGateway(): GatewayState {
 // ── 동작 ──────────────────────────────────────────────
 export const approve = (id: string): Promise<Job> => gw<Job>(`/jobs/${id}/approve`, { method: 'POST' }).then((j) => (upsert(j), j))
 export const reject = (id: string): Promise<Job> => gw<Job>(`/jobs/${id}/reject`, { method: 'POST' }).then((j) => (upsert(j), j))
+/** 승인 전 고치기 — 옵션 · 프롬프트를 바꾸고 같은 서비스로 다시 견적(무료). 틀린 값이면 서비스가 거절한 이유가 오류로 온다. */
+export const revise = (id: string, patch: { prompt?: string; params?: Record<string, unknown> }): Promise<Job> => gw<Job>(`/jobs/${id}/revise`, { body: patch }).then((j) => (upsert(j), j))
 export const cancel = (id: string): Promise<Job> => gw<Job>(`/jobs/${id}/cancel`, { method: 'POST' }).then((j) => (upsert(j), j))
 export const outputUrl = (id: string): Promise<{ url: string; localPath?: string; stored: boolean }> => gw(`/outputs/${id}/url`)
 export const refreshBalances = (): Promise<void> => refreshAll(true)

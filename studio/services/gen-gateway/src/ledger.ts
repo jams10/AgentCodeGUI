@@ -186,6 +186,19 @@ export class Ledger {
     return j
   }
 
+  /** 승인 전 작업의 요청 내용 고치기(승인 카드에서 옵션 · 프롬프트 변경) — 새 견적과 함께 */
+  revise(id: string, patch: { prompt?: string | null; params?: Record<string, unknown> | null; estimate: JobRecord['estimate'] }): JobRecord {
+    const sets: string[] = ['updated_at = ?', 'estimate = ?']
+    const args: (string | number | null)[] = [this.now(), json(patch.estimate)]
+    if (patch.prompt !== undefined) (sets.push('prompt = ?'), args.push(patch.prompt))
+    if (patch.params !== undefined) (sets.push('params = ?'), args.push(json(patch.params)))
+    args.push(id)
+    this.db.prepare(`update jobs set ${sets.join(', ')} where id = ?`).run(...args)
+    const j = this.job(id)
+    if (!j) throw new Error(`job not found: ${id}`)
+    return j
+  }
+
   addOutputs(jobId: string, outs: ProviderOutput[]): OutputRecord[] {
     const t = this.now()
     const stmt = this.db.prepare('insert into outputs (id, job_id, kind, url, mime, expires_at, storage_key, created_at) values (?, ?, ?, ?, ?, ?, null, ?)')

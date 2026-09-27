@@ -278,6 +278,11 @@ export async function startServer(d: ServerDeps): Promise<RunningServer> {
           return send(res, 200, { job, outputs: d.ledger.outputs(id) })
         }
         if (req.method === 'POST' && seg[2] === 'approve') return send(res, 200, await gw.approve(id))
+        if (req.method === 'POST' && seg[2] === 'revise') {
+          const b = ((await readBody(req)) ?? {}) as { prompt?: unknown; params?: unknown }
+          const params = b.params && typeof b.params === 'object' && !Array.isArray(b.params) ? (b.params as Record<string, unknown>) : undefined
+          return send(res, 200, await gw.revise(id, { prompt: typeof b.prompt === 'string' ? b.prompt : undefined, params }))
+        }
         if (req.method === 'POST' && seg[2] === 'reject') return send(res, 200, gw.reject(id))
         if (req.method === 'POST' && seg[2] === 'cancel') return send(res, 200, await gw.cancel(id))
       }

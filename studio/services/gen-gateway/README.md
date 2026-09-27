@@ -61,7 +61,7 @@ node studio/services/gen-gateway/src/cli.ts serve                 # 게이트웨
 | `hf/<모델 경로>` | image · video | Higgsfield 카탈로그의 다른 모델 |
 
 **모델 목록은 일부러 작게 둔다.** Higgsfield에는 모델 목록 API가 없고 모델마다 옵션 형식이 달라서, 검증한 모델만 카탈로그에 둔다.
-- 앱 만들기 패널은 **서비스만** 고른다 — 서비스마다 기본 모델이 있고 입력 이미지 수로 모델이 정해진다(`app/src/studio/ArtSpace.tsx`의 `SERVICES_BY_CAP`).
+- 앱에는 만들기 폼이 없다 — 어시스턴트(채팅)에게 말로 요청하고, 승인 카드에서 옵션 · 프롬프트를 고친 뒤 승인한다. 상세 보기의 「다시 생성」은 같은 요청으로 카드를 띄운다.
 - 그 밖의 모델은 어시스턴트(AI)가 `hf/<API 경로>`로 부른다. MCP `list_models`로 검증된 모델을 보고, 없는 모델은 공식 문서에서 경로 · 옵션을 확인한다.
 - 옵션 값이 틀리면 무료 견적 단계에서 서비스가 거절하고, 게이트웨이가 작업을 만들지 않은 채 허용 값이 담긴 오류를 돌려준다 — AI가 고쳐서 다시 요청한다.
 
@@ -74,6 +74,7 @@ node studio/services/gen-gateway/src/cli.ts serve                 # 게이트웨
 | `GET /health` | 인증 없음 |
 | `POST /jobs` | 견적 → 승인 대기 작업 |
 | `POST /jobs/:id/approve` · `reject` · `cancel` | 승인은 앱 UI에서만 부른다 |
+| `POST /jobs/:id/revise` | 승인 전 고치기 `{ params?, prompt? }` — 같은 서비스로 무료 재견적, 작업 id 유지. 틀린 값은 400(원래 값 유지). 스타일이 붙은 작업은 프롬프트를 고치지 않는다 |
 | `GET /jobs` · `/jobs/:id` · `/jobs/:id/wait?timeout=` | 조회 · 완료 대기 |
 | `GET /outputs/:id/url` | 지금 열 수 있는 결과 URL(보관본 우선) |
 | `GET /outputs/:id/content?t=<token>` | `<img>`·`<video>`용 — 보관본은 직접 흘리고, 원격은 지금 열 수 있는 링크로 302. `?t=`는 이 경로에서만 받는다 |

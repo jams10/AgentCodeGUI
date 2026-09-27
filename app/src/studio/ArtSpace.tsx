@@ -1,7 +1,7 @@
-// 아트 작업 공간 — 필터 · 결과 갤러리 · 생성 패널 · 상세 보기.
-// 생성은 "견적 받기"까지만 한다. 비용이 드는 제출은 승인 센터 카드의 승인으로만 일어난다(채팅 · AI와 같은 길).
+// 아트 작업 공간 — 필터 · 결과 갤러리 · 어시스턴트(채팅) · 상세 보기.
+// 만들기는 어시스턴트에게 말로 한다: AI가 필요한 것을 선택지로 묻고 견적을 내면, 승인 카드에서 옵션을 고치고 승인한다.
+// 비용이 드는 제출은 승인 센터 카드의 승인으로만 일어난다. 같은 요청 다시 만들기는 상세 보기에서 바로 한다.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactElement } from 'react'
-import { getPref, setPref } from '../lib/prefs'
 import {
   CAP_NAME,
   composePrompt,
@@ -21,7 +21,6 @@ import {
   type Job,
   type LibraryItem,
   type ModelInfo,
-  type ModelOption,
   type ProviderId,
   type Style,
   type StyleInput
@@ -29,7 +28,6 @@ import {
 
 type Kind = 'all' | Job['capability']
 const KIND_LABEL: Record<Kind, string> = { all: '전체', image: '이미지', video: '영상', model3d: '3D', audio: '오디오' }
-const CAPS: Job['capability'][] = ['image', 'video', 'model3d']
 
 /** 작업 하나 = 갤러리 칸 하나. 대표 미리보기는 이미지 → 영상 순. */
 interface Entry {
@@ -108,221 +106,6 @@ function Media({ o, big }: { o: LibraryItem['output'] | null; big?: boolean }): 
   )
 }
 
-// ── 생성 패널 ─────────────────────────────────────────
-interface Draft {
-  capability: Job['capability']
-  model: string
-  /** 만들기 패널에서 고른 서비스 */
-  provider?: ProviderId
-  /** '' = 스타일 없음 */
-  styleId: string
-  prompt: string
-  images: string[]
-  params: Record<string, unknown>
-}
-
-function defaults(m: ModelInfo | undefined): Record<string, unknown> {
-  const out: Record<string, unknown> = {}
-  for (const o of m?.options ?? []) if (o.default !== undefined) out[o.key] = o.default
-  return out
-}
-
-function OptionField({ o, value, onChange }: { o: ModelOption; value: unknown; onChange: (v: unknown) => void }): ReactElement {
-  const id = `st-opt-${o.key}`
-  if (o.type === 'bool')
-    return (
-      <label className="st-art-check" htmlFor={id}>
-        <input id={id} type="checkbox" checked={value === true} onChange={(e) => onChange(e.target.checked)} />
-        <span>{o.label}</span>
-      </label>
-    )
-  return (
-    <label className="st-art-field" htmlFor={id}>
-      <span>{o.label}</span>
-      {o.type === 'enum' ? (
-        <select id={id} value={String(value ?? '')} onChange={(e) => onChange(typeof o.values?.[0] === 'number' ? Number(e.target.value) : e.target.value)}>
-          {(o.values ?? []).map((v) => (
-            <option key={String(v)} value={String(v)}>
-              {String(v)}
-            </option>
-          ))}
-        </select>
-      ) : (
-        <input
-          id={id}
-          type={o.type === 'number' ? 'number' : 'text'}
-          min={o.min}
-          max={o.max}
-          value={value == null ? '' : String(value)}
-          placeholder={o.type === 'number' && o.default === undefined ? '서비스 기본값' : ''}
-          onChange={(e) => onChange(e.target.value === '' ? undefined : o.type === 'number' ? Number(e.target.value) : e.target.value)}
-        />
-      )}
-    </label>
-  )
-}
-
-// 서비스 프리셋 — 만들기 패널은 모델 대신 서비스를 고른다. 서비스마다 검증된 기본 모델이 있고,
-// 입력 이미지 수로 모델이 정해진다(예: 영상은 이미지가 있으면 이미지→영상). 다른 모델은 어시스턴트(채팅)에게 맡긴다.
-interface ServicePreset {
-  provider: ProviderId
-  /** 입력 이미지 수 → 모델 id */
-  pick: (images: number) => string
-  /** 받을 수 있는 입력 이미지 수 — 0이면 입력 없음 */
-  maxImages: number
-  imageHint?: string
-}
-
-const SERVICES_BY_CAP: Partial<Record<Job['capability'], ServicePreset[]>> = {
-  image: [{ provider: 'higgsfield', pick: () => 'soul', maxImages: 0 }],
-  video: [{ provider: 'higgsfield', pick: (n) => (n ? 'seedance-2.0-i2v' : 'seedance-2.0-t2v'), maxImages: 1, imageHint: '(선택) 넣으면 이 이미지로 영상을 만들어요' }],
-  model3d: [{ provider: 'tripo', pick: (n) => (n === 0 ? 'tripo-text-to-3d' : n === 1 ? 'tripo-image-to-3d' : 'tripo-multiview-to-3d'), maxImages: 4, imageHint: '(선택) 1장 = 이미지→3D · 2~4장 = 앞 · 왼쪽 · 뒤 · 오른쪽' }]
-}
-
-/** 모델이 바뀔 때 — 새 모델의 기본값 위에, 새 모델도 받는 이전 값은 그대로 둔다(해상도 · 길이 등) */
-function carryParams(next: ModelInfo | undefined, prev: Record<string, unknown>): Record<string, unknown> {
-  const out = defaults(next)
-  for (const o of next?.options ?? []) {
-    const v = prev[o.key]
-    if (v === undefined || v === '') continue
-    if (o.type === 'enum' && !(o.values ?? []).some((x) => String(x) === String(v))) continue
-    out[o.key] = v
-  }
-  return out
-}
-
-function Composer({ models, styles, draft, setDraft }: { models: ModelInfo[]; styles: Style[]; draft: Draft; setDraft: (d: Draft) => void }): ReactElement {
-  const style = styles.find((x) => x.id === draft.styleId) ?? null
-  const [busy, setBusy] = useState(false)
-  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
-  const services = SERVICES_BY_CAP[draft.capability] ?? []
-  const service = services.find((x) => x.provider === draft.provider) ?? services[0]
-  const modelId = service?.pick(draft.images.length)
-  const model = models.find((m) => m.id === modelId)
-  const keyOk = !!model?.providers.find((p) => p.id === service?.provider)?.configured
-
-  useEffect(() => {
-    if (!model || !service) return
-    if (model.id !== draft.model || service.provider !== draft.provider) setDraft({ ...draft, provider: service.provider, model: model.id, params: carryParams(model, draft.params) })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [model?.id, service?.provider])
-
-  const pickImages = async (): Promise<void> => {
-    const paths = await window.api.pickAttachments().catch(() => [] as string[])
-    const imgs = paths.filter((p) => /\.(png|jpe?g|webp|gif)$/i.test(p))
-    if (imgs.length && service) setDraft({ ...draft, images: [...draft.images, ...imgs].slice(0, service.maxImages) })
-  }
-
-  const submit = (): void => {
-    if (!model || !service) return
-    setBusy(true)
-    setMsg(null)
-    const params = Object.fromEntries(Object.entries(draft.params).filter(([k, v]) => v !== undefined && v !== '' && model.options.some((o) => o.key === k)))
-    quote({
-      capability: draft.capability,
-      model: model.id,
-      provider: service.provider,
-      prompt: model.prompt === 'none' ? undefined : draft.prompt.trim() || undefined,
-      inputs: draft.images.map((p, i) => ({ kind: 'image' as const, path: p, view: model.input === 'images' ? ['front', 'left', 'back', 'right'][i] : undefined })),
-      params,
-      origin: { space: 'art', source: 'ui', title: draft.prompt.trim().slice(0, 40) || style?.name || model.label },
-      style: style?.id
-    })
-      .then(() => setMsg({ ok: true, text: '견적이 나왔어요. 승인 카드에서 비용을 확인하고 승인해 주세요.' }))
-      .catch((e: Error) => setMsg({ ok: false, text: e.message }))
-      .finally(() => setBusy(false))
-  }
-
-  const missing = !service ? '이 종류를 만들 서비스가 없어요' : !model ? '모델 정보를 불러오는 중…' : model.prompt === 'required' && !draft.prompt.trim() ? '프롬프트를 적어 주세요' : null
-
-  return (
-    <aside className="st-art-side st-art-compose" aria-label="생성">
-      <h2>새로 만들기</h2>
-      <div className="st-art-seg" role="tablist" aria-label="만들 것">
-        {CAPS.map((c) => (
-          <button key={c} type="button" role="tab" aria-selected={draft.capability === c} className={draft.capability === c ? 'on' : ''} onClick={() => setDraft({ ...draft, capability: c, images: [], model: '', params: {} })}>
-            {KIND_LABEL[c]}
-          </button>
-        ))}
-      </div>
-      <div className="st-art-field">
-        <span>서비스</span>
-        <div className="st-art-svc" role="radiogroup" aria-label="서비스">
-          {services.map((x) => {
-            const on = x.provider === service?.provider
-            const ready = !!models.find((m) => m.id === x.pick(0))?.providers.find((p) => p.id === x.provider)?.configured
-            return (
-              <button key={x.provider} type="button" role="radio" aria-checked={on} className={on ? 'st-pill on' : 'st-pill'} onClick={() => setDraft({ ...draft, provider: x.provider, images: [] })}>
-                {PROVIDER_NAME[x.provider]}
-                {ready ? '' : ' · 키 없음'}
-              </button>
-            )
-          })}
-        </div>
-        {model && <div className="st-art-model">모델: {model.label} · 다른 모델은 어시스턴트에게 부탁해 보세요</div>}
-      </div>
-      {model?.note && <div className="st-usage-note">{model.note}</div>}
-      <label className="st-art-field" htmlFor="st-style">
-        <span>스타일</span>
-        <select id="st-style" value={draft.styleId} onChange={(e) => setDraft({ ...draft, styleId: e.target.value })}>
-          <option value="">스타일 없음</option>
-          {styles.map((x) => (
-            <option key={x.id} value={x.id}>
-              {x.name}
-            </option>
-          ))}
-        </select>
-      </label>
-      {model && model.prompt !== 'none' && (
-        <label className="st-art-field" htmlFor="st-prompt">
-          <span>프롬프트{model.prompt === 'optional' ? ' (선택)' : ''}</span>
-          <textarea id="st-prompt" rows={5} value={draft.prompt} onChange={(e) => setDraft({ ...draft, prompt: e.target.value })} placeholder="무엇을 만들까요? 영어 프롬프트가 대체로 결과가 좋아요." />
-        </label>
-      )}
-      {style && (style.promptPrefix || style.promptSuffix) && model?.prompt !== 'none' && (
-        <div className="st-art-field">
-          <span>스타일이 붙은 최종 프롬프트</span>
-          <div className="st-gen-prompt st-art-final">{composePrompt(style, draft.prompt) || '—'}</div>
-        </div>
-      )}
-      {service && service.maxImages > 0 && (
-        <div className="st-art-field">
-          <span>입력 이미지 {service.imageHint}</span>
-          <div className="st-art-files">
-            {draft.images.map((p, i) => (
-              <span key={p} className="st-pill">
-                {draft.images.length > 1 ? `${['앞', '왼쪽', '뒤', '오른쪽'][i]} · ` : ''}
-                {baseName(p)}
-                <button type="button" aria-label={`${baseName(p)} 빼기`} onClick={() => setDraft({ ...draft, images: draft.images.filter((x) => x !== p) })}>
-                  ×
-                </button>
-              </span>
-            ))}
-            {draft.images.length < service.maxImages && (
-              <button type="button" className="st-pill st-art-add" onClick={() => void pickImages()}>
-                + 이미지 선택
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-      {model && model.options.length > 0 && (
-        <div className="st-art-opts">
-          {model.options.map((o) => (
-            <OptionField key={o.key} o={o} value={draft.params[o.key]} onChange={(v) => setDraft({ ...draft, params: { ...draft.params, [o.key]: v } })} />
-          ))}
-        </div>
-      )}
-      <button type="button" className="st-gloss st-art-go" disabled={busy || !!missing || !keyOk} onClick={submit}>
-        {busy ? '견적 받는 중…' : '견적 받기'}
-      </button>
-      {model && service && !keyOk && <div className="st-usage-note">{PROVIDER_NAME[service.provider]} API 키가 없어요 — 설정 → API에서 넣어 주세요.</div>}
-      {missing && keyOk && <div className="st-usage-note">{missing}</div>}
-      {msg && <div className={msg.ok ? 'st-usage-note' : 'st-gen-warn'}>{msg.text}</div>}
-    </aside>
-  )
-}
-
 // ── 상세 보기 ─────────────────────────────────────────
 const SPACE_NAME: Record<string, string> = { chat: '채팅', art: '아트', game: '게임 제작', research: '리서치', library: '라이브러리' }
 
@@ -330,7 +113,7 @@ const VIEW_NAME: Record<string, string> = { front: '앞', left: '왼쪽', back: 
 /** 상세 화면의 옵션 칩에서 뺄 값 — 따로 보여 주거나(프롬프트 · 입력) 너무 큰 값(워크플로 본문) */
 const DETAIL_HIDDEN = new Set(['workflow', 'workflowPath', 'negative_prompt', 'prompt'])
 
-function Detail({ e, model, styles, onStyle, onClose, onReuse }: { e: Entry; model?: ModelInfo; styles: Style[]; onStyle: (styleId: string | null) => void; onClose: () => void; onReuse: (again: boolean) => void }): ReactElement {
+function Detail({ e, model, styles, onStyle, onClose, onReuse }: { e: Entry; model?: ModelInfo; styles: Style[]; onStyle: (styleId: string | null) => void; onClose: () => void; onReuse: () => void }): ReactElement {
   const [idx, setIdx] = useState(0)
   const o = e.outputs[idx] ?? null
   useEffect(() => {
@@ -467,11 +250,8 @@ function Detail({ e, model, styles, onStyle, onClose, onReuse }: { e: Entry; mod
           {j.fallbackReason && <div className="st-gen-warn">대체 — {j.fallbackReason}</div>}
           {j.error && <div className="st-gen-warn">{j.error}</div>}
           <div className="st-art-actions">
-            <button type="button" className="st-gloss st-gen-go" onClick={() => onReuse(true)}>
+            <button type="button" className="st-gloss st-gen-go" onClick={onReuse}>
               다시 생성
-            </button>
-            <button type="button" className="st-pill" onClick={() => onReuse(false)}>
-              프롬프트 가져오기
             </button>
             <button type="button" className="st-pill" onClick={open} disabled={!o}>
               {o?.storageKey ? '폴더에서 보기' : '원본 열기'}
@@ -727,23 +507,16 @@ function StylePicker({
 // ── 공간 ───────────────────────────────────────────────
 type StyleFilter = 'all' | 'none' | string
 
-const PANEL_PREF = 'studio.art.panel'
-
 export function ArtSpace({ ensureApp }: { ensureApp: () => void }): ReactElement {
   const g = useGateway()
-  // 오른쪽 패널 — 만들기 폼 ⟷ 어시스턴트(원본 채팅을 이 자리에 띄운다 · studio.css의 html[data-art-assist])
-  const [panel, setPanelState] = useState<'make' | 'assist'>(() => (getPref<string>(PANEL_PREF, 'make') === 'assist' ? 'assist' : 'make'))
-  const setPanel = (p: 'make' | 'assist'): void => {
-    setPanelState(p)
-    setPref(PANEL_PREF, p)
-  }
+  // 오른쪽은 늘 어시스턴트 — 원본 채팅(App)을 이 자리에 띄운다(studio.css의 html[data-art-assist])
   useEffect(() => {
-    if (panel === 'assist') ensureApp()
-    document.documentElement.dataset.artAssist = panel === 'assist' ? '1' : ''
+    ensureApp()
+    document.documentElement.dataset.artAssist = '1'
     return () => {
       document.documentElement.dataset.artAssist = ''
     }
-  }, [panel, ensureApp])
+  }, [ensureApp])
   const [models, setModels] = useState<ModelInfo[]>([])
   const [styles, setStyles] = useState<Style[]>([])
   const [items, setItems] = useState<LibraryItem[]>([])
@@ -753,7 +526,6 @@ export function ArtSpace({ ensureApp }: { ensureApp: () => void }): ReactElement
   const [q, setQ] = useState('')
   const [open, setOpen] = useState<string | null>(null)
   const [editing, setEditing] = useState<Style | 'new' | null>(null)
-  const [draft, setDraft] = useState<Draft>({ capability: 'image', model: '', styleId: '', prompt: '', images: [], params: {} })
 
   const configuredKey = g.providers.map((p) => `${p.id}:${p.configured}`).join(',')
   useEffect(() => {
@@ -779,26 +551,25 @@ export function ArtSpace({ ensureApp }: { ensureApp: () => void }): ReactElement
   )
   const current = open ? entries.find((e) => e.job.id === open) ?? null : null
 
-  const reuse = (e: Entry, again: boolean): void => {
+  // 다시 만들기 — 같은 요청으로 견적을 내면 승인 카드가 뜬다(옵션은 카드에서 고친다)
+  const reuse = (e: Entry): void => {
     const j = e.job
-    const imgs = (j.inputs ?? []).map((i) => i.path).filter((p): p is string => !!p)
-    // 스타일로 만든 결과는 스타일 적용 전 원문을 가져온다(문구가 두 번 붙지 않게)
+    // 스타일로 만든 결과는 스타일 적용 전 원문을 쓴다(문구가 두 번 붙지 않게)
     const styleId = j.styleId && byStyle.has(j.styleId) ? j.styleId : ''
     const prompt = styleId && j.origin?.userPrompt != null ? j.origin.userPrompt : j.prompt ?? ''
     const params = { ...(j.params ?? {}) }
     if (styleId && byStyle.get(styleId)?.negative === params.negative_prompt) delete params.negative_prompt
-    setDraft({ capability: j.capability, model: j.model, styleId, prompt, images: imgs, params })
     setOpen(null)
-    if (again)
-      void quote({
-        capability: j.capability,
-        model: j.model,
-        prompt: prompt || undefined,
-        inputs: imgs.map((p) => ({ kind: 'image' as const, path: p })),
-        params,
-        style: styleId || undefined,
-        origin: { space: 'art', source: 'ui', title: j.origin?.title }
-      }).catch(() => {})
+    void quote({
+      capability: j.capability,
+      model: j.model,
+      provider: j.provider,
+      prompt: prompt || undefined,
+      inputs: (j.inputs ?? []).filter((i) => i.kind === 'image').map((i) => ({ kind: 'image' as const, path: i.path, url: i.url, view: i.view })),
+      params,
+      style: styleId || undefined,
+      origin: { space: 'art', source: 'ui', title: j.origin?.title }
+    }).catch(() => {})
   }
 
   const count = (k: Kind): number => (k === 'all' ? entries.length : entries.filter((e) => e.job.capability === k).length)
@@ -806,7 +577,7 @@ export function ArtSpace({ ensureApp }: { ensureApp: () => void }): ReactElement
   const unsorted = entries.filter((e) => !e.job.styleId).length
 
   return (
-    <div className={panel === 'assist' ? 'st-art assist' : 'st-art'}>
+    <div className="st-art assist">
       <aside className="st-art-side st-art-filter" aria-label="보기 필터">
         <h2>라이브러리</h2>
         <input className="st-art-search" type="search" aria-label="프롬프트 검색" placeholder="프롬프트 검색" value={q} onChange={(e) => setQ(e.target.value)} />
@@ -840,7 +611,7 @@ export function ArtSpace({ ensureApp }: { ensureApp: () => void }): ReactElement
         {g.status !== 'ready' ? (
           <div className="st-empty">{g.status === 'connecting' ? '생성 게이트웨이에 연결하는 중…' : '생성 게이트웨이에 연결하지 못했어요. 잠시 후 다시 시도해요.'}</div>
         ) : shown.length === 0 ? (
-          <div className="st-empty">{entries.length ? '조건에 맞는 결과가 없어요' : '아직 생성 결과가 없어요 — 오른쪽에서 첫 작업을 시작해 보세요'}</div>
+          <div className="st-empty">{entries.length ? '조건에 맞는 결과가 없어요' : '아직 생성 결과가 없어요 — 오른쪽 어시스턴트에게 만들고 싶은 것을 말해 보세요'}</div>
         ) : (
           <div className="st-art-grid">
             {shown.map((e) => {
@@ -867,20 +638,8 @@ export function ArtSpace({ ensureApp }: { ensureApp: () => void }): ReactElement
       </main>
 
       <div className="st-art-right">
-        <div className="st-art-seg st-art-tabs" role="tablist" aria-label="오른쪽 패널">
-          <button type="button" role="tab" aria-selected={panel === 'make'} className={panel === 'make' ? 'on' : ''} onClick={() => setPanel('make')}>
-            만들기
-          </button>
-          <button type="button" role="tab" aria-selected={panel === 'assist'} className={panel === 'assist' ? 'on' : ''} onClick={() => setPanel('assist')}>
-            어시스턴트
-          </button>
-        </div>
-        {panel === 'make' ? (
-          <Composer models={models} styles={styles} draft={draft} setDraft={setDraft} />
-        ) : (
-          /* 이 자리는 비워 두고, 원본 채팅(App)이 위에 겹쳐 그려진다(원본 배경이 반투명이라 안내 문구를 두지 않는다) */
-          <AssistHole />
-        )}
+        {/* 이 자리는 비워 두고, 원본 채팅(App)이 위에 겹쳐 그려진다(원본 배경이 반투명이라 안내 문구를 두지 않는다) */}
+        <AssistHole />
       </div>
       {current && (
         <Detail
@@ -889,7 +648,7 @@ export function ArtSpace({ ensureApp }: { ensureApp: () => void }): ReactElement
           styles={styles}
           onStyle={(sid) => void setJobStyle(current.job.id, sid).then(reload).catch(() => {})}
           onClose={() => setOpen(null)}
-          onReuse={(again) => reuse(current, again)}
+          onReuse={() => reuse(current)}
         />
       )}
       {editing && <StyleEditor style={editing === 'new' ? null : editing} onClose={() => setEditing(null)} onSaved={reload} />}

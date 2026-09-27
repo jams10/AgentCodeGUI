@@ -195,6 +195,25 @@ export class Gateway {
     throw new GatewayError('no_provider', `쓸 수 있는 서비스가 없어요 — ${skipped.join(' · ')}`, { skipped })
   }
 
+  // ── 승인 전 고치기: 옵션 · 프롬프트를 바꾸고 같은 서비스로 다시 견적(무료) ─────────
+  // 작업 id는 그대로 — AI(MCP generate)가 기다리는 작업이 끊기지 않는다.
+  // 스타일이 붙은 작업은 프롬프트에 스타일 문구가 합쳐져 있어서 프롬프트는 고치지 않는다(옵션만).
+  async revise(id: string, patch: { prompt?: string; params?: Record<string, unknown> }): Promise<JobRecord> {
+    const job = this.must(id)
+    if (job.state !== 'awaiting_approval') throw new GatewayError('bad_state', `고칠 수 없는 상태예요: ${job.state}`)
+    if (patch.prompt !== undefined && job.styleId) throw new GatewayError('bad_request', '스타일이 적용된 작업은 프롬프트를 여기서 고칠 수 없어요 — 채팅으로 다시 요청해 주세요')
+    const p = this.providers.get(job.provider)
+    if (!p) throw new GatewayError('no_provider', `서비스를 찾지 못했어요: ${job.provider}`)
+    const prompt = patch.prompt !== undefined ? patch.prompt.trim() || null : job.prompt
+    const params = patch.params !== undefined ? patch.params : job.params
+    const req: GenerationRequest = { capability: job.capability, model: job.model, prompt: prompt ?? undefined, params: params ?? undefined, inputs: job.inputs ?? undefined }
+    const est = await p.estimate(req)
+    if (est.invalid) throw new GatewayError('bad_request', `${job.provider}: ${est.invalid}`)
+    const next = this.ledger.revise(id, { prompt: patch.prompt !== undefined ? prompt : undefined, params: patch.params !== undefined ? params : undefined, estimate: est.cost })
+    this.emit(next)
+    return next
+  }
+
   // ── 승인 · 거절 · 취소 ─────────────────────────────────
   async approve(id: string): Promise<JobRecord> {
     const job = this.must(id)
