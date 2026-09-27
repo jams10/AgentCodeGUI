@@ -111,6 +111,7 @@ pub fn build_spawn_spec(
         argv.push("--allow-dangerously-skip-permissions".into());
     }
     argv.push("--include-partial-messages".into());
+    argv.extend(crate::studio::claude_args()); // [studio hook] 생성 게이트웨이 MCP
     for d in id.add_dirs() {
         argv.push("--add-dir".into());
         argv.push(d.as_str().to_string());

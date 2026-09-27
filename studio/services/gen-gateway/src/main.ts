@@ -9,6 +9,7 @@ import { loadRoutes } from './routes.ts'
 import { SecretStore } from './secrets.ts'
 import { startServer, type RunningServer } from './server.ts'
 import { ComfyProvider } from './providers/comfy.ts'
+import { FakeProvider } from './providers/fake.ts'
 import { HiggsfieldProvider } from './providers/higgsfield.ts'
 import { TripoProvider } from './providers/tripo.ts'
 import type { Provider } from './types.ts'
@@ -47,10 +48,18 @@ export async function boot(opts: { serve: boolean; log?: (m: string) => void } =
   mkdirSync(p.dir, { recursive: true }) // 첫 실행 — 데이터 폴더가 아직 없을 수 있다
   const secrets = new SecretStore(p.secrets)
   for (const r of await secrets.preload()) if (!r.ok) log(`${r.provider} 키를 복호화하지 못했어요: ${r.error}`)
-  const { routes, source, warnings } = loadRoutes(p.routes)
+  const loaded = loadRoutes(p.routes)
+  const { source, warnings } = loaded
+  let routes = loaded.routes
   for (const w of warnings) log(w)
   const ledger = new Ledger(p.db)
   const providers = makeProviders(secrets)
+  // 개발용 — 과금 없는 가짜 서비스로 승인 카드 · 진행 · 완료 흐름을 화면에서 확인한다
+  if (process.env.CCG_GATEWAY_FAKE === '1') {
+    providers.push(new FakeProvider({ id: 'fake', steps: 6, balance: 500, price: 12, models: ['fake-demo'] }))
+    routes = [...routes, { capability: 'image', model: 'fake-demo', providers: ['fake'] }]
+    log('개발용 가짜 서비스(fake-demo)를 켰어요 — 실제 서비스 호출 · 과금 없음')
+  }
   let emit: (e: GatewayEvent) => void = () => {}
   // 클라우드 저장소 연결 전까지는 곧 만료되는 결과(Tripo 5분 링크 등)만 앱 데이터 폴더에 보관한다
   const gateway = new Gateway({ ledger, providers, routes, onEvent: (e) => emit(e), archiver: new LocalArchiver(p.outputs) })

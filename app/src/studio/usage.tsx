@@ -3,7 +3,7 @@
 // 외부 생성 서비스 크레딧은 생성 게이트웨이(다음 단계)가 붙기 전까지 「연결 전」으로 표시한다.
 import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react'
 import type { CodexAccountUsage, UsageInfo, UsageWindow } from '@shared/protocol'
-import { GEN_PROVIDERS } from './spaces'
+import { fmtCost, PROVIDER_NAME, refreshBalances, useGateway, type ProviderId } from './gateway'
 
 const REFRESH_MS = 5 * 60 * 1000
 const WARN_PCT = 80
@@ -121,6 +121,48 @@ export function UsageButton({ usage, open, onToggle }: { usage: StudioUsage; ope
   )
 }
 
+/** 외부 생성 서비스 — 게이트웨이의 잔액 + 최근 30일 사용액 */
+function GenCredits(): ReactElement {
+  const g = useGateway()
+  const ids: ProviderId[] = ['comfy', 'higgsfield', 'tripo']
+  const text = (id: ProviderId): string => {
+    if (g.status !== 'ready') return g.status === 'connecting' ? '연결 중…' : '게이트웨이 연결 안 됨'
+    const p = g.providers.find((x) => x.id === id)
+    if (!p?.configured) return 'API 키 없음'
+    const b = g.balances[id]
+    if (b && 'error' in b) return '조회 실패'
+    if (b) return `${fmtCost(b)} 남음`
+    return id === 'higgsfield' ? '잔액 조회 API 없음' : g.checkedAt ? '알 수 없음' : '확인 전'
+  }
+  const spent = (id: ProviderId): string | null => {
+    const s = g.spend.find((x) => x.provider === id)
+    if (!s || !s.jobs) return null
+    return `30일 ${s.jobs}건 · $${s.usd.toFixed(2)}${s.unknown ? ` (+${s.unknown}건 금액 미상)` : ''}`
+  }
+  return (
+    <section className="st-usage-sec">
+      <div className="st-usage-row">
+        <span>외부 서비스 크레딧</span>
+        <button type="button" className="st-ghost" onClick={() => void refreshBalances().catch(() => {})} disabled={g.status !== 'ready'}>
+          잔액 확인
+        </button>
+      </div>
+      {ids.map((id) => (
+        <div key={id} className="st-credit" style={{ flexDirection: 'column', gap: 2 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span>{PROVIDER_NAME[id]}</span>
+            <span className="st-dim">{text(id)}</span>
+          </div>
+          {spent(id) && <span className="st-dim" style={{ fontSize: 12 }}>{spent(id)}</span>}
+        </div>
+      ))}
+      {g.status === 'ready' && g.providers.every((p) => !p.configured) && (
+        <div className="st-usage-note">API 키를 넣으면 남은 크레딧과 사용 기록이 여기에 표시돼요.</div>
+      )}
+    </section>
+  )
+}
+
 export function UsagePanel({ usage, onClose, onRefresh }: { usage: StudioUsage; onClose: () => void; onRefresh: () => void }): ReactElement {
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -186,18 +228,8 @@ export function UsagePanel({ usage, onClose, onRefresh }: { usage: StudioUsage; 
         )}
       </section>
 
-      <section className="st-usage-sec">
-        <div className="st-usage-row">
-          <span>외부 서비스 크레딧</span>
-        </div>
-        {GEN_PROVIDERS.map((p) => (
-          <div key={p} className="st-credit">
-            <span>{p}</span>
-            <span className="st-dim">연결 전</span>
-          </div>
-        ))}
-        <div className="st-usage-note">생성 게이트웨이를 연결하면 남은 크레딧과 사용 기록이 여기에 표시돼요.</div>
-      </section>
+      <GenCredits />
+
 
       <div className="st-usage-row">
         <span className="dim">{usage.checkedAt ? `마지막 확인 · ${new Date(usage.checkedAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}` : ''}</span>

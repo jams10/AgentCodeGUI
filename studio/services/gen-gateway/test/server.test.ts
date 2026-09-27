@@ -30,11 +30,21 @@ test('health는 열려 있고, 나머지는 토큰이 필요하다', async () =>
   }
 })
 
-test('브라우저 출처가 붙은 요청은 토큰이 있어도 막는다', async () => {
+test('다른 웹 페이지 출처는 토큰이 있어도 막고, 앱 출처만 CORS로 허용한다', async () => {
   const { srv, base } = await boot()
   try {
-    const r = await fetch(`${base}/jobs`, { headers: { Authorization: `Bearer ${srv.token}`, Origin: 'https://evil.example' } })
-    assert.equal(r.status, 403)
+    const evil = await fetch(`${base}/jobs`, { headers: { Authorization: `Bearer ${srv.token}`, Origin: 'https://evil.example' } })
+    assert.equal(evil.status, 403)
+    const local = await fetch(`${base}/jobs`, { headers: { Authorization: `Bearer ${srv.token}`, Origin: 'http://localhost:8080' } })
+    assert.equal(local.status, 403)
+    const app = await fetch(`${base}/jobs`, { headers: { Authorization: `Bearer ${srv.token}`, Origin: 'http://tauri.localhost' } })
+    assert.equal(app.status, 200)
+    assert.equal(app.headers.get('access-control-allow-origin'), 'http://tauri.localhost')
+    const pre = await fetch(`${base}/jobs`, { method: 'OPTIONS', headers: { Origin: 'http://localhost:5273', 'Access-Control-Request-Method': 'POST' } })
+    assert.equal(pre.status, 204)
+    assert.match(pre.headers.get('access-control-allow-headers') ?? '', /Authorization/)
+    // 앱 출처여도 토큰은 필요하다
+    assert.equal((await fetch(`${base}/jobs`, { headers: { Origin: 'http://tauri.localhost' } })).status, 401)
   } finally {
     await srv.close()
   }

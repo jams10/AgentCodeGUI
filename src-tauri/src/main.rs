@@ -8,6 +8,7 @@ mod engine;
 /// 서브시스템 무력화 스위치 — 유휴 메모리 귀속용 A/B 팔 가르개(★R4, `flags.rs` 헤더).
 mod flags;
 mod ipc;
+mod studio; // [studio hook]
 /// 앱 자동 업데이트(★R28j N8 — 2.6.2 `src/main/updater.ts`의 자리).
 mod updater;
 mod webview_args;
@@ -279,6 +280,7 @@ fn main() {
             win::create_main(app.handle())?;
             // ★3.0.3 — UI 스레드 정지 감시(AppHangB1의 증거 수집 · crash.rs).
             crash::arm_ui_watchdog(app.handle());
+            studio::start(app.handle()); // [studio hook] 생성 게이트웨이 + 엔진용 MCP 정의(엔진보다 먼저)
             // 엔진 허브 — 창이 선 뒤에 띄운다(첫 브로드캐스트가 갈 곳이 있어야 한다).
             engine::boot(app.handle());
             // ★R28 T1T2 R2 — 부팅 엔진 자동 업데이트(2.6.2 `index.ts:2046`). 자기 스레드에서

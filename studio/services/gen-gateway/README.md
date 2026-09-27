@@ -74,6 +74,19 @@ node studio/services/gen-gateway/src/cli.ts serve                 # 게이트웨
 | `GET /balances` · `/providers` · `/spend?since=` | 잔액 · 연결 상태 · 사용액 |
 | `GET /events` | 작업 상태 변화 스트림(SSE) |
 
+## 앱 연결
+
+- **실행:** 앱이 켜질 때 `src-tauri/src/studio.rs`가 `node cli.ts serve`를 띄운다(창 없이). 표준 입력 파이프를 앱이
+  쥐고 있어서 앱이 어떻게 끝나든 게이트웨이도 따라 종료된다. 로그: `<데이터 폴더>/studio/gateway.log`, `app-gateway.log`.
+  설치본은 `resources/gen-gateway/src`(studio/tauri.studio.conf.json의 bundle.resources)에서 실행한다.
+- **AI 연결:** 앱이 `CCG_STUDIO_MCP`에 MCP 중계기 정의를 넣고, 엔진이 Claude에는 `--mcp-config`, Codex에는
+  `thread/start`의 `config.mcp_servers`로 붙인다(`crates/ccg-engine/src/studio.rs`). 계정별 설정 폴더는 건드리지 않는다.
+- **화면:** 렌더러가 `studio:gateway-info`로 port · token을 받아 로컬 API와 이벤트 스트림에 직접 붙는다
+  (`app/src/studio/gateway.ts`). 승인 카드 · 진행 · 완료 알림은 `ApprovalCenter.tsx`, 잔액 · 사용액은 사용량 패널.
+- **개발 확인:** `CCG_GATEWAY_FAKE=1`로 앱을 띄우면 과금 없는 가짜 서비스(`fake-demo` 모델)가 등록된다.
+  승인 카드부터 완료 알림까지 실제 서비스 없이 확인할 때 쓴다.
+- **꺼 두기:** `CCG_STUDIO_NO_GATEWAY=1`이면 앱이 게이트웨이를 띄우지 않는다.
+
 ## 검증
 
 ```bash

@@ -9,6 +9,9 @@
   },
   "bundle": {
     "createUpdaterArtifacts": false,
+    "resources": {
+      "../studio/services/gen-gateway/src": "gen-gateway/src"
+    },
     "publisher": "AgentStudio",
     "homepage": "https://github.com/jams10/AgentCodeGUI",
     "copyright": "Copyright (c) 2026 AgentStudio (fork of AgentCodeGUI)",

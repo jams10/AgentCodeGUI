@@ -30,7 +30,15 @@ AgentStudio는 [UnrealFactory/AgentCodeGUI](https://github.com/UnrealFactory/Age
 | `crates/ccg-store/src/lib.rs` `app_home()` | 기본 데이터 폴더 이름을 빌드 시 `CCG_DEFAULT_HOME_DIR`로 바꿀 수 있게 함. 없으면 원본과 같음. |
 | `app/src/main.tsx` | 메인 창 루트를 `<App />` 대신 `<StudioRoot />`로 연다(import 1줄 + 렌더 1줄). |
 | `app/src/App.tsx` `<WelcomeState>` | `variant={cwd ? 'agent' : 'chat'}` 1줄 — 폴더 없는 대화는 일반 대화 문구(원본 SessionWindow와 같은 규칙). |
+| `src-tauri/src/main.rs` | `mod studio;` 1줄 + setup에서 `studio::start()` 1줄(엔진 부팅 전) — 생성 게이트웨이 실행. |
+| `src-tauri/src/ipc/mod.rs` `dispatch()` | 맨 앞 1줄 — `studio:*` 채널을 `src-tauri/src/studio.rs`로. |
+| `crates/ccg-engine/src/lib.rs` | `pub mod studio;` 1줄. |
+| `crates/ccg-engine/src/driver.rs` | Claude 인자에 1줄 — `crate::studio::claude_args()`(`--mcp-config`). |
+| `crates/ccg-engine/src/codex/mod.rs` `thread_params()` | 1줄 — `crate::studio::codex_config()`(`config.mcp_servers`). |
 | `.github/workflows/studio-upstream-sync.yml` | 새 파일(원본에 없음). |
+
+새 파일(원본에 없음): `src-tauri/src/studio.rs`(게이트웨이 실행 · 접속 정보 IPC), `crates/ccg-engine/src/studio.rs`(엔진 MCP 주입).
+두 엔진 모두 `CCG_STUDIO_MCP` 환경변수가 없으면 원본과 똑같이 동작한다.
 
 ## 생성 게이트웨이 (`studio/services/gen-gateway/`)
 

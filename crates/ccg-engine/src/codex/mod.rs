@@ -136,6 +136,7 @@ impl CodexPlan {
         if let Some(t) = &self.service_tier {
             p["serviceTier"] = json!(t);
         }
+        crate::studio::codex_config(&mut p["config"]); // [studio hook] 생성 게이트웨이 MCP
         p
     }
 }

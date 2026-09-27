@@ -172,7 +172,46 @@ button.st-pill:hover{ background:linear-gradient(180deg, rgba(255,255,255,.4), r
 .st-chips .st-pill{ padding:7px 14px; font-size:13px; }
 .st-empty{ flex:1; display:grid; place-items:center; border-radius:16px; border:1.5px dashed rgba(255,255,255,.3); font-family:'Gowun Dodum', var(--font-sans); font-size:14px; color:#bfe3fb; min-height:60px; }
 
+/* ---- 생성 승인 센터 ---- */
+/* 카드 묶음 — 스크롤 영역은 사각형으로 잘리므로, 카드 그림자가 번질 여백(패딩)을 안쪽에 둔다.
+   그렇지 않으면 둥근 카드 뒤로 잘린 그림자가 박스 모양으로 남는다. 여백은 클릭이 아래로 통과한다. */
+.st-gen-stack{
+  position:fixed; right:-10px; bottom:-26px; z-index:70; width:436px; box-sizing:border-box;
+  padding:28px 28px 44px; max-height:calc(100vh - 46px); overflow:auto; scrollbar-width:none;
+  display:flex; flex-direction:column; gap:12px; font-family:var(--st-font); color:#fff; pointer-events:none;
+}
+.st-gen-stack::-webkit-scrollbar{ display:none; }
+.st-gen-stack > *{ pointer-events:auto; flex-shrink:0; }
+/* 채팅 공간에서는 입력창(보내기 버튼)을 가리지 않게 그 위에 띄운다 */
+.studio[data-space="chat"] .st-gen-stack{ bottom:68px; max-height:calc(100vh - 146px); }
+.st-gen-card, .st-gen-toast{
+  border-radius:22px; border:1px solid rgba(255,255,255,.38); padding:16px 18px; display:flex; flex-direction:column; gap:10px;
+  background:linear-gradient(180deg, rgba(24,84,144,.97), rgba(9,48,96,.98));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.4), 0 18px 44px rgba(0,12,32,.5);
+}
+.st-gen-h{ display:flex; justify-content:space-between; align-items:center; font-size:16px; }
+.st-gen-prov{ padding:3px 11px; font-size:12px; }
+.st-gen-meta{ font-size:12.5px; color:#bfe3fb; }
+.st-gen-ellipsis{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.st-gen-prompt{ font-family:var(--font-mono); font-size:12.5px; line-height:1.55; color:#e8f4ff; background:rgba(1,14,32,.55); border-radius:12px; padding:9px 12px; max-height:96px; overflow:auto; white-space:pre-wrap; word-break:break-word; }
+.st-gen-chips{ display:flex; flex-wrap:wrap; gap:6px; }
+.st-gen-chips span{ font-size:11.5px; padding:3px 9px; border-radius:999px; background:rgba(255,255,255,.12); color:#dff2ff; }
+.st-gen-cost{ display:flex; justify-content:space-between; align-items:baseline; gap:10px; font-size:13px; color:#cfe9fb; }
+.st-gen-cost b{ font-weight:400; color:#fff; font-size:14px; text-align:right; }
+.st-gen-row{ display:flex; justify-content:space-between; align-items:center; gap:10px; font-size:13px; color:#e4f4ff; }
+.st-gen-warn{ font-size:12.5px; line-height:1.45; color:#ffd9a3; background:rgba(255,180,92,.12); border-radius:10px; padding:7px 10px; }
+.st-gen-actions{ display:flex; align-items:center; gap:8px; margin-top:2px; }
+.st-gen-go{ height:38px; padding:0 20px; border-radius:999px; font-size:14.5px; }
+.st-gen-running{ gap:14px; }
+.st-gen-run{ display:flex; flex-direction:column; gap:6px; }
+.st-gen-indet{ height:100%; width:40%; border-radius:999px; background:linear-gradient(90deg, rgba(159,227,255,0), #9fe3ff, rgba(159,227,255,0)); animation:st-slide 1.3s ease-in-out infinite; }
+@keyframes st-slide{ 0%{ transform:translateX(-100%); } 100%{ transform:translateX(250%); } }
+.st-gen-toast.bad{ background:linear-gradient(180deg, rgba(120,44,40,.97), rgba(80,24,24,.98)); }
+.st-gen-open{ align-self:flex-start; padding:6px 14px; font-size:13px; }
+.st-gen-stack button:disabled{ opacity:.6; cursor:default; }
+
 @media (prefers-reduced-motion: reduce){
+  .st-gen-indet{ animation:none; }
   .st-home.motion .st-float{ animation:none; }
   .st-bub, .st-orb{ transition:none; }
 }

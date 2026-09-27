@@ -25,6 +25,11 @@ export interface ServerDeps {
   port?: number
 }
 
+/** 앱 화면의 출처 — Windows 설치본(http(s)://tauri.localhost), 기타 플랫폼(tauri://localhost), 개발 서버(localhost:5273) */
+export function isAppOrigin(origin: string): boolean {
+  return /^(https?:\/\/tauri\.localhost|tauri:\/\/localhost|http:\/\/localhost:5273)$/.test(origin)
+}
+
 function send(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' })
   res.end(JSON.stringify(body))
@@ -92,8 +97,17 @@ export async function startServer(d: ServerDeps): Promise<RunningServer> {
       const url = new URL(req.url ?? '/', 'http://127.0.0.1')
       const path = url.pathname
       if (req.method === 'GET' && path === '/health') return send(res, 200, { ok: true, version: VERSION })
-      // 브라우저 교차 출처 요청 차단 + 토큰 확인
-      if (req.headers.origin) return send(res, 403, { error: 'forbidden' })
+      // 출처 확인 — 앱 화면(Tauri 웹뷰 · 개발 서버)만 허용하고 다른 웹 페이지는 막는다. 토큰은 별도로 필수.
+      const origin = req.headers.origin
+      if (origin) {
+        if (!isAppOrigin(origin)) return send(res, 403, { error: 'forbidden' })
+        res.setHeader('Access-Control-Allow-Origin', origin)
+        res.setHeader('Vary', 'Origin')
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Methods': 'GET, POST', 'Access-Control-Allow-Headers': 'Authorization, Content-Type', 'Access-Control-Max-Age': '600' })
+          return res.end()
+        }
+      }
       if (req.headers.authorization !== `Bearer ${token}`) return send(res, 401, { error: 'unauthorized' })
 
       const seg = path.split('/').filter(Boolean)
