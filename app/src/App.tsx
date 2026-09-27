@@ -2481,6 +2481,7 @@ function MainApp({ user }: { user: AppUser }) {
             {state.messages.length === 0 && !busy ? (
               <WelcomeState
                 userName={user.name}
+                variant={cwd ? 'agent' : 'chat'} // [studio hook] 폴더 없는 대화는 일반 대화 문구(SessionWindow와 같은 규칙)
                 onPick={(t) => {
                   setInput(t)
                   composerRef.current?.focus()

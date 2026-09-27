@@ -1,0 +1,178 @@
+/* ============================================================
+ * AgentStudio · Aero 테마 + Studio 셸
+ *
+ * 원본 styles.css는 고치지 않는다. 원본 부품은 전부 CSS 변수로 칠해지므로
+ * html.studio-theme에서 변수만 덮어 Aero 색으로 바꾼다(포털로 body에 붙는
+ * 팝오버·모달도 같이 바뀌게 :root가 아니라 html에 건다).
+ * --panel/--chat-bg는 lib/glass.ts가 :root 인라인으로 덮으므로 !important.
+ * 글꼴(Varela Round · Gowun Dodum)은 번들에서 @import가 맨 앞에 못 서므로 StudioRoot가 <link>로 붙인다.
+ * ============================================================ */
+
+html.studio-theme{
+  --desktop:  #062a52;
+  --panel:    rgba(8,52,98,.55) !important;
+  --chat-bg:  rgba(4,32,66,.50) !important;
+  --bg:       rgba(12,58,106,.98);
+  --surface:   rgba(255,255,255,.05);
+  --surface-2: rgba(255,255,255,.09);
+  --surface-3: rgba(255,255,255,.13);
+  --inset:     rgba(0,16,38,.38);
+  --hover:  rgba(255,255,255,.07);
+  --active: rgba(255,255,255,.11);
+  --line:        rgba(255,255,255,.12);
+  --line-2:      rgba(255,255,255,.18);
+  --line-strong: rgba(255,255,255,.32);
+  --text:   rgba(255,255,255,.94);
+  --text-2: rgba(222,240,255,.76);
+  --text-3: rgba(200,228,255,.56);
+  --text-4: rgba(190,222,255,.38);
+  --accent:      #9fe3ff;
+  --accent-2:    #d4f3ff;
+  --accent-soft: rgba(159,227,255,.16);
+  --accent-line: rgba(159,227,255,.42);
+  --on-accent: #06325f;
+  --blue:   #7fc8ff;
+  --blue-soft: rgba(127,200,255,.16);
+
+  --st-font: 'Varela Round', 'Gowun Dodum', var(--font-sans);
+  --st-sky: linear-gradient(180deg, #05264b 0%, #0a447d 55%, #1a7fbb 100%);
+  --st-orb-blue: radial-gradient(circle at 50% 72%, #9fe3ff 0%, #2a9be0 55%, #0b5ea8 100%);
+  --st-gloss: linear-gradient(180deg, #ffffff 0%, #dff4ff 48%, #a9dcff 52%, #d6f0ff 100%);
+}
+/* Studio는 아크릴 유무와 상관없이 자기 하늘 배경을 깐다. 원본 유리 폴백(api/glassFallback.ts)이
+   런타임에 body로 검정 변수를 !important로 박으므로, 클래스를 겹쳐 명시도를 한 단계 올려 이긴다. */
+html.studio-theme.studio-theme,
+html.studio-theme.studio-theme body{
+  --panel:   rgba(8,52,98,.55) !important;
+  --chat-bg: rgba(4,32,66,.50) !important;
+}
+html.studio-theme.studio-theme body{ background: var(--st-sky) !important; }
+
+/* ---- 셸 ---- */
+.studio{ position:fixed; inset:0; font-family:var(--st-font); color:#fff; }
+.studio-bokeh{ position:absolute; border-radius:50%; pointer-events:none; }
+.studio-bokeh.a{ left:-200px; top:42%; width:700px; height:700px; background:radial-gradient(circle, rgba(120,215,255,.26) 0%, rgba(120,215,255,0) 66%); }
+.studio-bokeh.b{ right:-320px; top:-260px; width:760px; height:760px; background:radial-gradient(circle, rgba(110,180,255,.22) 0%, rgba(110,180,255,0) 66%); }
+
+/* 채팅 공간: 원본 App(.win은 position:fixed; inset:0)을 Studio 바 아래로 내린다 */
+.studio-bar{
+  position:fixed; left:0; right:0; top:0; height:52px; z-index:30;
+  display:flex; align-items:center; justify-content:space-between; gap:12px;
+  padding:0 8px 0 14px; user-select:none;
+  -webkit-app-region:drag;
+}
+.studio-bar button, .studio-bar .st-nodrag{ -webkit-app-region:no-drag; }
+.studio[data-space="chat"] .win{ top:52px; }
+.studio[data-space="home"] .studio-app{ display:none; }
+.studio-bar-left{ display:flex; align-items:center; gap:12px; }
+.studio-bar-title{ font-size:18px; text-shadow:0 2px 6px rgba(0,25,60,.6); }
+.studio-bar-sub{ font-size:11px; letter-spacing:3px; color:#bfe3fb; }
+.studio-bar-right{ display:flex; align-items:center; gap:8px; }
+
+/* ---- 공용 유리 부품 ---- */
+.st-orb{
+  position:relative; border-radius:50%; border:1.5px solid rgba(255,255,255,.7);
+  display:grid; place-items:center; padding:0; cursor:pointer; background:var(--st-orb-blue);
+  box-shadow:inset 0 -8px 14px rgba(255,255,255,.28), inset 0 5px 10px rgba(0,20,60,.2), 0 8px 18px rgba(0,20,50,.4);
+  transition:transform .2s ease;
+}
+.st-orb::before{ content:""; position:absolute; left:16%; top:5%; width:68%; height:44%; border-radius:50%; background:linear-gradient(180deg, rgba(255,255,255,.9), rgba(255,255,255,.05)); pointer-events:none; }
+.st-orb > svg{ position:relative; }
+.st-orb:hover{ transform:scale(1.07); }
+.st-pill{
+  border-radius:999px; border:1px solid rgba(255,255,255,.4); color:#fff; font-family:inherit;
+  background:linear-gradient(180deg, rgba(255,255,255,.3), rgba(255,255,255,.08));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.65), 0 4px 12px rgba(0,25,60,.2);
+}
+button.st-pill{ cursor:pointer; }
+button.st-pill:hover{ background:linear-gradient(180deg, rgba(255,255,255,.4), rgba(255,255,255,.14)); }
+.st-gloss{
+  cursor:pointer; border:1.5px solid rgba(255,255,255,.75); color:#06325f; font-family:inherit; background:var(--st-gloss);
+  box-shadow:inset 0 -4px 10px rgba(0,90,170,.18), 0 10px 24px rgba(0,25,60,.35);
+}
+.st-gloss:hover{ filter:brightness(1.05); }
+.st-gloss:disabled{ cursor:default; filter:saturate(.3) brightness(.9); opacity:.7; }
+.st-ghost{ border:0; background:transparent; color:#cfe9fb; font-family:inherit; font-size:13px; padding:6px 10px; border-radius:10px; cursor:pointer; }
+.st-ghost:hover{ background:rgba(255,255,255,.1); color:#fff; }
+.st-orb:focus-visible, .st-pill:focus-visible, .st-gloss:focus-visible, .st-ghost:focus-visible, .st-bub:focus-visible{ outline:3px solid #fff; outline-offset:4px; box-shadow:none; }
+.st-bar{ height:8px; border-radius:999px; background:rgba(255,255,255,.18); overflow:hidden; }
+.st-fill{ height:100%; border-radius:999px; background:linear-gradient(90deg, #6fd6ff, #b9ecff); }
+.st-fill.warn{ background:linear-gradient(90deg, #ffb45c, #ffd9a3); }
+.st-winctl{ display:flex; gap:2px; }
+.st-winctl button{ width:40px; height:32px; border-radius:8px; display:grid; place-items:center; color:#dff2ff; }
+.st-winctl button:hover{ background:rgba(255,255,255,.14); }
+.st-winctl button.close:hover{ background:#d9574a; }
+
+/* ---- 사용량 패널 ---- */
+.st-usage-btn{ padding:7px 14px; font-size:12.5px; display:flex; align-items:center; gap:14px; }
+.st-usage-btn .mini{ display:flex; align-items:center; gap:7px; }
+.st-usage-btn .st-bar{ width:48px; height:6px; }
+.st-pop{
+  position:fixed; z-index:60; border-radius:22px; border:1px solid rgba(255,255,255,.35);
+  background:linear-gradient(180deg, rgba(22,78,136,.97), rgba(9,48,96,.98));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.4), 0 24px 60px rgba(0,12,32,.55);
+  font-family:var(--st-font); color:#fff;
+}
+.st-usage{ right:14px; top:58px; width:420px; padding:20px 22px; display:flex; flex-direction:column; gap:16px; }
+.st-usage-h{ display:flex; justify-content:space-between; align-items:center; font-size:17px; }
+.st-usage-sec{ display:flex; flex-direction:column; gap:10px; }
+.st-usage-sec + .st-usage-sec{ border-top:1px solid rgba(255,255,255,.16); padding-top:16px; }
+.st-usage-row{ display:flex; justify-content:space-between; gap:12px; font-size:13px; color:#e4f4ff; }
+.st-usage-row .dim, .st-dim{ color:#bfe3fb; }
+.st-usage-meter{ display:flex; flex-direction:column; gap:5px; }
+.st-usage-note{ font-family:'Gowun Dodum', var(--font-sans); font-size:13px; color:#bfe3fb; line-height:1.5; }
+.st-credit{ display:flex; justify-content:space-between; font-size:13px; padding:6px 0; border-bottom:1px solid rgba(255,255,255,.1); }
+
+/* ---- 홈 런처 ---- */
+.st-home{ position:fixed; inset:0; z-index:20; overflow:hidden; background:linear-gradient(180deg, #06305e 0%, #0d5a9c 42%, #2aa3d9 78%, #8fdcf5 100%); }
+.st-home-top{ position:absolute; left:0; right:0; top:0; height:64px; padding:0 8px 0 28px; display:flex; align-items:center; justify-content:space-between; -webkit-app-region:drag; }
+.st-home-top button, .st-home-top .st-nodrag{ -webkit-app-region:no-drag; }
+.st-brand{ display:flex; align-items:center; gap:12px; font-size:20px; text-shadow:0 2px 6px rgba(0,25,60,.6); }
+.st-brand i{ width:28px; height:28px; border-radius:50%; border:1px solid rgba(255,255,255,.7); background:radial-gradient(circle at 35% 30%, #fff 0%, #7fd6ff 45%, #1674c4 100%); box-shadow:0 4px 10px rgba(0,25,60,.35); }
+.st-ribbon{ position:absolute; left:0; bottom:0; width:100%; height:40%; pointer-events:none; }
+.st-field{ position:absolute; left:50%; top:52%; width:1065px; height:560px; transform:translate(-50%, -50%) scale(var(--st-scale, 1)); }
+.st-float{ position:absolute; width:200px; display:flex; flex-direction:column; align-items:center; gap:14px; }
+.st-home.motion .st-float{ animation:st-bob 6s ease-in-out infinite; }
+@keyframes st-bob{ 0%,100%{ transform:translateY(0); } 50%{ transform:translateY(-12px); } }
+.st-bub{
+  position:relative; width:168px; height:168px; border-radius:50%; padding:0; cursor:pointer;
+  display:grid; place-items:center; border:1.5px solid rgba(255,255,255,.6);
+  box-shadow:inset 0 -22px 34px rgba(255,255,255,.28), inset 0 12px 26px rgba(0,20,60,.22), 0 22px 44px rgba(2,24,60,.42);
+  transition:transform .25s ease, box-shadow .25s ease;
+}
+.st-bub::before{ content:""; position:absolute; left:17%; top:5%; width:66%; height:44%; border-radius:50%; background:linear-gradient(180deg, rgba(255,255,255,.9), rgba(255,255,255,.05)); pointer-events:none; }
+.st-bub::after{ content:""; position:absolute; left:30%; bottom:7%; width:40%; height:12%; border-radius:50%; background:radial-gradient(ellipse, rgba(255,255,255,.55), rgba(255,255,255,0) 70%); pointer-events:none; }
+.st-bub:hover{ transform:scale(1.07); box-shadow:inset 0 -22px 34px rgba(255,255,255,.34), inset 0 12px 26px rgba(0,20,60,.2), 0 28px 56px rgba(2,24,60,.5), 0 0 0 6px rgba(255,255,255,.14); }
+.st-bub > svg{ position:relative; z-index:1; filter:drop-shadow(0 2px 3px rgba(0,30,70,.45)); }
+.st-lbl{ font-size:20px; text-shadow:0 2px 6px rgba(0,25,60,.7); }
+.st-sub{ font-size:12px; letter-spacing:2px; text-transform:uppercase; opacity:.85; margin-top:-10px; text-shadow:0 1px 4px rgba(0,25,60,.7); }
+
+/* LiveArea */
+.st-veil{ position:fixed; inset:0; z-index:40; background:rgba(3,22,50,.5); backdrop-filter:blur(10px); display:grid; place-items:center; }
+.st-live{
+  position:relative; width:min(1180px, calc(100vw - 80px)); height:min(720px, calc(100vh - 80px)); overflow:hidden;
+  border-radius:40px; border:1.5px solid rgba(255,255,255,.4); padding:52px; display:flex; gap:44px;
+  background:linear-gradient(180deg, rgba(20,80,140,.94) 0%, rgba(9,50,100,.96) 100%);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.45), 0 40px 90px rgba(0,15,40,.55);
+}
+.st-peel{ position:absolute; right:0; top:0; width:96px; height:96px; border-top-right-radius:40px; border:0; padding:0; cursor:pointer; background:linear-gradient(225deg, #0d4a86 0%, #0d4a86 49%, #f4fbff 50%, #bfe3fb 100%); box-shadow:-6px 6px 14px rgba(0,20,50,.35); }
+.st-peel:hover{ filter:brightness(1.08); }
+.st-live-l{ width:320px; flex-shrink:0; display:flex; flex-direction:column; align-items:center; gap:20px; padding-top:8px; }
+.st-live-l .st-bub{ width:210px; height:210px; cursor:default; }
+.st-live-l .st-bub:hover{ transform:none; }
+.st-live-title{ font-size:32px; text-shadow:0 2px 8px rgba(0,20,50,.5); }
+.st-live-desc{ font-family:'Gowun Dodum', var(--font-sans); font-size:15.5px; line-height:1.6; text-align:center; color:#e4f4ff; }
+.st-live-cta{ width:250px; height:62px; border-radius:999px; font-size:21px; }
+.st-live-r{ flex:1; min-width:0; display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); grid-auto-rows:minmax(0,1fr); gap:18px; padding-top:36px; }
+.st-card{ border-radius:24px; border:1px solid rgba(255,255,255,.28); padding:24px; display:flex; flex-direction:column; gap:12px; background:linear-gradient(180deg, rgba(255,255,255,.14), rgba(255,255,255,.05)); box-shadow:inset 0 1px 0 rgba(255,255,255,.35); min-height:0; overflow:auto; }
+.st-card h3{ font-size:17px; font-weight:400; }
+.st-card li{ list-style:none; display:flex; gap:10px; font-family:'Gowun Dodum', var(--font-sans); font-size:14.5px; line-height:1.5; color:#e4f4ff; }
+.st-card li::before{ content:""; margin-top:7px; width:7px; height:7px; flex-shrink:0; border-radius:50%; background:#fff; box-shadow:0 0 6px rgba(255,255,255,.8); }
+.st-chips{ display:flex; flex-wrap:wrap; gap:8px; }
+.st-chips .st-pill{ padding:7px 14px; font-size:13px; }
+.st-empty{ flex:1; display:grid; place-items:center; border-radius:16px; border:1.5px dashed rgba(255,255,255,.3); font-family:'Gowun Dodum', var(--font-sans); font-size:14px; color:#bfe3fb; min-height:60px; }
+
+@media (prefers-reduced-motion: reduce){
+  .st-home.motion .st-float{ animation:none; }
+  .st-bub, .st-orb{ transition:none; }
+}

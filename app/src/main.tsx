@@ -1,5 +1,5 @@
 import { createRoot } from 'react-dom/client'
-import App from './App'
+import { StudioRoot } from './studio/StudioRoot' // [studio hook]
 import { SessionWindow } from './components/SessionWindow'
 import { PanelWindow } from './components/PanelWindow'
 import { ViewerWindow } from './components/ViewerWindow'
@@ -58,7 +58,8 @@ Promise.all([loadPrefs(), initViewerWindow(), loadEngineEnvironments().catch(() 
   initGlass() // 저장된 유리(벽지 비침) 값도 첫 페인트 전에 — 기본 틴트가 번쩍이지 않게
   initLang() // 저장된 UI 언어도 첫 렌더 전에 — 모든 t()가 처음부터 맞는 언어를 준다
   createRoot(document.getElementById('root')!).render(
-    isSessionWindow ? <SessionWindow /> : isPanelWindow ? <PanelWindow /> : isViewerWindow ? <ViewerWindow /> : <App />
+    // [studio hook] 메인 창은 Studio 셸(런처 + 작업 공간)로 연다. 채팅 공간 안에서 원본 App을 그대로 쓴다.
+    isSessionWindow ? <SessionWindow /> : isPanelWindow ? <PanelWindow /> : isViewerWindow ? <ViewerWindow /> : <StudioRoot />
   )
   if (!isViewerWindow) warmFileViewer()
 })
